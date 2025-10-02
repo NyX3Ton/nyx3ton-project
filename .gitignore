@@ -1,0 +1,72 @@
+# =====================
+# Python
+# =====================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.eggs/
+*.egg
+
+# Virtual environments
+.env
+.venv
+venv/
+ENV/
+env.bak/
+env/
+
+# =====================
+# Jupyter Notebooks
+# =====================
+.ipynb_checkpoints
+*.ipynb.json
+
+# =====================
+# VS Code
+# =====================
+.vscode/
+.history/
+*.code-workspace
+
+# =====================
+# OS / Editor junk
+# =====================
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# =====================
+# Logs & temp files
+# =====================
+*.log
+*.tmp
+*.bak
+
+# =====================
+# Data files (keep your sources clean)
+# =====================
+# Comment out if you *want* these in Git
+*.csv
+*.tsv
+*.xls
+*.xlsx
+*.json
+*.parquet
+
+# =====================
+# Project-specific
+# =====================
+/Output/
+/Input/
+/chromastore/
+/__temp__/
+
+# =====================
+# Secrets
+# =====================
+*.key
+*.token
