@@ -1,6 +1,7 @@
-pysnmp>=7.1.13
+pysnmp>=7.1.0
 pyasn1>=0.6.0
-pandas>=2.2
-SQLAlchemy>=2.0
-pyodbc>=5.1.0
-nest-asyncio>=1.6.0
+pycryptodomex>=3.17
+pandas>=2.0
+sqlalchemy>=2.0
+pyodbc>=5.0
+nest-asyncio>=1.5
