@@ -45,10 +45,6 @@ def _get_env_bool(name: str, default: bool = False) -> bool:
     return str(v).strip().lower() in {"1", "true", "yes", "y", "on"}
 
 def _parse_hosts(raw: Optional[str]) -> List[str]:
-    """
-    Akceptuje: '192.168.0.1,192.168.0.2'  alebo  '192.168.0.1 192.168.0.2'
-    Ignoruje prázdne položky a úvodzovky.
-    """
     if not raw:
         return []
     seps = [",", ";", " ", "\n", "\t", "|"]
