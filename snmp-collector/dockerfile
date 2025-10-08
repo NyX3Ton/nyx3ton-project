@@ -1,29 +1,38 @@
-# Použijeme Python image, ktorý už má pip
+# Použijeme Python slim image (úsporný, ale má všetko podstatné)
 FROM python:3.12-slim
 
-# Inštalácia systémových závislostí
+# Zapneme nebufferovaný výstup, aby logy išli priamo do docker logs
+ENV PYTHONUNBUFFERED=1
+
+# system deps for pyodbc + MS repo
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl ca-certificates gnupg \
-    unixodbc unixodbc-dev \
+      curl ca-certificates gnupg unixodbc unixodbc-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Microsoft repo for Debian 12 (bookworm)  — python:3.12-slim is Debian 12
+RUN curl -fsSL https://packages.microsoft.com/keys/microsoft.asc \
+      | gpg --dearmor -o /usr/share/keyrings/msprod.gpg \
+ && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/msprod.gpg] https://packages.microsoft.com/debian/12/prod bookworm main" \
+      > /etc/apt/sources.list.d/microsoft-prod.list \
+ && apt-get update \
+ && ACCEPT_EULA=Y apt-get install -y --no-install-recommends msodbcsql18 \
  && rm -rf /var/lib/apt/lists/*
 
-# MS ODBC Driver 18 for SQL Server
-RUN curl -fsSL https://packages.microsoft.com/keys/microsoft.asc \
-    | gpg --dearmor -o /usr/share/keyrings/ms.gpg && \
-    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/ms.gpg] https://packages.microsoft.com/ubuntu/22.04/prod jammy main" \
-    > /etc/apt/sources.list.d/microsoft-prod.list && \
-    apt-get update && ACCEPT_EULA=Y apt-get install -y --no-install-recommends msodbcsql18 && \
-    rm -rf /var/lib/apt/lists/*
 
-# Python knižnice (pysnmp + crypto + pandas + SQL)
-RUN pip install --no-cache-dir \
-    "pysnmp>=7.1" "pyasn1>=0.6" "pycryptodomex>=3.17" \
+# Inštalácia Python knižníc – dávaj pozor na pycryptodomex
+RUN pip3 install --no-cache-dir \
+    "pysnmp==7.1.21" \
+    "pyasn1==0.6.0" \
+    "pycryptodomex==3.23.0" \
+    "python-jose==3.5.0" \
     pandas sqlalchemy pyodbc nest_asyncio
 
+# Nastavenie PYSNMP crypto backendu
 ENV PYSNMP_CRYPTO_LIB=pycryptodomex
 
-# Pracovný priečinok a skript
+# Vytvoríme adresár a skopírujeme aplikáciu
 WORKDIR /app
-COPY app.py /app/app.py
+COPY app.py /app/
 
-CMD ["python", "app.py"]
+# Spustenie aplikácie s nebufferovaným výstupom
+CMD ["python3", "-u", "app.py"]
