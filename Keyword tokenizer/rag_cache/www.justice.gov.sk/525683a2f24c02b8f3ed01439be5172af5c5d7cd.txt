@@ -1,0 +1,41 @@
+Register predinsolvenčných, likvidačných a insolvenčných konaní je spustený
+Od 1. októbra 2025 je účinná novela zákona č. 7/2005 Z. z. o konkurze a reštrukturalizácii a o zmene a doplnení niektorých zákonov, ktorou sa zavádza Register predinsolvenčných, likvidačných a insolvenčných konaní (ďalej len „insolvenčný register“).
+➡️ Insolvenčný register dnešným dňom nahrádza informačný systém Register úpadcov.
+- Insolvenčný register je informačný systém verejnej správy,
+- správcom a technickým prevádzkovateľom je Ministerstvo spravodlivosti SR,
+- systém vznikol v rámci Plánu obnovy a odolnosti (míľnik č. 14 – Zlepšenie podnikateľského prostredia, investícia č. 2 – Digitalizácia procesov insolvenčného konania).
+V INSOLVENČNOM REGISTRI SA EVIDUJÚ:
+- údaje o konkurznom konaní a udalostiach od vydania uznesenia o začatí konkurzného konania až po jeho ukončenie.
+Ak ide o malý konkurz – od vyhlásenia malého konkurzu až po ukončenie. - údaje o reštrukturalizačnom konaní a udalostiach od vydania uznesenia o začatí reštrukturalizačného konania až po jeho ukončenie.
+- údaje o konaní o oddlžení od vyhlásenia konkurzu alebo od poskytnutia ochrany pred veriteľmi až po ukončenie.
+Vrátane začatia a rozhodnutia o zrušení oddlženia pre nepoctivý zámer. - údaje o verejnej preventívnej reštrukturalizácii od vydania uznesenia o povolení až po ukončenie.
+Vrátane vyhlásenia štatutárneho orgánu dlžníka, že nie je v úpadku podľa osobitného predpisu. - údaje o likvidácii a dodatočnej likvidácii od ustanovenia likvidátora súdom až po jej ukončenie.
+- ďalšie informácie o konaniach a udalostiach v konaniach.
+V ČOM SPOČÍVAJÚ VÝHODY NOVÉHO INSOLVENČNÉHO REGISTRA A ČO OBSAHUJE
+- Údaje zverejnené v insolvenčnom registri nie je potrebné pred orgánmi verejnej moci ani v obchodnom styku preukazovať.
+- Majú štruktúrovanú podobu, ktorá umožňuje vyhľadávanie a automatizované spracovanie.
+OBSAH ELEKTRONICKÝCH DOKUMENTOV ÚČASTNÍKOV KONANIA A INÝCH OSÔB V:
+- konkurznom,
+- reštrukturalizačnom,
+- oddlžovacom,
+- preventívnom reštrukturalizačnom konaní,
+- alebo v likvidácii (likvidátor ustanovený súdom)
+SA ZVEREJŇUJE V INSOLVENČNOM REGISTRI, AK:
+- udalosti na ich základe sú evidované v insolvenčnom registri, alebo
+- dokument obsahuje údaje evidované v insolvenčnom registri.
+Insolvenčný register od 1. októbra 2025 predstavuje publikačnú platformu.
+Zverejňujú sa tu oznamy a iné zverejnenia týkajúce sa:
+- insolvenčných konaní,
+- predinsolvenčných konaní,
+- likvidácií.
+Tieto oznamy sa už nebudú zverejňovať v príslušných kapitolách Obchodného vestníka.
+Výnimkou sú oznamy a zverejnenia súvisiace s konkurzmi a vyrovnaniami podľa zákona č. 328/1991 Zb. o konkurze a vyrovnaní (v znení neskorších predpisov). Tie sa aj naďalej budú zverejňovať v Obchodnom vestníku, kapitola „Konkurzy a vyrovnania“.
+PREČO JE NOVÝ INSOLVENČNÝ REGISTER LEPŠÍ AKO STARÝ REGISTER ÚPADCOV
+✅ Jeden systém pre všetky typy konaní (predinsolvenčné, insolvenčné, reštrukturalizačné, likvidačné).
+✅ Rozšírenie o malý konkurz, verejnú preventívnu reštrukturalizáciu a likvidácie.
+✅ Zverejňovanie oznamov, rozhodnutí, výziev priamo v registri.
+✅ Doručovanie zverejnením – rozhodnutia súdu a správcu budú doručované electronicky cez insolvenčný register.
+✅ Elektronické formuláre – menej chýb, rýchlejšie konania, menšia administratívna záťaž.
+✅ Automatizácia – správcovia už nemusia manuálne spracovávať prihlášky.
+✅ Prevencia pre podnikateľov – register poskytuje informácie aj tým, ktorým úpadok ešte len hrozí.
+✅ Moderné technológie – v súlade s eGovernment a IDSK štandardmi.

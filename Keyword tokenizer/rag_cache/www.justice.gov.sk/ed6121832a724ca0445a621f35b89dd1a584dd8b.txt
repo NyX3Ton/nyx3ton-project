@@ -1,0 +1,93 @@
+Organizačná štruktúra
+-
+Minister spravodlivosti Slovenskej republiky
+- Kancelária ministra
+- Oddelenie vládnej a parlamentnej agendy
+- Tlačové oddelenie
+- Generálny riaditeľ ZVJS
+- Odbor vnútorného auditu
+- Odbor kybernetickej bezpečnosti a ochrany osobných údajov
+- Referát zvláštnych úloh
+-
+Generálny tajomník služobného úradu
+- Kancelária generálneho tajomníka služobného úradu
+- Odbor elektronizácie súdnictva
+- Osobný úrad
+- Sekcia ekonomiky a právnych služieb
+- Odbor rozpočtu a financovania kapitol
+- Odbor financovania úradu
+- Odbor hospodárskej správy
+- Odbor rozvoja rezortných ľudských zdrojov
+- Odbor právnych služieb a verejného obstarávania
+- Oddelenie právnych služieb
+- Oddelenie verejného obstarávania
+- Inštitút vzdelávania
+- Sekcia informatiky a riadenia projektov
+- Odbor eJustice, koordinácie a projektovej prípravy
+- Odbor prevádzky informačných systémov
+- Odbor Service Desk
+- Odbor architektúry a implementácie projektov
+- Rezortná implementačná jednotka
+- Odbor sekčnej podpory pre financovanie a projekty
+- Oddelenie metodiky
+- Oddelenie koordinácie rezortných projektov
+- Referát finančných iniciatív a mechanizmov
+- Odbor implementácie Plánu obnovy a odolnosti
+- Oddelenie implementácie Plánu obnovy a odolnosti
+- Oddelenie podpory implementácie projektov
+- Odbor sekčnej podpory pre financovanie a projekty
+-
+Štátny tajomník I
+-
+Kancelária štátneho tajomníka
+-
+Sekcia legislatívy
+- Odbor legislatívy občianskeho a obchodného práva
+- Referát tvorby stratégií v civilnom práve
+- Odbor legislatívy trestného práva
+- Referát všeobecnej legislatívy
+- Odbor legislatívy občianskeho a obchodného práva
+-
+Sekcia medzinárodného práva
+- Odbor medzinárodného práva súkromného
+- Odbor justičnej spolupráce v trestných veciach
+- Odbor európskych záležitostí a zahraničných vzťahov
+-
+Sekcia edičných činností
+- Odbor publikácie právnych predpisov
+- Odbor správy Informačného systému Slov-Lex
+- Redakcia Obchodného vestníka a Justičnej revue
+-
+-
+Štátny tajomník II
+-
+Kancelária štátneho tajomníka
+-
+Sekcia dohľadu
+- Odbor dohľadu nad súdnictvom
+- Odbor znaleckej, tlmočníckej a prekladateľskej činnosti
+- Odbor dohľadu nad právnickými profesiami
+-
+Sekcia restoratívnej a alternatívnej justície
+- Odbor restoratívnych programov a alternatívnych trestov
+- Oddelenie elektronického monitoringu a technického zabezpečenia
+- Odbor penitenciárnej intervencie
+- Oddelenie kriminológie
+- Odbor restoratívnych programov a alternatívnych trestov
+-
+-
+Štátny tajomník III
+-
+Kancelária štátneho tajomníka
+-
+Sekcia právneho zastupovania
+- Odbor zastupovania a právnych stanovísk
+- Odbor trestného súdnictva
+- Referát milostí
+-
+Kancelária zástupcu SR pred ESĽP
+-
+Kancelária zástupcu SR pred súdmi EÚ
+-
+Odbor ľudských práv
+-
