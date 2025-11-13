@@ -45,6 +45,8 @@ Thumbs.db
 *.log
 *.tmp
 *.bak
+*.bin
+*.sqlite3
 
 # =====================
 # Data files (keep your sources clean)
@@ -57,6 +59,7 @@ Thumbs.db
 *.json
 *.parquet
 *.txt
+*.html
 
 # =====================
 # Project-specific
