@@ -68,6 +68,9 @@ Thumbs.db
 /Input/
 /chromastore/
 /__temp__/
+Keyword tokenizer/RAG_store/
+*.sqlite3
+
 
 # =====================
 # Secrets
