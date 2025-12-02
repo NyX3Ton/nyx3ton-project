@@ -8,11 +8,8 @@
 # 4. Feature Importance per Job Role
 # 5. Gradio Frontend (Extended Input + Search + Heatmap)
 # ---------------------------------------------------------
+import os, warnings, unicodedata, joblib, optuna, urllib.parse
 
-import os, warnings, unicodedata
-import joblib
-import optuna
-import urllib.parse
 from pathlib import Path
 import pandas as pd
 import numpy as np
@@ -137,33 +134,27 @@ def add_new_employee_to_db(input_data: dict, df_template: pd.DataFrame):
     new_row_data = {}
     user_provided_cols = list(input_data.keys())
     
-    # Prechádzame všetky stĺpce v datasete
     for col in df_template.columns:
-        # A) Priorita: Input od užívateľa
         if col in user_provided_cols:
             new_row_data[col] = input_data[col]
             continue
             
-        # B) ID generujeme neskôr
         if col == "EmployeeNumber":
             continue
 
-        # C) Smart Sampling pre chýbajúce dáta
         valid_values = df_template[col].dropna()
         if valid_values.empty:
             new_row_data[col] = 0
             continue
 
         if df_template[col].dtype.name in ['category', 'object', 'string']:
-            # Kategorické: Losujeme podľa pravdepodobnosti výskytu
             dist = valid_values.value_counts(normalize=True)
             chosen_val = np.random.choice(dist.index, p=dist.values)
             new_row_data[col] = chosen_val
         else:
-            # Číselné: Losujeme z existujúcich hodnôt
+
             chosen_val = np.random.choice(valid_values.values)
-            
-            # Konverzia pre SQL (numpy typy robia problémy)
+
             if isinstance(chosen_val, (np.integer, np.int64)):
                 chosen_val = int(chosen_val)
             elif isinstance(chosen_val, (np.floating, np.float64)):
@@ -190,7 +181,7 @@ def add_new_employee_to_db(input_data: dict, df_template: pd.DataFrame):
 
 def get_drop_columns():
     return ["EmployeeNumber", "EmployeeCount", "StandardHours", "Over18", 
-            "FirstName", "LastName", "FullName", "Email", "Username","DailyRate", "HourlyRate","MonthlyRate"]
+            "FirstName", "LastName", "FullName", "Email", "Username","DailyRate", "HourlyRate","MonthlyRate", "RelationshipSatisfaction"]
 
 def preprocess_data_for_training(df: pd.DataFrame):
     df_proc = df.copy()
@@ -222,7 +213,6 @@ def preprocess_data_for_inference(df: pd.DataFrame, encoders, feature_cols):
     
     for col, le in encoders.items():
         if col in X.columns:
-            # Mapovanie + ošetrenie neznámych hodnôt
             X[col] = X[col].astype(str).map(lambda s: le.transform([s])[0] if s in le.classes_ else 0)
             X[col] = X[col].fillna(0).astype(int)
             
@@ -269,15 +259,12 @@ def run_optuna_optimization(X_train, y_train, X_test, y_test, n_trials=100):
 
 def train_and_save_new_model(df_full: pd.DataFrame, n_trials=100, reuse_prev_params=True):
     print("\n--- Spúšťam tréning modelu ---")
-    
-    # 1. Preprocessing
+
     X, y, encoders = preprocess_data_for_training(df_full)
     feature_names = X.columns.tolist()
-    
-    # 2. Split
+
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
     
-    # 3. Rozhodovanie o parametroch
     best_params = None
     if reuse_prev_params and os.path.exists(MODEL_PATH):
         try:
@@ -297,7 +284,6 @@ def train_and_save_new_model(df_full: pd.DataFrame, n_trials=100, reuse_prev_par
     if best_params is None:
         best_params = run_optuna_optimization(X_train, y_train, X_test, y_test, n_trials)
     
-    # Vždy prepíšeme device a kľúčové nastavenia (pre istotu)
     best_params.update({
         "random_state": 42, "n_jobs": -1, "tree_method": "hist",
         "device": ACTIVE_DEVICE, "objective": "binary:logistic", 
@@ -332,7 +318,6 @@ def get_model_and_predictions(df_full: pd.DataFrame):
             acc = 0.0 
         except Exception as e:
             print(f"[ERROR] Chyba pri načítaní: {e}. Spustím nový tréning.")
-            # Ak zlyhal load, skúsime natrénovať nový (bez reuse parametrov, lebo sú asi poškodené)
             model, encoders, feature_names, acc = train_and_save_new_model(df_full, reuse_prev_params=False)
     else:
         print(f"\n[INFO] Model nenájdený. Spúšťam tréning...")
@@ -346,33 +331,26 @@ def get_model_and_predictions(df_full: pd.DataFrame):
         "Importance": model.feature_importances_
     }).sort_values(by="Importance", ascending=False)
     
-    # --- Generovanie tabuľky pre dashboard ---
     predictions_df = df_full.copy()
     all_probs = model.predict_proba(X_current)[:, 1]
     
-    # Risk Labels (0-33 Low, 34-50 Medium, 51+ High)
     predictions_df["Risk_Label"] = pd.cut(
         all_probs, 
         bins=[-0.1, 0.33, 0.50, 1.1], 
         labels=["Low", "Medium", "High"]
     )
-    # Prevod na string pre Gradio
     predictions_df["Risk_Label"] = predictions_df["Risk_Label"].astype(str)
     
-    # Percentá (String)
     predictions_df["Attrition_Prob"] = (all_probs * 100).round(2)
     predictions_df["Attrition_Prob"] = predictions_df["Attrition_Prob"].astype(str) + "%"
 
-    # Čistenie len technických stĺpcov
     cols_to_drop = ["EmployeeCount", "StandardHours", "Over18", "FirstName", "LastName", "Email", "Username"]
     predictions_df.drop(columns=[c for c in cols_to_drop if c in predictions_df.columns], inplace=True)
     
-    # Prevod kategórií na string (fix Gradio crash)
     cat_columns = predictions_df.select_dtypes(['category']).columns
     for col in cat_columns:
         predictions_df[col] = predictions_df[col].astype(str)
-    
-    # Zoradenie stĺpcov
+
     cols_order = ["EmployeeNumber", "FullName", "Risk_Label", "Attrition_Prob", "Department", "JobRole"]
     remaining_cols = [c for c in predictions_df.columns if c not in cols_order]
     predictions_df = predictions_df[cols_order + remaining_cols]
@@ -489,23 +467,18 @@ def generate_feature_importance_by_role(df_full: pd.DataFrame):
         return pd.DataFrame()
 
     df_imp = pd.DataFrame(results).fillna(0)
-    
-    # 1. Identifikujeme numerické stĺpce (všetky okrem JobRole)
+
     num_cols = [c for c in df_imp.columns if c != "JobRole"]
-    
-    # 2. KRITICKÝ KROK: Pretypovanie na 'float' (float64) pred zaokrúhlením
-    # Týmto odstránime float32 nepresnosti z XGBoostu
+
     df_imp[num_cols] = df_imp[num_cols].astype(float).round(3)
     
-    # Zoradenie stĺpcov
     cols = ["JobRole"] + [c for c in df_imp.columns if c != "JobRole"]
     return df_imp[cols]
+
 # ==========================
 # 7. Gradio Frontend
 # ==========================
 def run_gradio_app(model, encoders, feature_names, global_acc, importance_df, df_sample, full_predictions_df, feat_imp_by_role):
-    
-    # Mapovanie vzdelania
     edu_map = {
         "1 - Základné (Elementary)": 1, 
         "2 - Stredoškolské (High School)": 2,
@@ -514,11 +487,9 @@ def run_gradio_app(model, encoders, feature_names, global_acc, importance_df, df
         "5 - Doktorandské (Doctor)": 5
     }
 
-    # --- SIMULATOR LOGIC ---
     def process_new_employee(fname, lname, gender, age, marital, edu_level_str, edu_field, dept, role, travel, num_comp, years_at_company, overtime, income, env_sat, save_to_db):
         full_name = f"{fname} {lname}"
         
-        # 1. Email generation
         def strip_accents(s):
             return ''.join(c for c in unicodedata.normalize('NFD', s) if unicodedata.category(c) != 'Mn')
         clean_fname = strip_accents(fname.lower()).replace(" ", "")
@@ -528,7 +499,6 @@ def run_gradio_app(model, encoders, feature_names, global_acc, importance_df, df
 
         edu_level_int = edu_map[edu_level_str]
 
-        # 2. Dictionary for Model & DB
         input_dict = {
             "Age": age, "Gender": gender, "MaritalStatus": marital,
             "Education": edu_level_int, "EducationField": edu_field,
@@ -537,7 +507,6 @@ def run_gradio_app(model, encoders, feature_names, global_acc, importance_df, df
             "OverTime": overtime, "MonthlyIncome": income, "EnvironmentSatisfaction": env_sat
         }
         
-        # 3. Prediction (Používame Robustný Globálny Model, ktorý pozná kontext JobRole)
         pred_df = df_sample.iloc[0:1].copy()
         for k, v in input_dict.items():
             if k in pred_df.columns: pred_df[k] = v
@@ -549,7 +518,7 @@ def run_gradio_app(model, encoders, feature_names, global_acc, importance_df, df
         elif prob <= 0.50: decision, color = "MIERNE RIZIKO", "orange"
         else: decision, color = "VYSOKÉ RIZIKO", "red"
 
-        # 4. Save to DB
+        # Save to DB
         db_status_msg = ""
         if save_to_db:
             db_input = input_dict.copy()
@@ -585,7 +554,7 @@ def run_gradio_app(model, encoders, feature_names, global_acc, importance_df, df
             orientation='h', 
             title=graph_title, 
             color='Importance',
-            color_continuous_scale="Viridis" # Rovnaká paleta ako heatmapa
+            color_continuous_scale="Viridis"
         )
         fig.update_layout(yaxis={'categoryorder':'total ascending'})
         
@@ -596,8 +565,7 @@ def run_gradio_app(model, encoders, feature_names, global_acc, importance_df, df
         gr.Markdown(f"# HR AI Analytics Platform")
         
         with gr.Tabs():
-            # TAB 1: Simulator
-            with gr.Tab("👤 Nový Zamestnanec"):
+            with gr.Tab("Nový Zamestnanec"):
                 with gr.Row():
                     with gr.Column():
                         gr.Markdown("### 1. Osobné údaje")
@@ -616,7 +584,6 @@ def run_gradio_app(model, encoders, feature_names, global_acc, importance_df, df
                         in_dept = gr.Dropdown(choices=dept_choices, label="Oddelenie", value=dept_choices[0])
                         role_choices = sorted(list(df_sample["JobRole"].unique()))
                         
-                        # Keď zmeníte rolu, prejaví sa to vo výpočte pri kliknutí na tlačidlo
                         in_role = gr.Dropdown(choices=role_choices, label="Pozícia", value=role_choices[0])
                         
                         in_travel = gr.Dropdown(choices=sorted(list(df_sample["BusinessTravel"].unique())), label="Služobné cesty", value="Travel_Rarely")
@@ -627,7 +594,7 @@ def run_gradio_app(model, encoders, feature_names, global_acc, importance_df, df
                         gr.Markdown("### 3. Podmienky & Výstup")
                         in_income = gr.Slider(500, 25000, value=1500, label="Mesačný príjem")
                         in_over = gr.Radio(["Yes", "No"], label="Nadčasy", value="No")
-                        in_env = gr.Slider(1, 4, value=3, label="Spokojnosť (1-4)")
+                        in_env = gr.Slider(1, 4, value=3, label="Spokojnosť (1-4)", step=1)
                         gr.Markdown("---")
                         in_save = gr.Checkbox(label="Zapísať do databázy", value=False)
                         btn = gr.Button("Analyzovať a Uložiť", variant="primary")
@@ -636,7 +603,6 @@ def run_gradio_app(model, encoders, feature_names, global_acc, importance_df, df
                 
                 btn.click(process_new_employee, inputs=[in_fname, in_lname, in_gender, in_age, in_marital, in_edu_level, in_edu_field, in_dept, in_role, in_travel, in_num_comp, in_years, in_over, in_income, in_env, in_save], outputs=[out_txt, out_plt])
 
-            # TAB 2: Dashboard (Bez zmeny)
             with gr.Tab("Data Dashboard"):
                 gr.Markdown("### Vyhľadávanie v predikciách")
                 
@@ -660,7 +626,6 @@ def run_gradio_app(model, encoders, feature_names, global_acc, importance_df, df
                 try: gr.Dataframe(value=anomalies_df, label="Anomálie oddelení")
                 except: pass
 
-            # TAB 3: Heatmap (Bez zmeny)
             with gr.Tab("Faktory podľa Pozície"):
                 gr.Markdown("### Čo ovplyvňuje odchod na jednotlivých pozíciách?")
                 if not feat_imp_by_role.empty:
