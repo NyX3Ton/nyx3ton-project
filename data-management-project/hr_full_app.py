@@ -343,7 +343,7 @@ def get_model_and_predictions(df_full: pd.DataFrame):
     
     predictions_df["Risk_Label"] = pd.cut(
         all_probs, 
-        bins=[-0.1, 0.33, 0.50, 1.1], 
+        bins=[-0.1, 0.25, 0.50, 1.1], 
         labels=["Low", "Medium", "High"]
     )
     predictions_df["Risk_Label"] = predictions_df["Risk_Label"].astype(str)
