@@ -15,12 +15,10 @@ import pandas as pd
 import numpy as np
 import sqlalchemy as sa
 
-# Vizualizácie
 import matplotlib.pyplot as plt
 import seaborn as sns
 import plotly.express as px
 
-# Machine Learning
 from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, mean_squared_error, r2_score, mean_absolute_error
@@ -32,14 +30,11 @@ cwd = os.getcwd()
 #os.makedirs('./Input', exist_ok=True)  
 os.makedirs('./model_save/model', exist_ok=True) 
 
-# Frontend
 import gradio as gr
 
-# Konfigurácia
 warnings.filterwarnings('ignore')
 DATA_ENV_PATH = Path("data.env")
 
-# Cesty k súborom
 MODEL_PATH = "./model_save/model_attrition.pkl"
 ENCODER_PATH = "./model_save/encoder_attrition.pkl"
 FEATURE_COLS_PATH = "./model_save/feature_cols.pkl"
@@ -52,7 +47,6 @@ def get_xgboost_device():
     try:
         X_test = np.array([[1, 2], [3, 4]])
         y_test = np.array([0, 1])
-        # Skúsime tréning na GPU
         test_model = XGBClassifier(device="cuda", n_estimators=1, tree_method="hist")
         test_model.fit(X_test, y_test)
         print("[SYSTEM] GPU (CUDA) detekované! Výpočty pobežia na grafickej karte.")
@@ -118,7 +112,6 @@ def save_to_sql(df: pd.DataFrame, table_name: str):
 # ==========================
 
 def get_next_employee_number(engine):
-    """Zistí maximálne ID v databáze a vráti +1"""
     try:
         query = "SELECT MAX(EmployeeNumber) FROM dbo.HR_Synth_Data"
         max_id = pd.read_sql(query, engine).iloc[0, 0]
@@ -280,7 +273,6 @@ def train_and_save_new_model(df_full: pd.DataFrame, n_trials=25, reuse_prev_para
             best_params = old_model.get_params()
             print(" Parametre úspešne načítané. Preskakujem Optunu.")
             
-            # Vyčistenie a update pre aktuálny device
             keys_to_remove = ['missing', 'callbacks', 'monotone_constraints', 'interaction_constraints']
             for k in keys_to_remove:
                 if k in best_params: del best_params[k]
@@ -485,8 +477,7 @@ def generate_feature_importance_by_role(df_full: pd.DataFrame):
 # 7. Gradio Frontend
 # ==========================
 def run_gradio_app(model, encoders, feature_names, global_acc, importance_df, df_sample, full_predictions_df, feat_imp_by_role):
-    
-    # Mapovanie vzdelania
+
     edu_map = {
         "1 - Základné (Elementary)": 1,
         "2 - Stredoškolské (High School)": 2,
@@ -495,7 +486,6 @@ def run_gradio_app(model, encoders, feature_names, global_acc, importance_df, df
         "5 - Doktorandské (Doctor)": 5
     }
 
-    # --- 1. FUNKCIA: LEN ANALÝZA (Uloží dáta do State) ---
     def analyze_new_employee(
         fname, lname, gender, age, marital, edu_level_str, edu_field, dist_home,
         dept, role, num_comp, total_years,
@@ -505,7 +495,6 @@ def run_gradio_app(model, encoders, feature_names, global_acc, importance_df, df
     ):
         full_name = f"{fname} {lname}"
         
-        # Generovanie emailu
         def strip_accents(s):
             return ''.join(c for c in unicodedata.normalize('NFD', s) if unicodedata.category(c) != 'Mn')
         clean_fname = strip_accents(fname.lower()).replace(" ", "")
@@ -600,7 +589,6 @@ def run_gradio_app(model, encoders, feature_names, global_acc, importance_df, df
                         in_edu_field = gr.Dropdown(sorted(list(df_sample["EducationField"].unique())), label="Odbor", value="Life Sciences")
                         in_dist = gr.Slider(1, 30, value=5, label="Vzdialenosť z domu (km)")
 
-                    # STĹPEC 2: Práca
                     with gr.Column():
                         gr.Markdown("### 2. Pozícia & História")
                         in_dept = gr.Dropdown(sorted(list(df_sample["Department"].unique())), label="Oddelenie", value="Sales")
@@ -616,7 +604,6 @@ def run_gradio_app(model, encoders, feature_names, global_acc, importance_df, df
                             in_years_promo = gr.Slider(0, 20, value=1, label="Od povýšenia", step=0.5)
                             in_years_man = gr.Slider(0, 20, value=2, label="S manažérom", step=0.5)
 
-                    # STĹPEC 3: Spokojnosť & Peniaze
                     with gr.Column():
                         gr.Markdown("### 3. Spokojnosť & Odmeňovanie")
                         with gr.Row():
@@ -635,21 +622,18 @@ def run_gradio_app(model, encoders, feature_names, global_acc, importance_df, df
                         
                         in_training = gr.Slider(0, 6, value=2, label="Počet školení (minulý rok)")
 
-                # TLAČIDLÁ
                 gr.Markdown("---")
                 with gr.Row():
                     btn_analyze = gr.Button("1. Analyzovať", variant="primary")
                     btn_save = gr.Button("2. Zapísať do DB", variant="secondary")
                 
-                # VÝSTUPY
                 with gr.Row():
                     with gr.Column(scale=1):
                         out_txt = gr.Markdown()
                         out_status = gr.Textbox(label="Stav procesu", interactive=False)
                     with gr.Column(scale=2):
                         out_plt = gr.Plot()
-                
-                # --- PREPOJENIE UI ---
+
                 inputs_list = [
                     in_fname, in_lname, in_gender, in_age, in_marital, in_edu_level, in_edu_field, in_dist,
                     in_dept, in_role, in_num_comp, in_total_years, 
@@ -708,7 +692,7 @@ def run_gradio_app(model, encoders, feature_names, global_acc, importance_df, df
                 except: 
                     pass
 
-            # ================= TAB 3: HEATMAP (FAKTORY) =================
+            # ================= TAB 3: HEATMAP =================
             with gr.Tab("Faktory podľa Pozície"):
                 gr.Markdown("### Čo ovplyvňuje odchod na jednotlivých pozíciách?")
                 if not feat_imp_by_role.empty:
