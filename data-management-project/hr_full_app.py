@@ -364,7 +364,6 @@ def train_and_save_new_model(df_full: pd.DataFrame, n_trials=50, reuse_prev_para
     
     return final_model, encoders, feature_names, acc
 
-
 # 4. CATEGORIZATION BY RISK THRESHOLD, CLIPPING IRRELEVANT DATA
 
 def get_model_and_predictions(df_full: pd.DataFrame):
