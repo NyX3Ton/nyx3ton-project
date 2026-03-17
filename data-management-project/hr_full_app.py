@@ -136,7 +136,7 @@ def load_hr_dataframe() -> pd.DataFrame:
 def save_to_sql(df: pd.DataFrame, table_name: str):
     engine = make_sql_engine()
     schema = get_pg_schema()
-    print(f"Zapusjem tabulku: {table_name} ({len(df)} riadkov)...")
+    print(f"Zapisujem tabulku: {table_name} ({len(df)} riadkov)...")
     try:
         df.to_sql(
             quoted_name(table_name, True),engine,schema=schema,if_exists="replace",index=False,method="multi",chunksize=1000)
@@ -282,7 +282,7 @@ def preprocess_data_for_inference(df: pd.DataFrame, encoders, feature_cols):
 
 # a. Optuna optimization
 
-def run_optuna_optimization(X_train, y_train, X_test, y_test, n_trials=25):
+def run_optuna_optimization(X_train, y_train, X_test, y_test, n_trials=50):
     def objective(trial: optuna.Trial) -> float:
         params = {
                     "n_estimators": trial.suggest_int("n_estimators", 100, 800),
@@ -298,7 +298,7 @@ def run_optuna_optimization(X_train, y_train, X_test, y_test, n_trials=25):
                     "device": ACTIVE_DEVICE,
                     "objective": "binary:logistic",
                     "eval_metric": "logloss",
-                    "early_stopping_rounds": 10,
+                    "early_stopping_rounds": 15,
                     }
         model = XGBClassifier(**params)
         model.fit(X_train, y_train, eval_set=[(X_test, y_test)], verbose=False)
@@ -313,7 +313,7 @@ def run_optuna_optimization(X_train, y_train, X_test, y_test, n_trials=25):
     print(f"Najlepsia presnost: {study.best_value:.4f}")
     return study.best_params
 
-def train_and_save_new_model(df_full: pd.DataFrame, n_trials=25, reuse_prev_params=True):
+def train_and_save_new_model(df_full: pd.DataFrame, n_trials=50, reuse_prev_params=True):
     print("\n Spustam trening modelu")
 
     X, y, encoders = preprocess_data_for_training(df_full)
@@ -347,7 +347,7 @@ def train_and_save_new_model(df_full: pd.DataFrame, n_trials=25, reuse_prev_para
                         "objective": 
                         "binary:logistic", 
                         "eval_metric": "logloss", 
-                        "early_stopping_rounds":10
+                        "early_stopping_rounds":15
                         })
     
     print(f"--> Trenujem finalny model ({ACTIVE_DEVICE})...")
@@ -417,8 +417,8 @@ def get_model_and_predictions(df_full: pd.DataFrame):
 
 # 5. ANOMALY DETECTION + FEATURE IMPORTANCE
 
-def detect_department_anomalies(df_full: pd.DataFrame, n_optuna_trials=25):
-    print("\n 2. Detekcia Anomalii (Regression + Optuna) ---")
+def detect_department_anomalies(df_full: pd.DataFrame, n_optuna_trials=50):
+    print("\n 2. Detekcia Anomalii (Regression + Optuna)")
 
     df_agg = df_full.copy()
     df_agg["Attrition_Flag"] = df_agg["Attrition"].apply(lambda x: 1 if str(x).lower() == 'yes' else 0)
@@ -482,9 +482,9 @@ def detect_department_anomalies(df_full: pd.DataFrame, n_optuna_trials=25):
     dept_stats["Predicted_Attrition_Rate"] = reg_model.predict(X)
     residuals = dept_stats["Actual_Attrition_Rate"] - dept_stats["Predicted_Attrition_Rate"]
     dept_stats["Anomaly_Score"] = residuals
-    threshold = np.mean(residuals) + (2 * np.std(residuals))
+    threshold = np.mean(residuals) + (1.5def make_sql_engine * np.std(residuals))
     
-    print(f"   [INFO] Anomaly Threshold (Mean + 2*Std): {threshold:.4f}")
+    print(f"Anomaly Threshold (Mean + 2*Std): {threshold:.4f}")
     
     dept_stats["Is_Anomaly"] = dept_stats["Anomaly_Score"] > threshold
     dept_stats = dept_stats.sort_values(by="Anomaly_Score", ascending=False)
@@ -653,7 +653,7 @@ def run_gradio_app(
             ]
 
             anom_fig = px.bar(
-                plot_source.sort_values("Anomaly_Score", ascending=True).tail(15),
+                plot_source.sort_values("Anomaly_Score", ascending=True).tail(25),
                 x="Anomaly_Score",
                 y="Label",
                 orientation="h",
@@ -1119,7 +1119,7 @@ if __name__ == "__main__":
     model, encoders, feature_names, acc, feat_imp, predictions_df = get_model_and_predictions(df)
 
     # 2. Regression
-    anomalies_df = detect_department_anomalies(df, n_optuna_trials=25)
+    anomalies_df = detect_department_anomalies(df, n_optuna_trials=50)
 
     # 3. Feature importance by role
     feat_imp_by_role = generate_feature_importance_by_role(df)
