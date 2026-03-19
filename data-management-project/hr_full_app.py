@@ -1,5 +1,6 @@
 #%pip install --upgrade pip
 #%pip install --upgrade optuna pandas numpy sqlalchemy pyodbc matplotlib seaborn plotly scikit-learn xgboost joblib gradio psycopg2-binary
+
 # ---------------------------------------------------------
 # 1. POSTGRESQL ENGINE & DATA LOAD
 #       a. Database Helpers
@@ -15,10 +16,11 @@
 #       d. Callbacks
 #       e. UI Definition
 #       f. TAB 1 - New employee simulator
-#       g. TAB 2: Anomalies dashboard 
+#       g. TAB 2: Anomalies dashboard
 # 7. MAIN FUNCTION
 # ---------------------------------------------------------
-import os, warnings, unicodedata, joblib, optuna, urllib,urllib.parse, gradio as gr
+
+import os, warnings, unicodedata, joblib, optuna, urllib, urllib.parse, gradio as gr
 warnings.filterwarnings('ignore')
 
 from pathlib import Path
@@ -56,7 +58,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, mean_squared_error
 from xgboost import XGBClassifier, XGBRegressor
 
-#GPU / CPU Detection
+# GPU / CPU Detection
 def get_xgboost_device():
     try:
         X_test = np.array([[1, 2], [3, 4]])
@@ -79,7 +81,7 @@ FEATURE_IMPORTANCE_TABLE = "Model_Feature_Importance"
 FEATURE_IMPORTANCE_BY_ROLE_TABLE = "Model_Feature_Importance_By_Role"
 ANOMALIES_TABLE = "Anomalies_Department"
 
-def load_env_from_file(env_path: Path | None = None) -> None:
+def load_data_env(env_path: Path | None = None) -> None:
     if env_path is None:
         env_path = DATA_ENV_PATH
 
@@ -100,11 +102,11 @@ def load_env_from_file(env_path: Path | None = None) -> None:
 def qident(name: str) -> str:
     return '"' + str(name).replace('"', '""') + '"'
 
-def get_pg_schema() -> str:
+def postgre_schema() -> str:
     return os.getenv("PG_SCHEMA", "public")
 
-def make_sql_engine() -> sa.Engine:
-    load_env_from_file(DATA_ENV_PATH)
+def postgre_engine() -> sa.Engine:
+    load_data_env(DATA_ENV_PATH)
 
     required = ["PG_HOST", "PG_PORT", "PG_DATABASE", "PG_USERNAME", "PG_PASSWORD"]
     missing = [k for k in required if not os.getenv(k)]
@@ -123,8 +125,8 @@ def make_sql_engine() -> sa.Engine:
     )
 
 def load_hr_dataframe() -> pd.DataFrame:
-    engine = make_sql_engine()
-    schema = get_pg_schema()
+    engine = postgre_engine()
+    schema = postgre_schema()
     print("Nacitavam data z PostgreSQL")
 
     query = text(f'SELECT * FROM {qident(schema)}.{qident(HR_TABLE)}')
@@ -134,13 +136,19 @@ def load_hr_dataframe() -> pd.DataFrame:
     return df
 
 def save_to_sql(df: pd.DataFrame, table_name: str):
-    engine = make_sql_engine()
-    schema = get_pg_schema()
+    engine = postgre_engine()
+    schema = postgre_schema()
     print(f"Zapisujem tabulku: {table_name} ({len(df)} riadkov)...")
     try:
         df.to_sql(
-            quoted_name(table_name, True),engine,schema=schema,if_exists="replace",index=False,method="multi",chunksize=1000)
-        
+            quoted_name(table_name, True),
+            engine,
+            schema=schema,
+            if_exists="replace",
+            index=False,
+            method="multi",
+            chunksize=1000
+        )
         print("Zapis bol uspesny.")
     except Exception as e:
         print(f"Chyba pri zapise do PostgreSQL: {e}")
@@ -148,7 +156,7 @@ def save_to_sql(df: pd.DataFrame, table_name: str):
 # a. Database Helpers
 
 def get_next_employee_number(engine):
-    schema = get_pg_schema()
+    schema = postgre_schema()
     try:
         query = text(
             f'SELECT MAX({qident("EmployeeNumber")}) AS max_id '
@@ -163,8 +171,8 @@ def get_next_employee_number(engine):
         return int(np.random.randint(10000, 99999))
 
 def add_new_employee_to_db(input_data: dict, df_template: pd.DataFrame):
-    engine = make_sql_engine()
-    schema = get_pg_schema()
+    engine = postgre_engine()
+    schema = postgre_schema()
 
     new_row_data = {}
     user_provided_cols = list(input_data.keys())
@@ -201,11 +209,18 @@ def add_new_employee_to_db(input_data: dict, df_template: pd.DataFrame):
     next_id = get_next_employee_number(engine)
     new_row_df["EmployeeNumber"] = next_id
 
-    print(f"--> Pridávam zamestnanca ID {next_id} do PostgreSQL (Smart Sampling)...")
+    print(f"Pridávam zamestnanca ID {next_id} do PostgreSQL (Smart Sampling)")
     try:
         new_row_df.to_sql(
-            quoted_name(HR_TABLE, True),engine,schema=schema,if_exists="append",index=False,method="multi",chunksize=1000)
-        
+            quoted_name(HR_TABLE, True),
+            engine,
+            schema=schema,
+            if_exists="append",
+            index=False,
+            method="multi",
+            chunksize=1000
+        )
+
         return True, next_id, f"Zamestnanec {input_data.get('FullName', '')} (ID: {next_id}) bol úspešne uložený."
     except Exception as e:
         print(f"PostgreSQL Error: {e}")
@@ -215,59 +230,60 @@ def add_new_employee_to_db(input_data: dict, df_template: pd.DataFrame):
 
 def get_drop_columns():
     return [
-            "EmployeeNumber", 
-            "EmployeeCount", 
-            "StandardHours", 
-            "Over18", 
-            "FirstName", 
-            "LastName", 
-            "FullName", 
-            "Email", 
+            "EmployeeNumber",
+            "EmployeeCount",
+            "StandardHours",
+            "Over18",
+            "FirstName",
+            "LastName",
+            "FullName",
+            "Email",
             "Username",
-            "DailyRate", 
+            "DailyRate",
             "HourlyRate",
-            "MonthlyRate", 
+            "MonthlyRate",
+            "EnvironmentSatisfaction",
             "RelationshipSatisfaction",
-            "JobLevel", 
-            "WorkLifeBalance", 
+            "JobSatisfaction",
+            "JobLevel",
+            "WorkLifeBalance",
             "JobInvolvement"
             ]
-    
+
 def preprocess_data_for_training(df: pd.DataFrame):
     df_proc = df.copy()
     drop_cols = get_drop_columns()
-    
+
     y = None
     if "Attrition" in df_proc.columns:
         df_proc["Attrition"] = df_proc["Attrition"].apply(lambda x: 1 if str(x).lower() == 'yes' else 0)
         y = df_proc["Attrition"]
         df_proc = df_proc.drop(columns=["Attrition"])
-    
+
     df_proc = df_proc.drop(columns=[c for c in drop_cols if c in df_proc.columns], errors='ignore')
 
     encoders = {}
-    cat_cols = df_proc.select_dtypes(include=["object", "category"]).columns
+    cat_cols = df_proc.select_dtypes(include=["object", "category", "string"]).columns
 
     for col in cat_cols:
         le = LabelEncoder()
         df_proc[col] = le.fit_transform(df_proc[col].astype(str))
         encoders[col] = le
-        
+
     return df_proc, y, encoders
 
 def preprocess_data_for_inference(df: pd.DataFrame, encoders, feature_cols):
     df_proc = df.copy()
-    
+
     drop_cols = get_drop_columns() + ["Attrition"]
-    
+
     X = df_proc.drop(columns=[c for c in drop_cols if c in df_proc.columns], errors='ignore')
-    
+
     for col, le in encoders.items():
         if col in X.columns:
-            # Bezpečné mapovanie: ak hodnota nie je známa, dáme 0
             X[col] = X[col].astype(str).map(lambda s: le.transform([s])[0] if s in le.classes_ else 0)
             X[col] = X[col].fillna(0).astype(int)
-            
+
     for col in feature_cols:
         if col not in X.columns:
             X[col] = 0
@@ -299,7 +315,7 @@ def run_optuna_optimization(X_train, y_train, X_test, y_test, n_trials=50):
                     "objective": "binary:logistic",
                     "eval_metric": "logloss",
                     "early_stopping_rounds": 15,
-                    }
+                }
         model = XGBClassifier(**params)
         model.fit(X_train, y_train, eval_set=[(X_test, y_test)], verbose=False)
         preds = model.predict(X_test)
@@ -309,7 +325,7 @@ def run_optuna_optimization(X_train, y_train, X_test, y_test, n_trials=50):
     optuna.logging.set_verbosity(optuna.logging.WARNING)
     study = optuna.create_study(direction="maximize")
     study.optimize(objective, n_trials=n_trials, show_progress_bar=True)
-    
+
     print(f"Najlepsia presnost: {study.best_value:.4f}")
     return study.best_params
 
@@ -320,7 +336,7 @@ def train_and_save_new_model(df_full: pd.DataFrame, n_trials=50, reuse_prev_para
     feature_names = X.columns.tolist()
 
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
-    
+
     best_params = None
     if reuse_prev_params and os.path.exists(MODEL_PATH):
         try:
@@ -328,40 +344,40 @@ def train_and_save_new_model(df_full: pd.DataFrame, n_trials=50, reuse_prev_para
             old_model = joblib.load(MODEL_PATH)
             best_params = old_model.get_params()
             print("Parametre uspecne nacitane. Preskakujem Optunu.")
-            
+
             keys_to_remove = ['missing', 'callbacks', 'monotone_constraints', 'interaction_constraints']
             for k in keys_to_remove:
-                if k in best_params: del best_params[k]
+                if k in best_params:
+                    del best_params[k]
         except Exception as e:
             print(f"Predosle parametre neboli uspesne nacitane ({e}). Spustam Optunu.")
             best_params = None
 
     if best_params is None:
         best_params = run_optuna_optimization(X_train, y_train, X_test, y_test, n_trials)
-    
+
     best_params.update({
-                        "random_state": 42, 
-                        "n_jobs": -1, 
+                        "random_state": 42,
+                        "n_jobs": -1,
                         "tree_method": "hist",
-                        "device": ACTIVE_DEVICE, 
-                        "objective": 
-                        "binary:logistic", 
-                        "eval_metric": "logloss", 
-                        "early_stopping_rounds":15
+                        "device": ACTIVE_DEVICE,
+                        "objective": "binary:logistic",
+                        "eval_metric": "logloss",
+                        "early_stopping_rounds": 15
                         })
-    
-    print(f"--> Trenujem finalny model ({ACTIVE_DEVICE})...")
+
+    print(f"Trenujem finalny model ({ACTIVE_DEVICE})...")
     final_model = XGBClassifier(**best_params)
     final_model.fit(X_train, y_train, eval_set=[(X_test, y_test)], verbose=False)
-    
+
     acc = accuracy_score(y_test, final_model.predict(X_test))
     print(f"Finalna presnost: {acc:.2%}")
-    
+
     print(f"Ukladam model do {MODEL_PATH}")
     joblib.dump(final_model, MODEL_PATH)
     joblib.dump(encoders, ENCODER_PATH)
     joblib.dump(feature_names, FEATURE_COLS_PATH)
-    
+
     return final_model, encoders, feature_names, acc
 
 # 4. CATEGORIZATION BY RISK THRESHOLD, CLIPPING IRRELEVANT DATA
@@ -373,7 +389,7 @@ def get_model_and_predictions(df_full: pd.DataFrame):
             model = joblib.load(MODEL_PATH)
             encoders = joblib.load(ENCODER_PATH)
             feature_names = joblib.load(FEATURE_COLS_PATH)
-            acc = 0.0 
+            acc = 0.0
         except Exception as e:
             print(f"Chyba pri nacitani: {e}. Spustam trening modelu.")
             model, encoders, feature_names, acc = train_and_save_new_model(df_full, reuse_prev_params=False)
@@ -383,27 +399,20 @@ def get_model_and_predictions(df_full: pd.DataFrame):
 
     print("Generujem predikcie pre aktualne data")
     X_current = preprocess_data_for_inference(df_full, encoders, feature_names)
-    
-    importance_df = pd.DataFrame({
-        "Feature": feature_names,
-        "Importance": model.feature_importances_
-    }).sort_values(by="Importance", ascending=False)
-    
+
+    importance_df = pd.DataFrame({"Feature": feature_names,"Importance": model.feature_importances_}).sort_values(by="Importance", ascending=False)
+
     predictions_df = df_full.copy()
     all_probs = model.predict_proba(X_current)[:, 1]
-    
-    predictions_df["Risk_Label"] = pd.cut(
-        all_probs, 
-        bins=[-0.1, 0.25, 0.50, 1.1], 
-        labels=["Low", "Medium", "High"]
-    )
+
+    predictions_df["Risk_Label"] = pd.cut(all_probs,bins=[-0.1, 0.25, 0.50, 1.1],labels=["Low", "Medium", "High"])
     predictions_df["Risk_Label"] = predictions_df["Risk_Label"].astype(str)
     predictions_df["Attrition_Prob"] = (all_probs * 100).round(2)
     predictions_df["Attrition_Prob"] = predictions_df["Attrition_Prob"].astype(str) + "%"
 
     cols_to_drop = []
     predictions_df.drop(columns=[c for c in cols_to_drop if c in predictions_df.columns], inplace=True)
-    
+
     cat_columns = predictions_df.select_dtypes(['category']).columns
     for col in cat_columns:
         predictions_df[col] = predictions_df[col].astype(str)
@@ -411,7 +420,7 @@ def get_model_and_predictions(df_full: pd.DataFrame):
     cols_order = ["EmployeeNumber", "FullName", "Risk_Label", "Attrition_Prob", "Department", "JobRole"]
     remaining_cols = [c for c in predictions_df.columns if c not in cols_order]
     predictions_df = predictions_df[cols_order + remaining_cols]
-    
+
     return model, encoders, feature_names, acc, importance_df, predictions_df
 
 # 5. ANOMALY DETECTION + FEATURE IMPORTANCE
@@ -424,30 +433,31 @@ def detect_department_anomalies(df_full: pd.DataFrame, n_optuna_trials=50):
     df_agg["OverTime_Flag"] = df_agg["OverTime"].apply(lambda x: 1 if str(x).lower() == 'yes' else 0)
 
     group_cols = ["Department", "JobRole"]
-    
+
     dept_stats = df_agg.groupby(group_cols).agg({
         "EmployeeNumber": "count",
-        "Attrition_Flag": "mean",       
-        "OverTime_Flag": "mean",        
-        "EnvironmentSatisfaction": lambda x: x.astype(int).mean(),
+        "Attrition_Flag": "mean",
+        "OverTime_Flag": "mean",
         "WorkLifeBalance": lambda x: x.astype(int).mean()
     }).reset_index()
 
-    dept_stats.rename(columns={
-        "EmployeeNumber": "Headcount", 
-        "Attrition_Flag": "Actual_Attrition_Rate",
-        "OverTime_Flag": "Avg_OverTime"
-    }, inplace=True)
+    dept_stats.rename(columns={"EmployeeNumber": "Headcount","Attrition_Flag": "Actual_Attrition_Rate","OverTime_Flag": "Avg_OverTime"}, inplace=True)
 
     dept_stats = dept_stats[dept_stats["Headcount"] > 2].copy()
 
-    features = ["Avg_OverTime", "EnvironmentSatisfaction", "WorkLifeBalance"]
+    features = ["Avg_OverTime", "WorkLifeBalance"]
     X = dept_stats[features]
     y = dept_stats["Actual_Attrition_Rate"]
 
     if len(dept_stats) < 10:
         print("   [INFO] Malo dat pre Optunu. Default config.")
-        best_params = {"n_estimators": 300, "max_depth": 10, "learning_rate": 0.001, "objective": "reg:squarederror", "device": ACTIVE_DEVICE}
+        best_params = {
+                        "n_estimators": 300,
+                        "max_depth": 10,
+                        "learning_rate": 0.001,
+                        "objective": "reg:squarederror",
+                        "device": ACTIVE_DEVICE
+                        }
     else:
         def objective_reg(trial):
             params = {
@@ -457,10 +467,13 @@ def detect_department_anomalies(df_full: pd.DataFrame, n_optuna_trials=50):
                         "subsample": trial.suggest_float("subsample", 0.5, 1.0),
                         "colsample_bytree": trial.suggest_float("colsample_bytree", 0.5, 1.0),
                         "min_child_weight": trial.suggest_int("min_child_weight", 1, 5),
-                        "random_state": 42, "n_jobs": -1, "tree_method": "hist",
-                        "device": ACTIVE_DEVICE, "objective": "reg:squarederror"
-                        }
-            
+                        "random_state": 42,
+                        "n_jobs": -1,
+                        "tree_method": "hist",
+                        "device": ACTIVE_DEVICE,
+                        "objective": "reg:squarederror"
+                    }
+
             X_tr, X_val, y_tr, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
             model = XGBRegressor(**params)
             model.fit(X_tr, y_tr, eval_set=[(X_val, y_val)], verbose=False)
@@ -473,30 +486,34 @@ def detect_department_anomalies(df_full: pd.DataFrame, n_optuna_trials=50):
         best_params = study_reg.best_params
 
     final_params = best_params.copy()
-    final_params.update({"random_state": 42, "n_jobs": -1, "objective": "reg:squarederror", "device": ACTIVE_DEVICE})
-    
+    final_params.update({
+                        "random_state": 42,
+                        "n_jobs": -1,
+                        "objective": "reg:squarederror",
+                        "device": ACTIVE_DEVICE
+                        })
+
     reg_model = XGBRegressor(**final_params)
     reg_model.fit(X, y)
-    
+
     dept_stats["Predicted_Attrition_Rate"] = reg_model.predict(X)
     residuals = dept_stats["Actual_Attrition_Rate"] - dept_stats["Predicted_Attrition_Rate"]
     dept_stats["Anomaly_Score"] = residuals
-    threshold = np.mean(residuals) + (1.5def make_sql_engine * np.std(residuals))
-    
+    threshold = np.mean(residuals) + (2 * np.std(residuals))
+
     print(f"Anomaly Threshold (Mean + 2*Std): {threshold:.4f}")
-    
+
     dept_stats["Is_Anomaly"] = dept_stats["Anomaly_Score"] > threshold
     dept_stats = dept_stats.sort_values(by="Anomaly_Score", ascending=False)
 
     cols_to_round = [
-                    "Actual_Attrition_Rate", 
-                    "Avg_OverTime", 
-                    "EnvironmentSatisfaction", 
-                    "WorkLifeBalance", 
-                    "Predicted_Attrition_Rate", 
+                    "Actual_Attrition_Rate",
+                    "Avg_OverTime",
+                    "WorkLifeBalance",
+                    "Predicted_Attrition_Rate",
                     "Anomaly_Score"
                     ]
-    
+
     for col in cols_to_round:
         if col in dept_stats.columns:
             dept_stats[col] = dept_stats[col].round(3)
@@ -507,18 +524,28 @@ def generate_feature_importance_by_role(df_full: pd.DataFrame):
     print("\n Generovanie Feature Importance podla JobRole")
     results = []
     roles = df_full["JobRole"].unique()
-    
+
     for role in roles:
         df_subset = df_full[df_full["JobRole"] == role].copy()
-        if len(df_subset) < 10: continue
-            
-        X, y, _ = preprocess_data_for_training(df_subset)
-        if "JobRole" in X.columns: X = X.drop(columns=["JobRole"])
-        if y.nunique() < 2: continue
+        if len(df_subset) < 10:
+            continue
 
-        model = XGBClassifier(n_estimators=300, max_depth=10, random_state=42, device=ACTIVE_DEVICE, tree_method="hist", verbose=0)
+        X, y, _ = preprocess_data_for_training(df_subset)
+        if "JobRole" in X.columns:
+            X = X.drop(columns=["JobRole"])
+        if y.nunique() < 2:
+            continue
+
+        model = XGBClassifier(
+            n_estimators=300,
+            max_depth=10,
+            random_state=42,
+            device=ACTIVE_DEVICE,
+            tree_method="hist",
+            verbose=0
+        )
         model.fit(X, y)
-        
+
         imp_dict = dict(zip(X.columns, model.feature_importances_))
         imp_dict["JobRole"] = role
         results.append(imp_dict)
@@ -529,9 +556,8 @@ def generate_feature_importance_by_role(df_full: pd.DataFrame):
     df_imp = pd.DataFrame(results).fillna(0)
 
     num_cols = [c for c in df_imp.columns if c != "JobRole"]
-
     df_imp[num_cols] = df_imp[num_cols].astype(float).round(3)
-    
+
     cols = ["JobRole"] + [c for c in df_imp.columns if c != "JobRole"]
     return df_imp[cols]
 
@@ -547,7 +573,7 @@ def run_gradio_app(
                     full_predictions_df,
                     feat_imp_by_role,
                     anomalies_df
-                ):
+):
     edu_map = {
         "1 - Základné": 1,
         "2 - Stredoškolské": 2,
@@ -600,10 +626,15 @@ def run_gradio_app(
                                         "Predicted_Attrition_Rate",
                                         "Anomaly_Score",
                                         "Is_Anomaly"
-                                        ])
+    ])
 
     anom_fig = px.bar(
-        pd.DataFrame({"Info": ["Anomalie neboli detekovane"], "Value": [0]}), x="Value", y="Info", orientation="h", title="Anomalie podla oddeleni vs. pozicii")
+        pd.DataFrame({"Info": ["Anomalie neboli detekovane"], "Value": [0]}),
+        x="Value",
+        y="Info",
+        orientation="h",
+        title="Anomalie podla oddeleni vs. pozicii"
+    )
     anom_fig.update_layout(height=350)
 
     if not anomalies_safe.empty:
@@ -693,9 +724,8 @@ def run_gradio_app(
         fname, lname, gender, age, marital, edu_level_str, edu_field, dist_home,
         dept, role, num_comp, total_years,
         years_at_company, years_curr_role, years_since_promo, years_curr_manager,
-        env_sat, job_sat, perf_rating,
-        income, overtime, percent_hike, train_times, travel):
-        
+        perf_rating, income, overtime, percent_hike, train_times, travel
+    ):
         full_name = f"{fname} {lname}".strip()
 
         def strip_accents(s):
@@ -726,8 +756,6 @@ def run_gradio_app(
                         "YearsInCurrentRole": years_curr_role,
                         "YearsSinceLastPromotion": years_since_promo,
                         "YearsWithCurrManager": years_curr_manager,
-                        "EnvironmentSatisfaction": env_sat,
-                        "JobSatisfaction": job_sat,
                         "PerformanceRating": perf_rating,
                         "MonthlyIncome": income,
                         "OverTime": overtime,
@@ -737,13 +765,7 @@ def run_gradio_app(
                     }
 
         full_data_for_db = input_dict.copy()
-        full_data_for_db.update({
-                                "FirstName": fname,
-                                "LastName": lname,
-                                "FullName": full_name,
-                                "Email": email,
-                                "Username": username
-                                })
+        full_data_for_db.update({"FirstName": fname, "LastName": lname, "FullName": full_name, "Email": email, "Username": username})
 
         pred_df = df_sample.iloc[0:1].copy()
 
@@ -784,8 +806,12 @@ font-size:15px;
 {decision}
 </span>
 """
-        role_specific_data = feat_imp_role_safe[feat_imp_role_safe["JobRole"] == role].copy() \
-            if not feat_imp_role_safe.empty and "JobRole" in feat_imp_role_safe.columns else pd.DataFrame()
+
+        role_specific_data = (
+            feat_imp_role_safe[feat_imp_role_safe["JobRole"] == role].copy()
+            if not feat_imp_role_safe.empty and "JobRole" in feat_imp_role_safe.columns
+            else pd.DataFrame()
+        )
 
         if not role_specific_data.empty:
             row = role_specific_data.iloc[0].drop("JobRole")
@@ -804,18 +830,8 @@ font-size:15px;
             title_txt = "Top faktory (globálny model)"
 
         fig = px.bar(
-            local_imp_df.head(10),
-            x="Importance",
-            y="Feature",
-            orientation="h",
-            title=title_txt,
-            color="Importance",
-            color_continuous_scale="Viridis"
-        )
-        fig.update_layout(
-            yaxis={"categoryorder": "total ascending"},
-            height=450
-        )
+            local_imp_df.head(10), x="Importance", y="Feature", orientation="h", title=title_txt, color="Importance", color_continuous_scale="Viridis")
+        fig.update_layout(yaxis={"categoryorder": "total ascending"},height=450)
 
         return (
             result_md,
@@ -857,23 +873,23 @@ font-size:15px;
     # e. UI Definition
 
     custom_css = """
-                    .app-header {
-                                padding: 18px 8px 8px 8px;
-                                margin-bottom: 6px;
-                    }
-                    .app-subtitle {
-                                    color: #6b7280;
-                                    margin-top: -8px;
-                                    margin-bottom: 18px;
-                    }
-                    .metric-card {
-                                    border-radius: 18px;
-                                    padding: 16px;
-                                    border: 1px solid #e5e7eb;
-                                    background: linear-gradient(180deg, #ffffff 0%, #f9fafb 100%);
-                                    box-shadow: 0 4px 18px rgba(0,0,0,0.04);
-                                }
-                """
+    .app-header {
+        padding: 18px 8px 8px 8px;
+        margin-bottom: 6px;
+    }
+    .app-subtitle {
+        color: #6b7280;
+        margin-top: -8px;
+        margin-bottom: 18px;
+    }
+    .metric-card {
+        border-radius: 18px;
+        padding: 16px;
+        border: 1px solid #e5e7eb;
+        background: linear-gradient(180deg, #ffffff 0%, #f9fafb 100%);
+        box-shadow: 0 4px 18px rgba(0,0,0,0.04);
+    }
+    """
 
     with gr.Blocks(theme=gr.themes.Soft(), css=custom_css, title="HR Analytics AI") as demo:
         gr.HTML("""
@@ -888,7 +904,7 @@ font-size:15px;
         current_data_state = gr.State(None)
 
         with gr.Tabs():
-            
+
             # f. TAB 1 - New employee simulator
 
             with gr.Tab("Simulator zamestnanca"):
@@ -950,11 +966,7 @@ font-size:15px;
                             in_years_man = gr.Slider(0, 20, value=2, step=0.5, label="Roky s aktualnym manazerom")
 
                     with gr.Column():
-                        gr.Markdown("#### 3. Vykon, spokojnost a odmena")
-
-                        with gr.Row():
-                            in_env_sat = gr.Slider(1, 4, value=3, step=1, label="Spokojnost s prostredim")
-                            in_job_sat = gr.Slider(1, 4, value=3, step=1, label="Spokojnost s pracou")
+                        gr.Markdown("#### 3. Vykon a odmena")
 
                         with gr.Row():
                             in_perf = gr.Slider(1, 4, value=3, step=1, label="Vykonnostne hodnotenie")
@@ -988,8 +1000,7 @@ font-size:15px;
                     in_fname, in_lname, in_gender, in_age, in_marital, in_edu_level, in_edu_field, in_dist,
                     in_dept, in_role, in_num_comp, in_total_years,
                     in_years_co, in_years_role, in_years_promo, in_years_man,
-                    in_env_sat, in_job_sat, in_perf,
-                    in_income, in_over, in_hike, in_training, in_travel
+                    in_perf, in_income, in_over, in_hike, in_training, in_travel
                 ]
 
                 btn_analyze.click(
@@ -1004,42 +1015,42 @@ font-size:15px;
                     outputs=[out_status]
                 )
 
-            # g. TAB 2: Anomalies dashboard 
-            
+            # g. TAB 2: Anomalies dashboard
+
             with gr.Tab("Anomalie"):
                 gr.Markdown("Manazersky prehlad")
 
                 with gr.Row():
                     gr.Markdown(
                         f"""
-                            <div class="metric-card">
+                        <div class="metric-card">
                             <div style="font-size:13px;color:#6b7280;">Celkový počct zamestnancov</div>
                             <div style="font-size:28px;font-weight:700;">{total_employees}</div>
-                            </div>
+                        </div>
                         """
                     )
                     gr.Markdown(
                         f"""
-                            <div class="metric-card">
+                        <div class="metric-card">
                             <div style="font-size:13px;color:#6b7280;">High Risk</div>
                             <div style="font-size:28px;font-weight:700;color:#dc2626;">{high_risk_count}</div>
-                            </div>
+                        </div>
                         """
                     )
                     gr.Markdown(
                         f"""
-                            <div class="metric-card">
+                        <div class="metric-card">
                             <div style="font-size:13px;color:#6b7280;">Medium Risk</div>
                             <div style="font-size:28px;font-weight:700;color:#d97706;">{medium_risk_count}</div>
-                            </div>
+                        </div>
                         """
                     )
                     gr.Markdown(
                         f"""
-                            <div class="metric-card">
+                        <div class="metric-card">
                             <div style="font-size:13px;color:#6b7280;">Priemerná pravdepodobnosť attrition</div>
                             <div style="font-size:28px;font-weight:700;">{avg_attrition_prob:.2f}%</div>
-                            </div>
+                        </div>
                         """
                     )
 
@@ -1053,7 +1064,7 @@ font-size:15px;
                             if "Department" in predictions_safe.columns else []
                         ),
                         label="Oddelenie",
-                        value="Vsetky"
+                        value="Všetky"
                     )
                     search_id = gr.Textbox(label="EmployeeNumber", placeholder="Napr. 1024")
 
@@ -1102,6 +1113,7 @@ font-size:15px;
                     gr.Markdown("*Heatmapu nebolo mozne vygenerovať — pravdepodobne chybaju data.*")
 
     return demo
+
 # ==========================
 # 7. MAIN FUNCTION
 # ==========================
@@ -1140,5 +1152,5 @@ if __name__ == "__main__":
         full_predictions_df=predictions_df,
         feat_imp_by_role=feat_imp_by_role,
         anomalies_df=anomalies_df
-                        )
+    )
     app.launch(share=False)
