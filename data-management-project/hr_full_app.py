@@ -298,11 +298,11 @@ def preprocess_data_for_inference(df: pd.DataFrame, encoders, feature_cols):
 
 # a. Optuna optimization
 
-def run_optuna_optimization(X_train, y_train, X_test, y_test, n_trials=50):
+def run_optuna_optimization(X_train, y_train, X_test, y_test, n_trials=100):
     def objective(trial: optuna.Trial) -> float:
         params = {
-                    "n_estimators": trial.suggest_int("n_estimators", 100, 800),
-                    "max_depth": trial.suggest_int("max_depth", 3, 12),
+                    "n_estimators": trial.suggest_int("n_estimators", 100, 1600),
+                    "max_depth": trial.suggest_int("max_depth", 5, 15),
                     "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.3, log=True),
                     "subsample": trial.suggest_float("subsample", 0.6, 1.0),
                     "colsample_bytree": trial.suggest_float("colsample_bytree", 0.6, 1.0),
@@ -314,7 +314,7 @@ def run_optuna_optimization(X_train, y_train, X_test, y_test, n_trials=50):
                     "device": ACTIVE_DEVICE,
                     "objective": "binary:logistic",
                     "eval_metric": "logloss",
-                    "early_stopping_rounds": 15,
+                    "early_stopping_rounds": 25,
                 }
         model = XGBClassifier(**params)
         model.fit(X_train, y_train, eval_set=[(X_test, y_test)], verbose=False)
@@ -329,7 +329,7 @@ def run_optuna_optimization(X_train, y_train, X_test, y_test, n_trials=50):
     print(f"Najlepsia presnost: {study.best_value:.4f}")
     return study.best_params
 
-def train_and_save_new_model(df_full: pd.DataFrame, n_trials=50, reuse_prev_params=True):
+def train_and_save_new_model(df_full: pd.DataFrame, n_trials=100, reuse_prev_params=True):
     print("\n Spustam trening modelu")
 
     X, y, encoders = preprocess_data_for_training(df_full)
@@ -363,7 +363,7 @@ def train_and_save_new_model(df_full: pd.DataFrame, n_trials=50, reuse_prev_para
                         "device": ACTIVE_DEVICE,
                         "objective": "binary:logistic",
                         "eval_metric": "logloss",
-                        "early_stopping_rounds": 15
+                        "early_stopping_rounds": 25
                         })
 
     print(f"Trenujem finalny model ({ACTIVE_DEVICE})...")
@@ -405,7 +405,7 @@ def get_model_and_predictions(df_full: pd.DataFrame):
     predictions_df = df_full.copy()
     all_probs = model.predict_proba(X_current)[:, 1]
 
-    predictions_df["Risk_Label"] = pd.cut(all_probs,bins=[-0.1, 0.25, 0.50, 1.1],labels=["Low", "Medium", "High"])
+    predictions_df["Risk_Label"] = pd.cut(all_probs, bins=[-0.1, 0.25, 0.50, 1.1], labels=["Low", "Medium", "High"])
     predictions_df["Risk_Label"] = predictions_df["Risk_Label"].astype(str)
     predictions_df["Attrition_Prob"] = (all_probs * 100).round(2)
     predictions_df["Attrition_Prob"] = predictions_df["Attrition_Prob"].astype(str) + "%"
@@ -434,12 +434,7 @@ def detect_department_anomalies(df_full: pd.DataFrame, n_optuna_trials=50):
 
     group_cols = ["Department", "JobRole"]
 
-    dept_stats = df_agg.groupby(group_cols).agg({
-        "EmployeeNumber": "count",
-        "Attrition_Flag": "mean",
-        "OverTime_Flag": "mean",
-        "WorkLifeBalance": lambda x: x.astype(int).mean()
-    }).reset_index()
+    dept_stats = df_agg.groupby(group_cols).agg({"EmployeeNumber": "count", "Attrition_Flag": "mean", "OverTime_Flag": "mean", "WorkLifeBalance": lambda x: x.astype(int).mean()}).reset_index()
 
     dept_stats.rename(columns={"EmployeeNumber": "Headcount","Attrition_Flag": "Actual_Attrition_Rate","OverTime_Flag": "Avg_OverTime"}, inplace=True)
 
@@ -452,8 +447,8 @@ def detect_department_anomalies(df_full: pd.DataFrame, n_optuna_trials=50):
     if len(dept_stats) < 10:
         print("   [INFO] Malo dat pre Optunu. Default config.")
         best_params = {
-                        "n_estimators": 300,
-                        "max_depth": 10,
+                        "n_estimators": 600,
+                        "max_depth": 12,
                         "learning_rate": 0.001,
                         "objective": "reg:squarederror",
                         "device": ACTIVE_DEVICE
@@ -461,8 +456,8 @@ def detect_department_anomalies(df_full: pd.DataFrame, n_optuna_trials=50):
     else:
         def objective_reg(trial):
             params = {
-                        "n_estimators": trial.suggest_int("n_estimators", 50, 800),
-                        "max_depth": trial.suggest_int("max_depth", 3, 15),
+                        "n_estimators": trial.suggest_int("n_estimators", 100, 1200),
+                        "max_depth": trial.suggest_int("max_depth", 5, 15),
                         "learning_rate": trial.suggest_float("learning_rate", 0.001, 0.3, log=True),
                         "subsample": trial.suggest_float("subsample", 0.5, 1.0),
                         "colsample_bytree": trial.suggest_float("colsample_bytree", 0.5, 1.0),
@@ -537,8 +532,8 @@ def generate_feature_importance_by_role(df_full: pd.DataFrame):
             continue
 
         model = XGBClassifier(
-            n_estimators=300,
-            max_depth=10,
+            n_estimators=600,
+            max_depth=12,
             random_state=42,
             device=ACTIVE_DEVICE,
             tree_method="hist",
@@ -575,12 +570,12 @@ def run_gradio_app(
                     anomalies_df
 ):
     edu_map = {
-        "1 - Základné": 1,
-        "2 - Stredoškolské": 2,
-        "3 - Bakalárske": 3,
-        "4 - Magisterské/Inžinierske": 4,
-        "5 - Doktorandské": 5
-    }
+                "1 - Základné": 1,
+                "2 - Stredoškolské": 2,
+                "3 - Bakalárske": 3,
+                "4 - Magisterské/Inžinierske": 4,
+                "5 - Doktorandské": 5
+                }
 
     # a. KPI Prep-work
     predictions_safe = full_predictions_df.copy() if full_predictions_df is not None else pd.DataFrame()
@@ -780,7 +775,7 @@ def run_gradio_app(
             decision = "NIZKE RIZIKO"
             color = "#16a34a"
             badge_bg = "#dcfce7"
-        elif prob <= 0.50:
+        elif prob <= 0.33:
             decision = "MIERNE RIZIKO"
             color = "#d97706"
             badge_bg = "#fef3c7"
