@@ -405,7 +405,7 @@ def get_model_and_predictions(df_full: pd.DataFrame):
     predictions_df = df_full.copy()
     all_probs = model.predict_proba(X_current)[:, 1]
 
-    predictions_df["Risk_Label"] = pd.cut(all_probs, bins=[-0.1, 0.25, 0.50, 1.1], labels=["Low", "Medium", "High"])
+    predictions_df["Risk_Label"] = pd.cut(all_probs, bins=[-0.1, 0.33, 0.51, 1.1], labels=["Low", "Medium", "High"])
     predictions_df["Risk_Label"] = predictions_df["Risk_Label"].astype(str)
     predictions_df["Attrition_Prob"] = (all_probs * 100).round(2)
     predictions_df["Attrition_Prob"] = predictions_df["Attrition_Prob"].astype(str) + "%"
