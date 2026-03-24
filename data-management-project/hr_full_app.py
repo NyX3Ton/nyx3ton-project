@@ -371,7 +371,7 @@ def train_and_save_new_model(df_full: pd.DataFrame, n_trials=100, reuse_prev_par
     final_model.fit(X_train, y_train, eval_set=[(X_test, y_test)], verbose=False)
 
     acc = accuracy_score(y_test, final_model.predict(X_test))
-    print(f"Finalna presnost: {acc:.2%}")
+    print(f"Finalna presnost: {acc:.3%}")
 
     print(f"Ukladam model do {MODEL_PATH}")
     joblib.dump(final_model, MODEL_PATH)
@@ -1125,7 +1125,7 @@ if __name__ == "__main__":
     model, encoders, feature_names, acc, feat_imp, predictions_df = get_model_and_predictions(df)
 
     # 2. Regression
-    anomalies_df = detect_department_anomalies(df, n_optuna_trials=50)
+    anomalies_df = detect_department_anomalies(df, n_optuna_trials=100)
 
     # 3. Feature importance by role
     feat_imp_by_role = generate_feature_importance_by_role(df)
