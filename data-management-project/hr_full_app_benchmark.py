@@ -19,7 +19,7 @@
 #	    f. Final comparison / export
 # ---------------------------------------------------------
 
-import copy, os, random, urllib.parse, warnings, joblib, psutil, optuna
+import copy, os, random, urllib.parse, warnings, joblib, psutil, optuna, json
 warnings.filterwarnings("ignore")
 
 from dataclasses import asdict, dataclass
@@ -656,14 +656,13 @@ def plot_final_metric_comparison(comparison_df: pd.DataFrame, save_path: Path) -
 def build_xgb_model(params: dict) -> XGBClassifier:
     params = params.copy()
     params.update({
-                    "random_state": SEED,
-                    "n_jobs": -1,
-                    "tree_method": "hist",
-                    "device": XGB_DEVICE,
-                    "objective": "binary:logistic",
-                    "eval_metric": ["logloss", "auc", "error"],
-                    })
-
+        "random_state": SEED,
+        "n_jobs": -1,
+        "tree_method": "hist",
+        "device": XGB_DEVICE,
+        "objective": "binary:logistic",
+        "eval_metric": ["logloss", "auc", "error"],
+    })
     model = XGBClassifier(**params)
     return model
 
@@ -675,21 +674,11 @@ def train_xgboost(
     params: dict,
 ) -> tuple[XGBClassifier, dict]:
     model = build_xgb_model(params)
-    callbacks = [
-        xgb.callback.EarlyStopping(
-                                    rounds=XGB_EARLY_STOPPING_ROUNDS,
-                                    metric_name="auc",
-                                    data_name="validation_1",
-                                    save_best=True,
-                                    maximize=True,
-                                    )
-    ]
     model.fit(
                 X_train,
                 y_train,
                 eval_set=[(X_train, y_train), (X_valid, y_valid)],
                 verbose=True,
-                callbacks=callbacks,
                 )
     return model, model.evals_result()
 
