@@ -319,7 +319,7 @@ def postgre_engine() -> sa.Engine:
         pool_pre_ping=True,
     )
 
-def load_hr_dataframe() -> pd.DataFrame:
+def load_from_postgre() -> pd.DataFrame:
     engine = postgre_engine()
     schema = postgre_schema()
     query = text(f"SELECT * FROM {qident(schema)}.{qident(HR_TABLE)}")
@@ -746,16 +746,16 @@ class TabMClassifier(nn.Module):
             num_embeddings = LinearReLUEmbeddings(n_num_features)
 
         self.model = TabM.make(
-            n_num_features=n_num_features,
-            cat_cardinalities=cat_cardinalities if cat_cardinalities else None,
-            num_embeddings=num_embeddings,
-            d_out=1,
-            arch_type=config.arch_type,
-            k=config.k,
-            n_blocks=config.n_blocks,
-            d_block=config.d_block,
-            dropout=config.dropout,
-        )
+                                n_num_features=n_num_features,
+                                cat_cardinalities=cat_cardinalities if cat_cardinalities else None,
+                                num_embeddings=num_embeddings,
+                                d_out=1,
+                                arch_type=config.arch_type,
+                                k=config.k,
+                                n_blocks=config.n_blocks,
+                                d_block=config.d_block,
+                                dropout=config.dropout,
+                                )
 
     def forward(self, x_num: torch.Tensor, x_cat: torch.Tensor) -> torch.Tensor:
         if x_cat.shape[1] > 0:
@@ -853,26 +853,26 @@ def train_tabm(
         valid_metrics = evaluate_binary_model(y_valid, valid_probs, threshold=TABM_THRESHOLD)
 
         row = {
-            "epoch": epoch,
-            "train_loss": float(np.mean(epoch_losses)),
-            "valid_accuracy": valid_metrics["accuracy"],
-            "valid_f1": valid_metrics["f1"],
-            "valid_precision": valid_metrics["precision"],
-            "valid_recall": valid_metrics["recall"],
-            "valid_roc_auc": valid_metrics["roc_auc"],
-            "valid_pr_auc": valid_metrics["pr_auc"],
-            "valid_logloss": valid_metrics["logloss"],
-        }
+                "epoch": epoch,
+                "train_loss": float(np.mean(epoch_losses)),
+                "valid_accuracy": valid_metrics["accuracy"],
+                "valid_f1": valid_metrics["f1"],
+                "valid_precision": valid_metrics["precision"],
+                "valid_recall": valid_metrics["recall"],
+                "valid_roc_auc": valid_metrics["roc_auc"],
+                "valid_pr_auc": valid_metrics["pr_auc"],
+                "valid_logloss": valid_metrics["logloss"],
+            }
         history_rows.append(row)
 
         if verbose:
             print(
-                f"[TabM] epoch={epoch:03d} "
-                f"train_loss={row['train_loss']:.6f} "
-                f"valid_acc={row['valid_accuracy']:.6f} "
-                f"valid_roc_auc={row['valid_roc_auc']:.6f} "
-                f"valid_pr_auc={row['valid_pr_auc']:.6f}"
-            )
+                    f"[TabM] epoch={epoch:03d} "
+                    f"train_loss={row['train_loss']:.6f} "
+                    f"valid_acc={row['valid_accuracy']:.6f} "
+                    f"valid_roc_auc={row['valid_roc_auc']:.6f} "
+                    f"valid_pr_auc={row['valid_pr_auc']:.6f}"
+                )
 
         score = row["valid_roc_auc"]
         if score > best_score:
@@ -892,14 +892,14 @@ def train_tabm(
     return model, pd.DataFrame(history_rows)
 
 def tune_tabm_optuna(
-                    x_num_train: np.ndarray,
-                    x_cat_train: np.ndarray,
-                    y_train: np.ndarray,
-                    x_num_valid: np.ndarray,
-                    x_cat_valid: np.ndarray,
-                    y_valid: np.ndarray,
-                    cat_cardinalities: list[int],
-                    n_trials: int = TABM_OPTUNA_TRIALS,
+                        x_num_train: np.ndarray,
+                        x_cat_train: np.ndarray,
+                        y_train: np.ndarray,
+                        x_num_valid: np.ndarray,
+                        x_cat_valid: np.ndarray,
+                        y_valid: np.ndarray,
+                        cat_cardinalities: list[int],
+                        n_trials: int = TABM_OPTUNA_TRIALS,
 ) -> tuple[TabMConfig, optuna.Study]:
     def objective(trial: optuna.Trial) -> float:
         config = make_tabm_config_from_trial(trial)
@@ -916,7 +916,7 @@ def tune_tabm_optuna(
                                         max_epochs=TABM_TUNE_EPOCHS,
                                         patience=TABM_TUNE_PATIENCE,
                                         verbose=True
-                                        )
+                                    )
         if history_df.empty:
             return 0.0
         return float(history_df["valid_roc_auc"].max())
@@ -929,15 +929,15 @@ def tune_tabm_optuna(
 
     best_params = study.best_params.copy()
     best_config = TabMConfig(
-        n_blocks=int(best_params["n_blocks"]),
-        d_block=int(best_params["d_block"]),
-        dropout=float(best_params["dropout"]),
-        k=32,
-        arch_type="tabm",
-        learning_rate=float(best_params["learning_rate"]),
-        weight_decay=0.0 if best_params["weight_decay_mode"] == "zero" else float(best_params["weight_decay"]),
-        batch_size=int(best_params["batch_size"]),
-    )
+                                n_blocks=int(best_params["n_blocks"]),
+                                d_block=int(best_params["d_block"]),
+                                dropout=float(best_params["dropout"]),
+                                k=32,
+                                arch_type="tabm",
+                                learning_rate=float(best_params["learning_rate"]),
+                                weight_decay=0.0 if best_params["weight_decay_mode"] == "zero" else float(best_params["weight_decay"]),
+                                batch_size=int(best_params["batch_size"]),
+                            )
     return best_config, study
 
 # =========================================================
@@ -961,26 +961,26 @@ def build_prediction_output(
 def main() -> None:
     print("START: Tuned XGBoost vs Tuned TabM benchmark")
 
-    df = load_hr_dataframe()
+    df = load_from_postgre()
     X_all, y_all, meta_all = prepare_base_dataframe(df)
 
     X_train_full, X_test, y_train_full, y_test, meta_train_full, meta_test = train_test_split(
-        X_all,
-        y_all,
-        meta_all,
-        test_size=TEST_SIZE,
-        random_state=SEED,
-        stratify=y_all,
-    )
+                                                                                            X_all,
+                                                                                            y_all,
+                                                                                            meta_all,
+                                                                                            test_size=TEST_SIZE,
+                                                                                            random_state=SEED,
+                                                                                            stratify=y_all,
+                                                                                            )
 
     X_train, X_valid, y_train, y_valid, _, _ = train_test_split(
-        X_train_full,
-        y_train_full,
-        meta_train_full,
-        test_size=VALID_SIZE,
-        random_state=SEED,
-        stratify=y_train_full,
-    )
+                                                                X_train_full,
+                                                                y_train_full,
+                                                                meta_train_full,
+                                                                test_size=VALID_SIZE,
+                                                                random_state=SEED,
+                                                                stratify=y_train_full,
+                                                                )
 
     print(f"Split -> train={len(X_train)}, valid={len(X_valid)}, test={len(X_test)} | "
         f"target mean train={y_train.mean():.4f}, valid={y_valid.mean():.4f}, test={y_test.mean():.4f}")
@@ -1059,11 +1059,11 @@ def main() -> None:
     xgb_importance = pd.DataFrame({"Feature": X_train_xgb.columns,"Importance": xgb_model.feature_importances_,}).sort_values("Importance", ascending=False)
 
     xgb_predictions_df = build_prediction_output(
-                                                meta_df=meta_test,
-                                                y_true=y_test.to_numpy(),
-                                                y_prob=xgb_test_prob,
-                                                threshold=XGB_THRESHOLD,
-                                                model_name="XGBoost",
+                                                    meta_df=meta_test,
+                                                    y_true=y_test.to_numpy(),
+                                                    y_prob=xgb_test_prob,
+                                                    threshold=XGB_THRESHOLD,
+                                                    model_name="XGBoost",
                                                 )
 
     joblib.dump(xgb_model, MODEL_DIR / "xgb_comparison_model.pkl")
@@ -1107,17 +1107,17 @@ def main() -> None:
     tabm_monitor = ResourceMonitor(label="TabM")
     tabm_monitor.start()
     tabm_model, tabm_history_df = train_tabm(
-                                            x_num_train=x_num_train,
-                                            x_cat_train=x_cat_train,
-                                            y_train=y_train.to_numpy(),
-                                            x_num_valid=x_num_valid,
-                                            x_cat_valid=x_cat_valid,
-                                            y_valid=y_valid.to_numpy(),
-                                            cat_cardinalities=preprocessor.categorical_cardinalities,
-                                            config=best_tabm_config,
-                                            max_epochs=TABM_FINAL_EPOCHS,
-                                            patience=TABM_FINAL_PATIENCE,
-                                            verbose=True,
+                                                x_num_train=x_num_train,
+                                                x_cat_train=x_cat_train,
+                                                y_train=y_train.to_numpy(),
+                                                x_num_valid=x_num_valid,
+                                                x_cat_valid=x_cat_valid,
+                                                y_valid=y_valid.to_numpy(),
+                                                cat_cardinalities=preprocessor.categorical_cardinalities,
+                                                config=best_tabm_config,
+                                                max_epochs=TABM_FINAL_EPOCHS,
+                                                patience=TABM_FINAL_PATIENCE,
+                                                verbose=True,
                                             )
     tabm_test_prob = predict_tabm_proba(tabm_model, x_num_test, x_cat_test, batch_size=max(1024, best_tabm_config.batch_size))
     tabm_monitor.stop()
