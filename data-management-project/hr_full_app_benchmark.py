@@ -69,12 +69,14 @@ MODEL_DIR = BASE_DIR / "model_save" / "model"
 OUTPUT_DIR = BASE_DIR / "Output"
 PLOTS_DIR = OUTPUT_DIR / "plots"
 OPTUNA_DIR = OUTPUT_DIR / "optuna"
+THRESHOLD_DIR = OUTPUT_DIR / "thresholds"
 
 DATA_ENV_PATH = INPUT_DIR / "data.env"
 MODEL_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 PLOTS_DIR.mkdir(parents=True, exist_ok=True)
 OPTUNA_DIR.mkdir(parents=True, exist_ok=True)
+THRESHOLD_DIR.mkdir(parents=True, exist_ok=True)
 
 HR_TABLE = "HR_Synth_Data"
 COMPARISON_CSV_PATH = OUTPUT_DIR / "model_comparison_tabm_vs_xgboost.csv"
@@ -95,8 +97,11 @@ RUN_TABM_OPTUNA = True
 XGB_OPTUNA_TRIALS = 40
 TABM_OPTUNA_TRIALS = 25
 
-XGB_THRESHOLD = 0.50
-TABM_THRESHOLD = 0.50
+DEFAULT_FIXED_THRESHOLD = 0.50
+THRESHOLD_MIN = 0.05
+THRESHOLD_MAX = 0.95
+THRESHOLD_STEP = 0.01
+THRESHOLD_SELECTION_METRIC = "f1"  # options: accuracy, f1, precision, recall, specificity, balanced_accuracy, youden_j
 
 XGB_EARLY_STOPPING_ROUNDS = 30
 TABM_FINAL_EPOCHS = 200
@@ -143,136 +148,38 @@ print(f"PYNVML_AVAILABLE = {PYNVML_AVAILABLE}")
 # =========================================================
 
 def bytes_to_gb(value: float | int) -> float:
-    return round(float(value) / (1024 ** 3), 4)
-
-class ResourceMonitor:
-    def __init__(self, label: str, sample_interval: float = RESOURCE_SAMPLE_INTERVAL_SEC):
-        self.label = label
-        self.sample_interval = sample_interval
-        self.process = psutil.Process(os.getpid())
-        self._stop_event = Event()
-        self._thread = None
-        self._nvml_initialized_here = False
-        self._gpu_handle = None
-        self.start_ts = None
-        self.end_ts = None
-        self.samples: list[dict] = []
-
-    def _init_gpu(self) -> None:
-        if not torch.cuda.is_available() or not PYNVML_AVAILABLE:
-            return
-        try:
-            pynvml.nvmlInit()
-            self._nvml_initialized_here = True
-            gpu_index = torch.cuda.current_device()
-            self._gpu_handle = pynvml.nvmlDeviceGetHandleByIndex(gpu_index)
-        except Exception:
-            self._gpu_handle = None
-            self._nvml_initialized_here = False
-
-    def _shutdown_gpu(self) -> None:
-        if self._nvml_initialized_here and PYNVML_AVAILABLE:
-            try:
-                pynvml.nvmlShutdown()
-            except Exception:
-                pass
-
-    def _sample_once(self) -> None:
-        vm = psutil.virtual_memory()
-        sample = {
-                    "label": self.label,
-                    "ts": perf_counter(),
-                    "process_cpu_percent": self.process.cpu_percent(interval=None),
-                    "system_cpu_percent": psutil.cpu_percent(interval=None),
-                    "process_rss_gb": bytes_to_gb(self.process.memory_info().rss),
-                    "system_used_ram_gb": bytes_to_gb(vm.used),
-                    "system_ram_percent": float(vm.percent),
-                    "gpu_util_percent": np.nan,
-                    "gpu_mem_util_percent": np.nan,
-                    "gpu_used_vram_gb": np.nan,
-                    "gpu_total_vram_gb": np.nan,
-                    }
-
-        if self._gpu_handle is not None:
-            try:
-                util = pynvml.nvmlDeviceGetUtilizationRates(self._gpu_handle)
-                mem = pynvml.nvmlDeviceGetMemoryInfo(self._gpu_handle)
-                sample["gpu_util_percent"] = float(util.gpu)
-                sample["gpu_mem_util_percent"] = float(util.memory)
-                sample["gpu_used_vram_gb"] = bytes_to_gb(mem.used)
-                sample["gpu_total_vram_gb"] = bytes_to_gb(mem.total)
-            except Exception:
-                pass
-
-        self.samples.append(sample)
-
-    def _run(self) -> None:
-        self.process.cpu_percent(interval=None)
-        psutil.cpu_percent(interval=None)
-        while not self._stop_event.is_set():
-            self._sample_once()
-            sleep(self.sample_interval)
-
-    def start(self) -> None:
-        self.start_ts = perf_counter()
-        self._init_gpu()
-        self._thread = Thread(target=self._run, daemon=True)
-        self._thread.start()
-
-    def stop(self) -> None:
-        self.end_ts = perf_counter()
-        self._stop_event.set()
-        if self._thread is not None:
-            self._thread.join(timeout=max(1.0, self.sample_interval * 4))
-        self._shutdown_gpu()
-
-    def summary(self) -> dict[str, float | str]:
-        df = pd.DataFrame(self.samples)
-        duration_sec = round((self.end_ts - self.start_ts), 4) if self.start_ts and self.end_ts else np.nan
-
-        result = {
-                    "label": self.label,
-                    "duration_sec": duration_sec,
-                    "samples": int(len(df)),
-                    "cpu_process_avg_pct": np.nan,
-                    "cpu_process_peak_pct": np.nan,
-                    "cpu_system_avg_pct": np.nan,
-                    "cpu_system_peak_pct": np.nan,
-                    "rss_avg_gb": np.nan,
-                    "rss_peak_gb": np.nan,
-                    "system_ram_avg_pct": np.nan,
-                    "system_ram_peak_pct": np.nan,
-                    "gpu_util_avg_pct": np.nan,
-                    "gpu_util_peak_pct": np.nan,
-                    "gpu_mem_util_avg_pct": np.nan,
-                    "gpu_mem_util_peak_pct": np.nan,
-                    "gpu_used_vram_avg_gb": np.nan,
-                    "gpu_used_vram_peak_gb": np.nan,
-                    "torch_peak_allocated_gb": np.nan,
-                    "torch_peak_reserved_gb": np.nan,
-                    }
+            "system_ram_peak_pct": np.nan,
+            "gpu_util_avg_pct": np.nan,
+            "gpu_util_peak_pct": np.nan,
+            "gpu_mem_util_avg_pct": np.nan,
+            "gpu_mem_util_peak_pct": np.nan,
+            "gpu_used_vram_avg_gb": np.nan,
+            "gpu_used_vram_peak_gb": np.nan,
+            "torch_peak_allocated_gb": np.nan,
+            "torch_peak_reserved_gb": np.nan,
+        }
 
         if not df.empty:
             result.update({
-                            "cpu_process_avg_pct": round(float(df["process_cpu_percent"].mean()), 4),
-                            "cpu_process_peak_pct": round(float(df["process_cpu_percent"].max()), 4),
-                            "cpu_system_avg_pct": round(float(df["system_cpu_percent"].mean()), 4),
-                            "cpu_system_peak_pct": round(float(df["system_cpu_percent"].max()), 4),
-                            "rss_avg_gb": round(float(df["process_rss_gb"].mean()), 4),
-                            "rss_peak_gb": round(float(df["process_rss_gb"].max()), 4),
-                            "system_ram_avg_pct": round(float(df["system_ram_percent"].mean()), 4),
-                            "system_ram_peak_pct": round(float(df["system_ram_percent"].max()), 4),
-                            })
+                "cpu_process_avg_pct": round(float(df["process_cpu_percent"].mean()), 4),
+                "cpu_process_peak_pct": round(float(df["process_cpu_percent"].max()), 4),
+                "cpu_system_avg_pct": round(float(df["system_cpu_percent"].mean()), 4),
+                "cpu_system_peak_pct": round(float(df["system_cpu_percent"].max()), 4),
+                "rss_avg_gb": round(float(df["process_rss_gb"].mean()), 4),
+                "rss_peak_gb": round(float(df["process_rss_gb"].max()), 4),
+                "system_ram_avg_pct": round(float(df["system_ram_percent"].mean()), 4),
+                "system_ram_peak_pct": round(float(df["system_ram_percent"].max()), 4),
+            })
 
             if df["gpu_util_percent"].notna().any():
                 result.update({
-                                "gpu_util_avg_pct": round(float(df["gpu_util_percent"].mean()), 4),
-                                "gpu_util_peak_pct": round(float(df["gpu_util_percent"].max()), 4),
-                                "gpu_mem_util_avg_pct": round(float(df["gpu_mem_util_percent"].mean()), 4),
-                                "gpu_mem_util_peak_pct": round(float(df["gpu_mem_util_percent"].max()), 4),
-                                "gpu_used_vram_avg_gb": round(float(df["gpu_used_vram_gb"].mean()), 4),
-                                "gpu_used_vram_peak_gb": round(float(df["gpu_used_vram_gb"].max()), 4),
-                                 })
+                    "gpu_util_avg_pct": round(float(df["gpu_util_percent"].mean()), 4),
+                    "gpu_util_peak_pct": round(float(df["gpu_util_percent"].max()), 4),
+                    "gpu_mem_util_avg_pct": round(float(df["gpu_mem_util_percent"].mean()), 4),
+                    "gpu_mem_util_peak_pct": round(float(df["gpu_mem_util_percent"].max()), 4),
+                    "gpu_used_vram_avg_gb": round(float(df["gpu_used_vram_gb"].mean()), 4),
+                    "gpu_used_vram_peak_gb": round(float(df["gpu_used_vram_gb"].max()), 4),
+                })
 
         if torch.cuda.is_available():
             try:
