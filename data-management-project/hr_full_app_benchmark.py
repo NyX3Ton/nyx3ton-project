@@ -19,7 +19,7 @@
 #	    f. Final comparison / export
 # ---------------------------------------------------------
 
-import copy. os, random, urllib.parse, warnings, joblib, psutil, optuna
+import copy, os, random, urllib.parse, warnings, joblib, psutil, optuna
 warnings.filterwarnings("ignore")
 
 from dataclasses import asdict, dataclass
@@ -67,28 +67,42 @@ except NameError:
 INPUT_DIR = BASE_DIR / "Input"
 MODEL_DIR = BASE_DIR / "model_save" / "model"
 OUTPUT_DIR = BASE_DIR / "Output"
+PLOTS_DIR = OUTPUT_DIR / "plots"
+OPTUNA_DIR = OUTPUT_DIR / "optuna"
 
 DATA_ENV_PATH = INPUT_DIR / "data.env"
 MODEL_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+PLOTS_DIR.mkdir(parents=True, exist_ok=True)
+OPTUNA_DIR.mkdir(parents=True, exist_ok=True)
 
 HR_TABLE = "HR_Synth_Data"
 COMPARISON_CSV_PATH = OUTPUT_DIR / "model_comparison_tabm_vs_xgboost.csv"
+RESOURCE_SUMMARY_CSV_PATH = OUTPUT_DIR / "benchmark_resource_summary.csv"
+RESOURCE_SAMPLES_CSV_PATH = OUTPUT_DIR / "benchmark_resource_samples.csv"
 XGB_PREDICTIONS_CSV_PATH = OUTPUT_DIR / "predictions_xgboost.csv"
 TABM_PREDICTIONS_CSV_PATH = OUTPUT_DIR / "predictions_tabm.csv"
+XGB_IMPORTANCE_CSV_PATH = OUTPUT_DIR / "xgboost_feature_importance.csv"
 
 SEED = 42
 TEST_SIZE = 0.20
 VALID_SIZE = 0.25  # z train casti -> 60/20/20 split
-TABM_EPOCHS = 200
-TABM_PATIENCE = 20
-TABM_BATCH_SIZE = 256
-LEARNING_RATE_TABM = 1e-3
-WEIGHT_DECAY_TABM = 1e-4
+RESOURCE_SAMPLE_INTERVAL_SEC = 0.50
+USE_SQL_EXPORT = False
+
+RUN_XGB_OPTUNA = True
+RUN_TABM_OPTUNA = True
+XGB_OPTUNA_TRIALS = 40
+TABM_OPTUNA_TRIALS = 25
+
 XGB_THRESHOLD = 0.50
 TABM_THRESHOLD = 0.50
-USE_SQL_EXPORT = False
-RESOURCE_SAMPLE_INTERVAL_SEC = 0.5
+
+XGB_EARLY_STOPPING_ROUNDS = 30
+TABM_FINAL_EPOCHS = 200
+TABM_FINAL_PATIENCE = 20
+TABM_TUNE_EPOCHS = 100
+TABM_TUNE_PATIENCE = 12
 
 # =========================================================
 # 2. DEVICE DETECTION GPU/CPU
