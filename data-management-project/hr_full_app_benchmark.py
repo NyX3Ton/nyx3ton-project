@@ -1092,7 +1092,7 @@ def build_prediction_output(
 
 
 def main() -> None:
-    print("=== START: Tuned XGBoost vs Tuned TabM benchmark ===")
+    print("START: Tuned XGBoost vs Tuned TabM benchmark")
 
     df = load_hr_dataframe()
     X_all, y_all, meta_all = prepare_base_dataframe(df)
