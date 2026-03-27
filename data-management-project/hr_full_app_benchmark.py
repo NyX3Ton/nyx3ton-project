@@ -33,7 +33,7 @@ import torch
 import torch.nn.functional as F
 import xgboost as xgb
 from rtdl_num_embeddings import LinearReLUEmbeddings
-from sklearn.metrics import (accuracy_score,average_precision_score,f1_score,log_loss,precision_recall_curve,precision_score,recall_score,roc_auc_score)
+from sklearn.metrics import (accuracy_score,average_precision_score,f1_score,log_loss,precision_score,recall_score,roc_auc_score)
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sqlalchemy import text
@@ -376,6 +376,8 @@ def get_drop_columns() -> list[str]:
             "JobLevel",
             "WorkLifeBalance",
             "JobInvolvement",
+            "YearsWithCurrManager",
+            "TotalWorkingYears"
             ]
 
 def target_to_binary(series: pd.Series) -> pd.Series:
