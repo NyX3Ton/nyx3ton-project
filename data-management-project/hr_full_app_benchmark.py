@@ -1,5 +1,6 @@
 # %pip install --upgrade pip
-# %pip install --upgrade pandas numpy sqlalchemy psycopg2-binary scikit-learn xgboost torch tabm rtdl_num_embeddings joblib psutil nvidia-ml-py optuna matplotlib
+# %pip install --upgrade pandas numpy sqlalchemy psycopg2-binary scikit-learn xgboost tabm rtdl_num_embeddings joblib psutil nvidia-ml-py optuna matplotlib
+# %pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
 
 # ---------------------------------------------------------
 # 1. GLOBAL CONFIGURATION
