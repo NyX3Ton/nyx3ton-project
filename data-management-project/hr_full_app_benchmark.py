@@ -1,6 +1,6 @@
 # %pip install --upgrade pip
 # %pip install --upgrade pandas numpy sqlalchemy psycopg2-binary scikit-learn xgboost tabm rtdl_num_embeddings joblib psutil nvidia-ml-py optuna matplotlib
-# %pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
+# %pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu1261
 
 # ---------------------------------------------------------
 # 1. GLOBAL CONFIGURATION
@@ -98,11 +98,11 @@ DEFAULT_FIXED_THRESHOLD = 0.50
 THRESHOLD_MIN = 0.05
 THRESHOLD_MAX = 0.95
 THRESHOLD_STEP = 0.01
-THRESHOLD_SELECTION_METRIC = "f1"  # options: accuracy, f1, precision, recall, specificity, balanced_accuracy, youden_j
+THRESHOLD_SELECTION_METRIC = "balanced_accuracy"  # options: accuracy, f1, precision, recall, specificity, balanced_accuracy, youden_j
 
 XGB_EARLY_STOPPING_ROUNDS = 25
-TABM_FINAL_EPOCHS = 250
-TABM_FINAL_PATIENCE = 50
+TABM_FINAL_EPOCHS = 100
+TABM_FINAL_PATIENCE = 25
 TABM_TUNE_EPOCHS = 100
 TABM_TUNE_PATIENCE = 25
 
