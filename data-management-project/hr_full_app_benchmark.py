@@ -84,8 +84,8 @@ TABM_PREDICTIONS_CSV_PATH = OUTPUT_DIR / "predictions_tabm.csv"
 XGB_IMPORTANCE_CSV_PATH = OUTPUT_DIR / "xgboost_feature_importance.csv"
 
 SEED = 42
-TEST_SIZE = 0.20
-VALID_SIZE = 0.25  # z train casti -> 60/20/20 split
+TEST_SIZE = 0.40
+VALID_SIZE = 0.5
 RESOURCE_SAMPLE_INTERVAL_SEC = 0.1
 USE_SQL_EXPORT = False
 
@@ -94,11 +94,11 @@ RUN_TABM_OPTUNA = True
 XGB_OPTUNA_TRIALS = 100
 TABM_OPTUNA_TRIALS = 100
 
-DEFAULT_FIXED_THRESHOLD = 0.50
-THRESHOLD_MIN = 0.05
+DEFAULT_FIXED_THRESHOLD = 0.66
+THRESHOLD_MIN = 0.50
 THRESHOLD_MAX = 0.95
 THRESHOLD_STEP = 0.01
-THRESHOLD_SELECTION_METRIC = "balanced_accuracy"  # options: accuracy, f1, precision, recall, specificity, balanced_accuracy, youden_j
+THRESHOLD_SELECTION_METRIC = "accuracy"  # options: accuracy, f1, precision, recall, specificity, balanced_accuracy, youden_j
 
 XGB_EARLY_STOPPING_ROUNDS = 25
 TABM_FINAL_EPOCHS = 100
@@ -370,14 +370,6 @@ def get_drop_columns() -> list[str]:
             "DailyRate",
             "HourlyRate",
             "MonthlyRate",
-            "EnvironmentSatisfaction",
-            "RelationshipSatisfaction",
-            "JobSatisfaction",
-            "JobLevel",
-            "WorkLifeBalance",
-            "JobInvolvement",
-            "YearsWithCurrManager",
-            "TotalWorkingYears"
             ]
 
 def target_to_binary(series: pd.Series) -> pd.Series:
@@ -821,8 +813,8 @@ def train_xgboost(
 def get_default_xgb_params() -> dict:
     return {
             "n_estimators": 600,
-            "max_depth": 10,
-            "learning_rate": 0.001,
+            "max_depth": 12,
+            "learning_rate": 0.0005,
             "subsample": 0.8,
             "colsample_bytree": 0.8,
             "min_child_weight": 2,
@@ -841,15 +833,15 @@ def tune_xgboost_optuna(
 ) -> tuple[dict, optuna.Study]:
     def objective(trial: optuna.Trial) -> float:
         params = {
-                    "n_estimators": trial.suggest_int("n_estimators", 200, 1600),
-                    "max_depth": trial.suggest_int("max_depth", 5, 15),
-                    "learning_rate": trial.suggest_float("learning_rate", 1e-3, 0.2, log=True),
-                    "subsample": trial.suggest_float("subsample", 0.6, 1.0),
-                    "colsample_bytree": trial.suggest_float("colsample_bytree", 0.6, 1.0),
+                    "n_estimators": trial.suggest_int("n_estimators", 400, 1600),
+                    "max_depth": trial.suggest_int("max_depth", 6, 15),
+                    "learning_rate": trial.suggest_float("learning_rate", 0.0001, 0.01, log=True),
+                    "subsample": trial.suggest_float("subsample", 0.5, 1.0),
+                    "colsample_bytree": trial.suggest_float("colsample_bytree", 0.5, 1.0),
                     "min_child_weight": trial.suggest_int("min_child_weight", 1, 10),
-                    "gamma": trial.suggest_float("gamma", 0.0, 5.0),
-                    "reg_alpha": trial.suggest_float("reg_alpha", 1e-8, 10.0, log=True),
-                    "reg_lambda": trial.suggest_float("reg_lambda", 1e-8, 10.0, log=True),
+                    "gamma": trial.suggest_float("gamma", 0, 5),
+                    "reg_alpha": trial.suggest_float("reg_alpha", 1e-4, 6, log=True),
+                    "reg_lambda": trial.suggest_float("reg_lambda", 1e-4, 6, log=True),
                 }
 
         model, _ = train_xgboost(X_train, y_train, X_valid, y_valid, params)
@@ -874,7 +866,7 @@ class TabMConfig:
                 dropout: float = 0.10
                 k: int = 32
                 arch_type: str = "tabm"
-                learning_rate: float = 0.001
+                learning_rate: float = 0.0005
                 weight_decay: float = 0.0003
                 batch_size: int = 256
 
@@ -930,14 +922,14 @@ def make_tabm_config_from_trial(trial: optuna.Trial) -> TabMConfig:
     weight_decay = 0.0 if wd_choice == "zero" else trial.suggest_float("weight_decay", 1e-4, 1e-1, log=True)
 
     return TabMConfig(
-                    n_blocks=trial.suggest_int("n_blocks", 2, 4),
-                    d_block=trial.suggest_int("d_block", 128, 1024, step=64),
+                    n_blocks=trial.suggest_int("n_blocks", 4, 6),
+                    d_block=trial.suggest_int("d_block", 128, 1024, step=128),
                     dropout=trial.suggest_float("dropout", 0.0, 0.30),
                     k=32,
                     arch_type="tabm",
-                    learning_rate=trial.suggest_float("learning_rate", 1e-4, 5e-3, log=True),
+                    learning_rate=trial.suggest_float("learning_rate", 0.0001, 0.01, log=True),
                     weight_decay=weight_decay,
-                    batch_size=trial.suggest_categorical("batch_size", [128, 256, 512]),
+                    batch_size=trial.suggest_categorical("batch_size", [128, 256, 512, 1024]),
                     )
 
 

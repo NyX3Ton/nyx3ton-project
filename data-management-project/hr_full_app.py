@@ -229,26 +229,26 @@ def add_new_employee_to_db(input_data: dict, df_template: pd.DataFrame):
 # 2. DATA PREPROCESSING
 
 def get_drop_columns():
-    return [
-            "EmployeeNumber",
-            "EmployeeCount",
-            "StandardHours",
-            "Over18",
-            "FirstName",
-            "LastName",
-            "FullName",
-            "Email",
-            "Username",
-            "DailyRate",
-            "HourlyRate",
-            "MonthlyRate",
-            "EnvironmentSatisfaction",
-            "RelationshipSatisfaction",
-            "JobSatisfaction",
-            "JobLevel",
-            "WorkLifeBalance",
-            "JobInvolvement"
-            ]
+                        return [
+                                "EmployeeNumber",
+                                "EmployeeCount",
+                                "StandardHours",
+                                "Over18",
+                                "FirstName",
+                                "LastName",
+                                "FullName",
+                                "Email",
+                                "Username",
+                                "DailyRate",
+                                "HourlyRate",
+                                "MonthlyRate",
+                                "EnvironmentSatisfaction",
+                                "RelationshipSatisfaction",
+                                "JobSatisfaction",
+                                "JobLevel",
+                                "WorkLifeBalance",
+                                "JobInvolvement"
+                                ]
 
 def preprocess_data_for_training(df: pd.DataFrame):
     df_proc = df.copy()
@@ -313,7 +313,7 @@ def run_optuna_optimization(X_train, y_train, X_test, y_test, n_trials=100):
                     "tree_method": "hist",
                     "device": ACTIVE_DEVICE,
                     "objective": "binary:logistic",
-                    "eval_metric": "logloss",
+                    "eval_metric": "aucpr",
                     "early_stopping_rounds": 25,
                 }
         model = XGBClassifier(**params)
@@ -362,8 +362,8 @@ def train_and_save_new_model(df_full: pd.DataFrame, n_trials=100, reuse_prev_par
                         "tree_method": "hist",
                         "device": ACTIVE_DEVICE,
                         "objective": "binary:logistic",
-                        "eval_metric": "logloss",
-                        "early_stopping_rounds": 25
+                        "eval_metric": "aucpr",
+                        "early_stopping_rounds": 25, 
                         })
 
     print(f"Trenujem finalny model ({ACTIVE_DEVICE})...")
@@ -466,6 +466,7 @@ def detect_department_anomalies(df_full: pd.DataFrame, n_optuna_trials=50):
                         "n_jobs": -1,
                         "tree_method": "hist",
                         "device": ACTIVE_DEVICE,
+                        "eval_metric": "aucpr",
                         "objective": "reg:squarederror"
                     }
 
@@ -532,13 +533,14 @@ def generate_feature_importance_by_role(df_full: pd.DataFrame):
             continue
 
         model = XGBClassifier(
-            n_estimators=600,
-            max_depth=12,
-            random_state=42,
-            device=ACTIVE_DEVICE,
-            tree_method="hist",
-            verbose=0
-        )
+                                n_estimators=900,
+                                max_depth=12,
+                                random_state=42,
+                                device=ACTIVE_DEVICE,
+                                tree_method="hist",
+                                verbose=0, 
+                                objective = "binary:logistic"
+                                )
         model.fit(X, y)
 
         imp_dict = dict(zip(X.columns, model.feature_importances_))
