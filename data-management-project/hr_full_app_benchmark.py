@@ -100,11 +100,11 @@ THRESHOLD_MAX = 0.95
 THRESHOLD_STEP = 0.01
 THRESHOLD_SELECTION_METRIC = "accuracy"  # options: accuracy, f1, precision, recall, specificity, balanced_accuracy, youden_j
 
-XGB_EARLY_STOPPING_ROUNDS = 25
+XGB_EARLY_STOPPING_ROUNDS = 20
 TABM_FINAL_EPOCHS = 100
-TABM_FINAL_PATIENCE = 25
+TABM_FINAL_PATIENCE = 20
 TABM_TUNE_EPOCHS = 100
-TABM_TUNE_PATIENCE = 25
+TABM_TUNE_PATIENCE = 20
 
 # =========================================================
 # 2. DEVICE DETECTION GPU/CPU
