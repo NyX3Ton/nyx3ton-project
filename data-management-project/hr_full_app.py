@@ -15,7 +15,7 @@
 #       c. Heatmap definition
 #       d. Callbacks
 #       e. UI Definition
-#       f. TAB 1 - New employee simulator
+#       f. TAB 1: New employee simulator
 #       g. TAB 2: Anomalies dashboard
 # 7. MAIN FUNCTION
 # ---------------------------------------------------------
