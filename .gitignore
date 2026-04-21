@@ -71,6 +71,7 @@ Thumbs.db
 Keyword tokenizer/RAG_store/
 *.sqlite3
 /Models/
+/Thesaurus/
 
 # =====================
 # Secrets
