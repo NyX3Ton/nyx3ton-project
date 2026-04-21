@@ -70,7 +70,7 @@ Thumbs.db
 /__temp__/
 Keyword tokenizer/RAG_store/
 *.sqlite3
-
+/Models/
 
 # =====================
 # Secrets
