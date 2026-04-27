@@ -189,14 +189,19 @@ def weighted_average(rows: List[Dict[str, Any]]) -> float:
 # -----------------------------------------------------------------------------
 
 def load_pdf(path: str) -> str:
-    import fitz  # PyMuPDF
+    fitz = import_module("fitz")  # PyMuPDF
 
     parts = []
     with fitz.open(path) as doc:
-        for i, page in enumerate(doc, start=1):
+        page_count = int(getattr(doc, "page_count", 0))
+
+        for page_index in range(page_count):
+            page = doc.load_page(page_index)
             text = page.get_text("text") or ""
+
             if text.strip():
-                parts.append(f"\n--- PAGE {i} ---\n{text}")
+                parts.append(f"\n--- PAGE {page_index + 1} ---\n{text}")
+
     return normalize_space("\n".join(parts))
 
 def load_docx(path: str) -> str:
@@ -345,11 +350,28 @@ def get_embedder(model_id: str = DEFAULT_EMBED_MODEL_ID):
 def build_faiss_index(chunks: List[str], embed_model_id: str) -> Tuple[Any, Any]:
     if not chunks:
         raise ValueError("CV neobsahuje ziadny pouzitelny text/chunk.")
+
     embedder = get_embedder(embed_model_id)
-    vectors = embedder.encode(chunks, convert_to_numpy=True, normalize_embeddings=True, show_progress_bar=False)
-    vectors = vectors.astype("float32")
-    index = faiss.IndexFlatIP(vectors.shape[1])
-    index.add(vectors)
+
+    vectors = embedder.encode(
+        chunks,
+        convert_to_numpy=True,
+        normalize_embeddings=True,
+        show_progress_bar=False,
+    )
+
+    np_mod = cast(Any, np)
+    vectors = np_mod.asarray(vectors, dtype="float32")
+
+    if vectors.ndim != 2:
+        raise ValueError(f"Embedding model vratil necakany tvar vektorov: {vectors.shape}")
+
+    faiss_mod = cast(Any, faiss)
+    index = cast(Any, faiss_mod.IndexFlatIP(int(vectors.shape[1])))
+
+    add_fn = cast(Any, index.add)
+    add_fn(vectors)
+
     return index, vectors
 
 
@@ -903,7 +925,7 @@ def build_ui():
                 job_text_manual = gr.Textbox(
                     label="Alebo vloz text inzeratu manualne",
                     lines=8,
-                    placeholder="Text pracovnej ponuky...",
+                    placeholder="Text pracovnej ponuky",
                 )
 
                 with gr.Accordion("Model nastavenia", open=False):
