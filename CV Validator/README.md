@@ -38,3 +38,11 @@ LLM vyhodnoti poziadavku iba z dokazov
         v
 report + JSON vystup
 ```
+
+## 3. Podporovane dokumenty
+
+- PDF cez PyMuPDF
+- DOCX cez python-docx
+- RTF cez striprtf
+- TXT/MD priamo
+- DOC legacy cez Microsoft Word COM fallback, ak je nainstalovany Word + pywin32
