@@ -18,7 +18,7 @@ try:
 except Exception:
     pass
 
-DEFAULT_LLM_MODEL_ID = os.getenv("LLM_MODEL_ID", "nvidia/Llama-3.1-Nemotron-Nano-8B-v1")
+DEFAULT_LLM_MODEL_ID = os.getenv("LLM_MODEL_ID", "Qwen/Qwen2.5-7B-Instruct")
 DEFAULT_FALLBACK_LLM_MODEL_ID = os.getenv("FALLBACK_LLM_MODEL_ID", "Qwen/Qwen2.5-3B-Instruct")
 DEFAULT_EMBED_MODEL_ID = os.getenv("EMBED_MODEL_ID","sentence-transformers/paraphrase-multilingual-mpnet-base-v2",)
 
