@@ -26,10 +26,11 @@ LLM_LOAD_MODE = os.getenv("LLM_LOAD_MODE", "auto")  # auto | bnb_4bit | fp16_gpu
 MAX_GPU_MEMORY = os.getenv("MAX_GPU_MEMORY", "10.5GiB")
 MAX_INPUT_TOKENS = int(os.getenv("MAX_INPUT_TOKENS", "8192"))
 MAX_NEW_TOKENS = int(os.getenv("MAX_NEW_TOKENS", "900"))
-CHUNK_WORDS = int(os.getenv("CHUNK_WORDS", "180"))
-CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "45"))
+CHUNK_WORDS = int(os.getenv("CHUNK_WORDS", "220"))
+CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "55"))
 DEFAULT_TOP_K = int(os.getenv("TOP_K", "5"))
 DEFAULT_MAX_REQUIREMENTS = int(os.getenv("MAX_REQUIREMENTS", "12"))
+MIN_RAG_SIMILARITY = float(os.getenv("MIN_RAG_SIMILARITY", "0.20"))
 
 # Optional local HF cache in project folder. Leave empty to use default user cache.
 HF_HOME_LOCAL = os.getenv("HF_HOME_LOCAL", "").strip()
@@ -382,6 +383,8 @@ def rag_search(query: str, chunks: List[str], index: Any, embed_model_id: str, t
     results = []
     for score, idx in zip(scores[0], ids[0]):
         if idx < 0:
+            continue
+        if float(score) < MIN_RAG_SIMILARITY:
             continue
         results.append(f"[similarity={float(score):.3f}] {chunks[int(idx)]}")
     return results
