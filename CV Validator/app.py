@@ -510,7 +510,7 @@ SYSTEM_JSON = """
                 - nepouzivaj markdown
                 - nepouzivaj text mimo JSON
                 - nehadaj informacie, ktore nie su v dodanom texte
-                - pri hodnoteni kandidata pouzivaj iba dodane dokazy z CV
+                - pri hodnoteni kandidata pouzivaj iba dodane odkazy z CV
                 - nevykonavaj finalne rozhodnutie o prijati kandidata
                 - vystup sluzi iba ako odporucanie pre cloveka
                 - nehodnot citlive atributy ako vek, pohlavie, narodnost, zdravotny stav, rodinny stav, fotografia alebo adresa
@@ -697,16 +697,16 @@ def evaluate_one_requirement(
                 }
     user = (
             "Vyhodnot, ci kandidat splna jednu poziadavku z pracovneho inzeratu.\n"
-            "Pouzi iba dodane dokazy z CV. Ak dokaz chyba, nehadaj.\n\n"
+            "Pouzi iba dodane odkazy z CV. Ak dokaz chyba, nehadaj.\n\n"
             "Vrat presne tento JSON tvar:\n"
             + json.dumps(schema, ensure_ascii=False, indent=2)
             + "\n\nSkorovanie:\n"
             "- 90-100 = jasne splnene\n"
             "- 60-89 = skor splnene alebo ciastocne\n"
-            "- 30-59 = slabe/nepriame dokazy\n"
+            "- 30-59 = slabe/nepriame odkazy\n"
             "- 0-29 = nesplnene alebo chyba dokaz\n\n"
             "POZIADAVKA:\n" + json.dumps(requirement, ensure_ascii=False) + "\n\n"
-            "DOKAZY Z CV:\n" + json.dumps(evidence, ensure_ascii=False, indent=2)
+            "odkazy Z CV:\n" + json.dumps(evidence, ensure_ascii=False, indent=2)
             )
     raw = chat_generate(SYSTEM_JSON, user, model_id, load_mode, fallback_model_id, max_new_tokens=850)
     data = safe_json_loads(raw, fallback={})
@@ -808,14 +808,14 @@ def render_markdown_report(job_data: Dict[str, Any], candidate: Dict[str, Any], 
         )
 
     lines.append("")
-    lines.append("## Dokazy a poznamky")
+    lines.append("## Odkazy a poznamky")
     for r in evals:
         lines.append(f"\n### {status_icon(r.get('status', ''))} {r.get('requirement_id', '')}: {r.get('requirement', '')}")
         if r.get("risk_note"):
             lines.append(f"**Riziko/neistota:** {r.get('risk_note')}")
         ev = r.get("evidence_used") or []
         if isinstance(ev, list) and ev:
-            lines.append("**Pouzite dokazy:**")
+            lines.append("**Pouzite odkazy:**")
             for e in ev[:3]:
                 short = normalize_space(str(e))[:700]
                 lines.append(f"- {short}")
