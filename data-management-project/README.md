@@ -1,5 +1,14 @@
 # HR Attrition tool (backend + frontend)
 
+Povinne kniznice na beh
+```text
+
+!pip install --upgrade pip
+!pip install --upgrade optuna pandas numpy sqlalchemy pyodbc matplotlib seaborn plotly scikit-learn xgboost joblib gradio psycopg2-binary
+
+
+```
+
 ## 1. Konfiguracia
 ```text
 ACTIVE_DEVICE = get_xgboost_device()
