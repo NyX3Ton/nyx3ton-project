@@ -36,7 +36,7 @@ Embedding model vytvori FAISS index
 Ku kazdej poziadavke sa najdu dokazy z CV
         |
         v
-LLM vyhodnoti poziadavku iba z dokazov
+LLM vyhodnoti poziadavku z odkazov
         |
         v
 Report + JSON vystup
