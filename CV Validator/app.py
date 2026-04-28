@@ -16,16 +16,18 @@ from sentence_transformers import SentenceTransformer
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from dotenv import load_dotenv
 
-load_dotenv()
+# -----------------------------------------------------------------------------
+# 1. ENV + GLOBAL SETTINGS
+# -----------------------------------------------------------------------------
+APP_DIR = Path(__file__).resolve().parent
+load_dotenv(APP_DIR / ".env")
 
 def env_bool(name: str, default: bool = False) -> bool:
     value = os.getenv(name)
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}
-# -----------------------------------------------------------------------------
-# 1. ENV + GLOBAL SETTINGS
-# -----------------------------------------------------------------------------
+
 DEFAULT_LLM_MODEL_ID = os.getenv("LLM_MODEL_ID", "Qwen/Qwen2.5-7B-Instruct")
 DEFAULT_FALLBACK_LLM_MODEL_ID = os.getenv("FALLBACK_LLM_MODEL_ID", "Qwen/Qwen2.5-3B-Instruct")
 DEFAULT_EMBED_MODEL_ID = os.getenv("EMBED_MODEL_ID","sentence-transformers/paraphrase-multilingual-mpnet-base-v2",)
@@ -42,6 +44,7 @@ MIN_RAG_SIMILARITY = float(os.getenv("MIN_RAG_SIMILARITY", "0.20"))
 TEMPERATURE_SETTING = float(os.getenv("DEF_TEMPERATURE_SETTING", "0.20"))
 SAMPLE_SETTING = env_bool("DEF_SAMPLE_SETTING", True)
 P_SETTING = float(os.getenv("DEF_P_SETTING", "0.95"))
+GEN_TOP_K_SETTING = int(os.getenv("DEF_TOP_K_SETTING", "20"))
 
 HF_HOME_LOCAL = os.getenv("HF_HOME_LOCAL", "").strip()
 if HF_HOME_LOCAL:
@@ -68,37 +71,45 @@ class Requirement:
 # -----------------------------------------------------------------------------
 # 3. UTILS
 # -----------------------------------------------------------------------------
+
+def strip_thinking(text: str) -> str:
+    if not text:
+        return text
+
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE).strip()
+
+    if "</think>" in text:
+        text = text.split("</think>", 1)[-1].strip()
+
+    return text.strip()
+
 def safe_json_loads(text: str, fallback: Any) -> Any:
     if not text:
         return fallback
 
-    cleaned = text.strip()
+    cleaned = strip_thinking(text).strip()
     cleaned = re.sub(r"^```(?:json)?", "", cleaned, flags=re.IGNORECASE).strip()
     cleaned = re.sub(r"```$", "", cleaned).strip()
 
-    # Direct parse
     try:
         return json.loads(cleaned)
     except Exception:
         pass
 
-    # Try object
-    obj_start = cleaned.find("{")
-    obj_end = cleaned.rfind("}")
-    if obj_start != -1 and obj_end != -1 and obj_end > obj_start:
-        try:
-            return json.loads(cleaned[obj_start:obj_end + 1])
-        except Exception:
-            pass
+    decoder = json.JSONDecoder()
+    parsed_candidates = []
 
-    # Try array
-    arr_start = cleaned.find("[")
-    arr_end = cleaned.rfind("]")
-    if arr_start != -1 and arr_end != -1 and arr_end > arr_start:
+    for i, ch in enumerate(cleaned):
+        if ch not in "{[":
+            continue
         try:
-            return json.loads(cleaned[arr_start:arr_end + 1])
+            obj, _ = decoder.raw_decode(cleaned[i:])
+            parsed_candidates.append(obj)
         except Exception:
-            pass
+            continue
+
+    if parsed_candidates:
+        return parsed_candidates[-1]
 
     return fallback
 
@@ -228,8 +239,6 @@ def load_document(path: str) -> str:
 def scrape_url(url: str) -> str:
     if not url or not url.strip():
         return ""
-    if requests is None or BeautifulSoup is None:
-        raise RuntimeError("Chyba requests/beautifulsoup4. Spusti: pip install requests beautifulsoup4")
 
     headers = {
         "User-Agent": (
@@ -327,13 +336,12 @@ def rag_search(query: str, chunks: List[str], index: Any, embed_model_id: str, t
             continue
         results.append(f"[similarity={float(score):.3f}] {chunks[int(idx)]}")
     return results
+
 # -----------------------------------------------------------------------------
 # 7. LOCAL HUGGING FACE LLM
 # -----------------------------------------------------------------------------
 
 def cuda_summary() -> str:
-    if torch is None:
-        return "PyTorch nie je dostupny."
     if not torch.cuda.is_available():
         return "CUDA nie je dostupna, pouzije sa CPU alebo fallback."
     name = torch.cuda.get_device_name(0)
@@ -348,7 +356,7 @@ def unload_llm() -> str:
     _MODEL = None
     _MODEL_INFO = "Model bol uvolneny."
     gc.collect()
-    if torch is not None and torch.cuda.is_available():
+    if torch.cuda.is_available():
         torch.cuda.empty_cache()
     return _MODEL_INFO + "\n" + cuda_summary()
 
@@ -375,7 +383,7 @@ def load_llm(
         if not has_cuda:
             raise RuntimeError("CUDA nie je dostupna pre 4-bit GPU load.")
         bnb_config = BitsAndBytesConfig(
-                                        load_in_4bit=True,
+            load_in_4bit=True,
             bnb_4bit_quant_type="nf4",
             bnb_4bit_compute_dtype=torch.float16,
             bnb_4bit_use_double_quant=True,
@@ -471,21 +479,28 @@ def chat_generate(
     dev = model_device(mdl)
     inputs = {k: v.to(dev) for k, v in inputs.items()}
 
+    generation_kwargs = {
+        **inputs,
+        "max_new_tokens": max_new_tokens,
+        "repetition_penalty": 1.05,
+        "pad_token_id": tok.eos_token_id,
+    }
+
+    if SAMPLE_SETTING:
+        generation_kwargs["do_sample"] = True
+        generation_kwargs["temperature"] = TEMPERATURE_SETTING
+        generation_kwargs["top_p"] = P_SETTING
+        generation_kwargs["top_k"] = GEN_TOP_K_SETTING
+    else:
+        generation_kwargs["do_sample"] = False
+
     with torch.no_grad():
-        out = mdl.generate(
-            **inputs,
-            max_new_tokens=max_new_tokens,
-            temperature=TEMPERATURE_SETTING,
-            do_sample=SAMPLE_SETTING,
-            top_p=P_SETTING,
-            repetition_penalty=1.05,
-            pad_token_id=tok.eos_token_id,
-        )
+        out = mdl.generate(**generation_kwargs)
 
     # Decode only newly generated part where possible.
     generated = out[0][inputs["input_ids"].shape[-1]:]
     text = tok.decode(generated, skip_special_tokens=True)
-    return text.strip()
+    return strip_thinking(text)
 
 SYSTEM_JSON = """
                 Si lokalny AI asistent pre validaciu zivotopisov voci pracovnemu inzeratu.
@@ -501,10 +516,59 @@ SYSTEM_JSON = """
                 - nehodnot citlive atributy ako vek, pohlavie, narodnost, zdravotny stav, rodinny stav, fotografia alebo adresa
                 - pis slovensky bez diakritiky
                 """.strip()
-                
+
 # -----------------------------------------------------------------------------
 # 8. LLM PROMPTS / TASKS
 # -----------------------------------------------------------------------------
+
+def fallback_extract_requirements_from_text(job_text: str, max_requirements: int) -> Dict[str, Any]:
+    raw_lines = re.split(r"[\n\r]|(?<=[.!?])\s+", job_text)
+    lines = [normalize_space(x) for x in raw_lines]
+    lines = [x for x in lines if 20 <= len(x) <= 350]
+
+    keywords = [
+        "poziadav", "vyzad", "skusen", "znalost", "ovlad",
+        "must", "required", "requirements", "experience",
+        "knowledge", "skills", "schopnost", "praxe",
+        "python", "sql", "java", "cloud", "azure", "aws",
+        "anglick", "english", "nemeck", "german",
+        "docker", "kubernetes", "linux", "windows", "api",
+        "degree", "education", "vzdelanie", "certifikat",
+    ]
+
+    picked = []
+    seen = set()
+
+    for line in lines:
+        low = line.lower()
+        if not any(k in low for k in keywords):
+            continue
+
+        key = low[:140]
+        if key in seen:
+            continue
+        seen.add(key)
+
+        priority = "must" if any(k in low for k in ["must", "required", "vyzad", "poziadujeme", "nutne", "required skills"]) else "unknown"
+
+        picked.append({
+            "id": f"R{len(picked) + 1}",
+            "text": line,
+            "category": "other",
+            "priority": priority,
+            "weight": 3.0 if priority == "must" else 1.5,
+        })
+
+        if len(picked) >= max_requirements:
+            break
+
+    return {
+        "job_title": "unknown",
+        "seniority": "unknown",
+        "requirements": picked,
+        "_source": "fallback_regex",
+    }
+
 def extract_job_requirements(
     job_text: str,
     model_id: str,
@@ -534,10 +598,17 @@ def extract_job_requirements(
             "- must-have poziadavky daj weight 3 az 5\n"
             "- nice-to-have poziadavky daj weight 1 az 2\n"
             "- nerozbijaj jednu poziadavku na duplicitne varianty\n"
-            "- ignoruj benefity firmy, marketing a pravne formulacie\n\n"
+            "- ignoruj benefity firmy, marketing a pravne formulacie\n"
+            "- ak nevies urcit job_title alebo seniority, pouzi hodnotu unknown\n"
+            "- vrat iba JSON, bez komentara\n\n"
             "PRACOVNA PONUKA:\n" + trim_text(job_text, 22000)
             )
     raw = chat_generate(SYSTEM_JSON, user, model_id, load_mode, fallback_model_id, max_new_tokens=1200)
+
+    print("\n===== RAW JOB REQUIREMENTS OUTPUT =====")
+    print(raw)
+    print("===== END RAW JOB REQUIREMENTS OUTPUT =====\n")
+
     data = safe_json_loads(raw, fallback={"job_title": "unknown", "seniority": "unknown", "requirements": []})
 
     # Basic normalization in case model returns a list directly.
@@ -567,6 +638,12 @@ def extract_job_requirements(
         })
 
     data["requirements"] = clean_reqs
+    data["_source"] = "llm_json"
+
+    if not clean_reqs:
+        print("WARNING: LLM nevratil poziadavky v JSON formate. Pouzivam fallback regex extrakciu.")
+        data = fallback_extract_requirements_from_text(job_text, max_requirements)
+
     return data
 
 def extract_candidate_summary(
@@ -591,7 +668,8 @@ def extract_candidate_summary(
                 "Vrat presne tento JSON tvar:\n" + schema + "\n\n"
                 "Pravidla:\n"
                 "- nepouzivaj meno, adresu, vek, pohlavie, rodinny stav ani fotku\n"
-                "- uvadzaj len veci, ktore su v CV\n\n"
+                "- uvadzaj len veci, ktore su v CV\n"
+                "- vrat iba JSON, bez komentara\n\n"
                 "CV TEXT:\n" + trim_text(cv_text, 22000)
             )
     raw = chat_generate(SYSTEM_JSON, user, model_id, load_mode, fallback_model_id, max_new_tokens=1100)
@@ -687,10 +765,11 @@ def verdict(score: float) -> str:
 def render_markdown_report(job_data: Dict[str, Any], candidate: Dict[str, Any], evals: List[Dict[str, Any]]) -> str:
     score = weighted_average(evals)
     lines = []
-    lines.append(f"# Lokalny AI CV validator")
+    lines.append(f"# AI CV validator")
     lines.append("")
     lines.append(f"**Pozicia:** {job_data.get('job_title', 'unknown')}")
     lines.append(f"**Seniorita:** {job_data.get('seniority', 'unknown')}")
+    lines.append(f"**Zdroj poziadaviek:** {job_data.get('_source', 'unknown')}")
     lines.append(f"**Celkove skore:** {score:.2f} / 100")
     lines.append(f"**Odporucanie:** {verdict(score)}")
     lines.append("")
@@ -743,7 +822,6 @@ def render_markdown_report(job_data: Dict[str, Any], candidate: Dict[str, Any], 
 
     return "\n".join(lines)
 
-
 # -----------------------------------------------------------------------------
 # 10. MAIN PIPELINE
 # -----------------------------------------------------------------------------
@@ -771,6 +849,8 @@ def run_validation(
     runtime.append(f"Fallback model: {fallback_model_id}")
     runtime.append(f"Load mode: {load_mode}")
     runtime.append(f"Embedding model: {embed_model_id}")
+    runtime.append(f"Top-K: {top_k}")
+    runtime.append(f"Max requirements: {max_requirements}")
 
     cv_text = load_document(cv_file)
     if len(cv_text) < 100:
@@ -797,8 +877,9 @@ def run_validation(
     job_data = extract_job_requirements(job_text, model_id, load_mode, fallback_model_id, max_requirements)
     requirements = job_data.get("requirements", [])
     if not requirements:
-        raise gr.Error("LLM neextrahoval ziadne poziadavky z inzeratu. Skus vlozit cistejsi text inzeratu.")
+        raise gr.Error("LLM ani fallback neextrahovali ziadne poziadavky z inzeratu. Skus vlozit cistejsi text inzeratu.")
     runtime.append(f"Extrahovane poziadavky: {len(requirements)}")
+    runtime.append(f"Zdroj poziadaviek: {job_data.get('_source', 'unknown')}")
 
     candidate = {}
     if include_candidate_summary:
