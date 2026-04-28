@@ -1,4 +1,4 @@
-# Lokalny AI CV Validator 
+# AI CV Validator 
 
 ## 1. Konfiguracia
 
@@ -45,8 +45,8 @@ Report + JSON vystup
 
 ## 3. Podporovane dokumenty
 
-- PDF cez PyMuPDF
-- DOCX cez python-docx
-- RTF cez striprtf
-- TXT/MD priamo
-- DOC legacy cez Microsoft Word COM fallback, ak je nainstalovany Word + pywin32
+• PDF cez PyMuPDF
+• DOCX cez python-docx
+• RTF cez striprtf
+• TXT/MD priamo
+• DOC legacy cez Microsoft Word COM fallback, ak je nainstalovany Word + pywin32
