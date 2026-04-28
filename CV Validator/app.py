@@ -57,7 +57,6 @@ class Requirement:
     priority: str = "unknown"
     weight: float = 1.0
 
-
 # -----------------------------------------------------------------------------
 # 3. UTILS
 # -----------------------------------------------------------------------------
@@ -69,7 +68,6 @@ def require_runtime() -> None:
             "Chybaju Python kniznice: " + ", ".join(unique) +
             "\n\nNainstaluj ich prikazom:\n    pip install -r requirements.txt"
         )
-
 
 def safe_json_loads(text: str, fallback: Any) -> Any:
     if not text:
@@ -134,7 +132,6 @@ def weighted_average(rows: List[Dict[str, Any]]) -> float:
         total += max(0.0, min(100.0, s)) * max(w, 0.01)
     return round(total / total_w, 2) if total_w else 0.0
 
-
 # -----------------------------------------------------------------------------
 # 4. DOCUMENT LOADING: PDF/DOCX/RTF/TXT/DOC
 # -----------------------------------------------------------------------------
@@ -175,7 +172,6 @@ def load_rtf(path: str) -> str:
 
     raw = Path(path).read_text(errors="ignore")
     return normalize_space(rtf_to_text(raw))
-
 
 def load_txt(path: str) -> str:
     for enc in ("utf-8", "utf-8-sig", "cp1250", "latin-1"):
@@ -226,7 +222,6 @@ def load_document(path: str) -> str:
         return load_doc_legacy_windows(path)
     raise ValueError(f"Nepodporovany format suboru: .{ext}. Pouzi PDF, DOCX, RTF, TXT alebo DOC.")
 
-
 # -----------------------------------------------------------------------------
 # 5. JOB AD SCRAPING
 # -----------------------------------------------------------------------------
@@ -268,7 +263,6 @@ def scrape_url(url: str) -> str:
 
     return normalize_space("\n".join(unique))
 
-
 # -----------------------------------------------------------------------------
 # 6. CHUNKING + RAG
 # -----------------------------------------------------------------------------
@@ -286,7 +280,6 @@ def chunk_text(text: str, words_per_chunk: int = CHUNK_WORDS, overlap: int = CHU
         chunks.append(" ".join(chunk_words))
     return chunks
 
-
 def get_embedder(model_id: str = DEFAULT_EMBED_MODEL_ID):
     global _EMBEDDER, _EMBEDDER_ID
     require_runtime()
@@ -296,7 +289,6 @@ def get_embedder(model_id: str = DEFAULT_EMBED_MODEL_ID):
     _EMBEDDER = SentenceTransformer(model_id, device=device)
     _EMBEDDER_ID = model_id
     return _EMBEDDER
-
 
 def build_faiss_index(chunks: List[str], embed_model_id: str) -> Tuple[Any, Any]:
     if not chunks:
@@ -325,7 +317,6 @@ def build_faiss_index(chunks: List[str], embed_model_id: str) -> Tuple[Any, Any]
 
     return index, vectors
 
-
 def rag_search(query: str, chunks: List[str], index: Any, embed_model_id: str, top_k: int) -> List[str]:
     embedder = get_embedder(embed_model_id)
     q = embedder.encode([query], convert_to_numpy=True, normalize_embeddings=True, show_progress_bar=False).astype("float32")
@@ -338,8 +329,6 @@ def rag_search(query: str, chunks: List[str], index: Any, embed_model_id: str, t
             continue
         results.append(f"[similarity={float(score):.3f}] {chunks[int(idx)]}")
     return results
-
-
 # -----------------------------------------------------------------------------
 # 7. LOCAL HUGGING FACE LLM
 # -----------------------------------------------------------------------------
@@ -355,7 +344,6 @@ def cuda_summary() -> str:
     reserved_gb = torch.cuda.memory_reserved(0) / 1024 ** 3
     return f"CUDA OK: {name}, VRAM total={total_gb:.1f} GB, allocated={allocated_gb:.2f} GB, reserved={reserved_gb:.2f} GB"
 
-
 def unload_llm() -> str:
     global _TOKENIZER, _MODEL, _MODEL_INFO
     _TOKENIZER = None
@@ -365,7 +353,6 @@ def unload_llm() -> str:
     if torch is not None and torch.cuda.is_available():
         torch.cuda.empty_cache()
     return _MODEL_INFO + "\n" + cuda_summary()
-
 
 def load_llm(
     model_id: str = DEFAULT_LLM_MODEL_ID,
@@ -691,7 +678,6 @@ def status_icon(status: str) -> str:
             "nejasne": "⚪",
             }.get(status, "⚪")
 
-
 def verdict(score: float) -> str:
     if score >= 80:
         return "Vhodny kandidat"
@@ -700,7 +686,6 @@ def verdict(score: float) -> str:
     if score >= 40:
         return "Ciastocne vhodny / vyzaduje manualne posudenie"
     return "Slaba zhoda s poziciou"
-
 
 def render_markdown_report(job_data: Dict[str, Any], candidate: Dict[str, Any], evals: List[Dict[str, Any]]) -> str:
     score = weighted_average(evals)
@@ -846,7 +831,6 @@ def run_validation(
     js = json.dumps(final, ensure_ascii=False, indent=2)
     return md, js, "\n".join(runtime)
 
-
 def gradio_run_wrapper(*args):
     try:
         return run_validation(*args)
@@ -855,7 +839,6 @@ def gradio_run_wrapper(*args):
     except Exception as exc:
         err = f"Chyba: {type(exc).__name__}: {exc}\n\n{traceback.format_exc()}"
         return "# Chyba pri spracovani\n\n```text\n" + err + "\n```", "{}", err
-
 
 # -----------------------------------------------------------------------------
 # 11. GRADIO UI
