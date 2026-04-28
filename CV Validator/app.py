@@ -304,11 +304,11 @@ def build_faiss_index(chunks: List[str], embed_model_id: str) -> Tuple[Any, Any]
     embedder = get_embedder(embed_model_id)
 
     vectors = embedder.encode(
-        chunks,
-        convert_to_numpy=True,
-        normalize_embeddings=True,
-        show_progress_bar=False,
-    )
+                                chunks,
+                                convert_to_numpy=True,
+                                normalize_embeddings=True,
+                                show_progress_bar=True,
+                            )
 
     np_mod = cast(Any, np)
     vectors = np_mod.asarray(vectors, dtype="float32")
@@ -361,10 +361,10 @@ def unload_llm() -> str:
     return _MODEL_INFO + "\n" + cuda_summary()
 
 def load_llm(
-    model_id: str = DEFAULT_LLM_MODEL_ID,
-    load_mode: str = LLM_LOAD_MODE,
-    fallback_model_id: str = DEFAULT_FALLBACK_LLM_MODEL_ID,
-):
+            model_id: str = DEFAULT_LLM_MODEL_ID,
+            load_mode: str = LLM_LOAD_MODE,
+            fallback_model_id: str = DEFAULT_FALLBACK_LLM_MODEL_ID,
+            ):
     global _TOKENIZER, _MODEL, _MODEL_INFO
 
     desired_signature = f"{model_id}|{load_mode}|fallback={fallback_model_id}"
@@ -383,19 +383,19 @@ def load_llm(
         if not has_cuda:
             raise RuntimeError("CUDA nie je dostupna pre 4-bit GPU load.")
         bnb_config = BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_compute_dtype=torch.float16,
-            bnb_4bit_use_double_quant=True,
-        )
+                                        load_in_4bit=True,
+                                        bnb_4bit_quant_type="nf4",
+                                        bnb_4bit_compute_dtype=torch.float16,
+                                        bnb_4bit_use_double_quant=True,
+                                        )
         tok = _load_tokenizer(mid)
         mdl = AutoModelForCausalLM.from_pretrained(
-            mid,
-            quantization_config=bnb_config,
-            device_map="auto",
-            max_memory={0: MAX_GPU_MEMORY, "cpu": "32GiB"},
-            trust_remote_code=True,
-        )
+                                                    mid,
+                                                    quantization_config=bnb_config,
+                                                    device_map="auto",
+                                                    max_memory={0: MAX_GPU_MEMORY, "cpu": "48GiB"},
+                                                    trust_remote_code=True,
+                                                    )
         return tok, mdl, f"Nacitany model: {mid} | mode=bnb_4bit | {desired_signature}"
 
     def _try_fp16_gpu(mid: str):
@@ -403,22 +403,22 @@ def load_llm(
             raise RuntimeError("CUDA nie je dostupna pre fp16_gpu load.")
         tok = _load_tokenizer(mid)
         mdl = AutoModelForCausalLM.from_pretrained(
-            mid,
-            torch_dtype=torch.float16,
-            device_map="auto",
-            max_memory={0: MAX_GPU_MEMORY, "cpu": "32GiB"},
-            trust_remote_code=True,
-        )
+                                                    mid,
+                                                    torch_dtype=torch.float16,
+                                                    device_map="auto",
+                                                    max_memory={0: MAX_GPU_MEMORY, "cpu": "48GiB"},
+                                                    trust_remote_code=True,
+                                                    )
         return tok, mdl, f"Nacitany model: {mid} | mode=fp16_gpu | {desired_signature}"
 
     def _try_cpu(mid: str):
         tok = _load_tokenizer(mid)
         mdl = AutoModelForCausalLM.from_pretrained(
-            mid,
-            torch_dtype=torch.float32,
-            device_map={"": "cpu"},
-            trust_remote_code=True,
-        )
+                                                    mid,
+                                                    torch_dtype=torch.float32,
+                                                    device_map={"": "cpu"},
+                                                    trust_remote_code=True,
+                                                    )
         return tok, mdl, f"Nacitany model: {mid} | mode=cpu | {desired_signature}"
 
     attempts = []
@@ -459,12 +459,12 @@ def model_device(model: Any):
         return "cuda" if torch.cuda.is_available() else "cpu"
 
 def chat_generate(
-    system: str,
-    user: str,
-    model_id: str,
-    load_mode: str,
-    fallback_model_id: str,
-    max_new_tokens: int = MAX_NEW_TOKENS,
+                    system: str,
+                    user: str,
+                    model_id: str,
+                    load_mode: str,
+                    fallback_model_id: str,
+                    max_new_tokens: int = MAX_NEW_TOKENS,
 ) -> str:
     tok, mdl, _ = load_llm(model_id, load_mode, fallback_model_id)
 
@@ -480,11 +480,11 @@ def chat_generate(
     inputs = {k: v.to(dev) for k, v in inputs.items()}
 
     generation_kwargs = {
-        **inputs,
-        "max_new_tokens": max_new_tokens,
-        "repetition_penalty": 1.05,
-        "pad_token_id": tok.eos_token_id,
-    }
+                        **inputs,
+                        "max_new_tokens": max_new_tokens,
+                        "repetition_penalty": 1.05,
+                        "pad_token_id": tok.eos_token_id,
+                        }
 
     if SAMPLE_SETTING:
         generation_kwargs["do_sample"] = True
@@ -527,14 +527,14 @@ def fallback_extract_requirements_from_text(job_text: str, max_requirements: int
     lines = [x for x in lines if 20 <= len(x) <= 350]
 
     keywords = [
-        "poziadav", "vyzad", "skusen", "znalost", "ovlad",
-        "must", "required", "requirements", "experience",
-        "knowledge", "skills", "schopnost", "praxe",
-        "python", "sql", "java", "cloud", "azure", "aws",
-        "anglick", "english", "nemeck", "german",
-        "docker", "kubernetes", "linux", "windows", "api",
-        "degree", "education", "vzdelanie", "certifikat",
-    ]
+                "poziadav", "vyzad", "skusen", "znalost", "ovlad",
+                "must", "required", "requirements", "experience",
+                "knowledge", "skills", "schopnost", "praxe",
+                "python", "sql", "java", "cloud", "azure", "aws",
+                "anglick", "english", "nemeck", "german",
+                "docker", "kubernetes", "linux", "windows", "api",
+                "degree", "education", "vzdelanie", "certifikat",
+                ]
 
     picked = []
     seen = set()
@@ -570,11 +570,11 @@ def fallback_extract_requirements_from_text(job_text: str, max_requirements: int
     }
 
 def extract_job_requirements(
-    job_text: str,
-    model_id: str,
-    load_mode: str,
-    fallback_model_id: str,
-    max_requirements: int,
+                            job_text: str,
+                            model_id: str,
+                            load_mode: str,
+                            fallback_model_id: str,
+                            max_requirements: int,
 ) -> Dict[str, Any]:
     schema = """
 {
@@ -647,10 +647,10 @@ def extract_job_requirements(
     return data
 
 def extract_candidate_summary(
-    cv_text: str,
-    model_id: str,
-    load_mode: str,
-    fallback_model_id: str,
+                                cv_text: str,
+                                model_id: str,
+                                load_mode: str,
+                                fallback_model_id: str,
 ) -> Dict[str, Any]:
     schema = """
     {
@@ -679,11 +679,11 @@ def extract_candidate_summary(
     return data
 
 def evaluate_one_requirement(
-    requirement: Dict[str, Any],
-    evidence: List[str],
-    model_id: str,
-    load_mode: str,
-    fallback_model_id: str,
+                            requirement: Dict[str, Any],
+                            evidence: List[str],
+                            model_id: str,
+                            load_mode: str,
+                            fallback_model_id: str,
 ) -> Dict[str, Any]:
     schema = {
                 "requirement_id": str(requirement.get("id", "")),
@@ -827,18 +827,17 @@ def render_markdown_report(job_data: Dict[str, Any], candidate: Dict[str, Any], 
 # -----------------------------------------------------------------------------
 
 def run_validation(
-    cv_file: str,
-    job_url: str,
-    job_text_manual: str,
-    model_id: str,
-    fallback_model_id: str,
-    load_mode: str,
-    embed_model_id: str,
-    top_k: int,
-    max_requirements: int,
-    include_candidate_summary: bool,
+                    cv_file: str,
+                    job_url: str,
+                    job_text_manual: str,
+                    model_id: str,
+                    fallback_model_id: str,
+                    load_mode: str,
+                    embed_model_id: str,
+                    top_k: int,
+                    max_requirements: int,
+                    include_candidate_summary: bool,
 ) -> Tuple[str, str, str]:
-    """Returns: markdown_report, json_report, runtime_info"""
 
     if not cv_file:
         raise gr.Error("Nahraj CV subor.")
@@ -896,13 +895,13 @@ def run_validation(
         evals.append(ev)
 
     final = {
-        "job": job_data,
-        "candidate_profile": candidate,
-        "overall_score": weighted_average(evals),
-        "verdict": verdict(weighted_average(evals)),
-        "evaluations": evals,
-        "runtime": runtime,
-    }
+            "job": job_data,
+            "candidate_profile": candidate,
+            "overall_score": weighted_average(evals),
+            "verdict": verdict(weighted_average(evals)),
+            "evaluations": evals,
+            "runtime": runtime,
+            }
 
     md = render_markdown_report(job_data, candidate, evals)
     js = json.dumps(final, ensure_ascii=False, indent=2)
