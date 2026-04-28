@@ -15,6 +15,14 @@ from bs4 import BeautifulSoup
 from sentence_transformers import SentenceTransformer
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from dotenv import load_dotenv
+
+load_dotenv()
+
+def env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
 # -----------------------------------------------------------------------------
 # 1. ENV + GLOBAL SETTINGS
 # -----------------------------------------------------------------------------
@@ -22,18 +30,18 @@ DEFAULT_LLM_MODEL_ID = os.getenv("LLM_MODEL_ID", "Qwen/Qwen2.5-7B-Instruct")
 DEFAULT_FALLBACK_LLM_MODEL_ID = os.getenv("FALLBACK_LLM_MODEL_ID", "Qwen/Qwen2.5-3B-Instruct")
 DEFAULT_EMBED_MODEL_ID = os.getenv("EMBED_MODEL_ID","sentence-transformers/paraphrase-multilingual-mpnet-base-v2",)
 
-LLM_LOAD_MODE = os.getenv("LLM_LOAD_MODE", "auto")  # auto | bnb_4bit | fp16_gpu | cpu
+LLM_LOAD_MODE = os.getenv("LLM_LOAD_MODE", "fp16_gpu")  # auto | bnb_4bit | fp16_gpu | cpu
 MAX_GPU_MEMORY = os.getenv("MAX_GPU_MEMORY", "10.5GiB")
 MAX_INPUT_TOKENS = int(os.getenv("MAX_INPUT_TOKENS", "8192"))
 MAX_NEW_TOKENS = int(os.getenv("MAX_NEW_TOKENS", "900"))
 CHUNK_WORDS = int(os.getenv("CHUNK_WORDS", "220"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "55"))
-DEFAULT_TOP_K = int(os.getenv("TOP_K", "20"))
-DEFAULT_MAX_REQUIREMENTS = int(os.getenv("MAX_REQUIREMENTS", "12"))
+DEFAULT_TOP_K = max(2, min(20, int(os.getenv("TOP_K", "5"))))
+DEFAULT_MAX_REQUIREMENTS = max(5, min(25, int(os.getenv("MAX_REQUIREMENTS", "12"))))
 MIN_RAG_SIMILARITY = float(os.getenv("MIN_RAG_SIMILARITY", "0.20"))
 TEMPERATURE_SETTING = float(os.getenv("DEF_TEMPERATURE_SETTING", "0.20"))
-SAMPLE_SETTING = os.getenv("DEF_SAMPLE_SETTING", "true")
-P_SETTING = float(os.getenv("DEF_P_SETTING", "0.20"))
+SAMPLE_SETTING = env_bool("DEF_SAMPLE_SETTING", True)
+P_SETTING = float(os.getenv("DEF_P_SETTING", "0.95"))
 
 HF_HOME_LOCAL = os.getenv("HF_HOME_LOCAL", "").strip()
 if HF_HOME_LOCAL:
@@ -60,15 +68,6 @@ class Requirement:
 # -----------------------------------------------------------------------------
 # 3. UTILS
 # -----------------------------------------------------------------------------
-
-def require_runtime() -> None:
-    if MISSING_IMPORTS:
-        unique = sorted(set(MISSING_IMPORTS))
-        raise RuntimeError(
-            "Chybaju Python kniznice: " + ", ".join(unique) +
-            "\n\nNainstaluj ich prikazom:\n    pip install -r requirements.txt"
-        )
-
 def safe_json_loads(text: str, fallback: Any) -> Any:
     if not text:
         return fallback
@@ -282,7 +281,6 @@ def chunk_text(text: str, words_per_chunk: int = CHUNK_WORDS, overlap: int = CHU
 
 def get_embedder(model_id: str = DEFAULT_EMBED_MODEL_ID):
     global _EMBEDDER, _EMBEDDER_ID
-    require_runtime()
     if _EMBEDDER is not None and _EMBEDDER_ID == model_id:
         return _EMBEDDER
     device = "cpu"  # Keep VRAM free for LLM. Change to cuda if you really want.
@@ -360,7 +358,6 @@ def load_llm(
     fallback_model_id: str = DEFAULT_FALLBACK_LLM_MODEL_ID,
 ):
     global _TOKENIZER, _MODEL, _MODEL_INFO
-    require_runtime()
 
     desired_signature = f"{model_id}|{load_mode}|fallback={fallback_model_id}"
     if _MODEL is not None and _TOKENIZER is not None and desired_signature in _MODEL_INFO:
@@ -764,7 +761,6 @@ def run_validation(
     include_candidate_summary: bool,
 ) -> Tuple[str, str, str]:
     """Returns: markdown_report, json_report, runtime_info"""
-    require_runtime()
 
     if not cv_file:
         raise gr.Error("Nahraj CV subor.")
@@ -845,7 +841,6 @@ def gradio_run_wrapper(*args):
 # -----------------------------------------------------------------------------
 
 def build_ui():
-    require_runtime()
 
     with gr.Blocks(title="Lokalny AI CV Validator") as demo:
         gr.Markdown(
@@ -874,7 +869,7 @@ def build_ui():
                         value=LLM_LOAD_MODE,
                     )
                     embed_model_id = gr.Textbox(label="Embedding model z Hugging Face", value=DEFAULT_EMBED_MODEL_ID)
-                    top_k = gr.Slider(label="Top-K dokazov z CV", minimum=2, maximum=10, step=1, value=DEFAULT_TOP_K)
+                    top_k = gr.Slider(label="Top-K dokazov z CV", minimum=2, maximum=20, step=1, value=DEFAULT_TOP_K)
                     max_requirements = gr.Slider(
                         label="Max pocet poziadaviek z inzeratu",
                         minimum=5,
@@ -914,8 +909,5 @@ def build_ui():
     return demo
 
 if __name__ == "__main__":
-    if MISSING_IMPORTS:
-        print("Chybaju kniznice:", ", ".join(sorted(set(MISSING_IMPORTS))))
-        print("Spusti: pip install -r requirements.txt")
     demo = build_ui()
     demo.launch(server_name="127.0.0.1", server_port=7860, inbrowser=True)
