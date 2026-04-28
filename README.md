@@ -1,12 +1,273 @@
-# nyx3ton-project
+# NyX3Ton Lab / Project Hub
 
+Welcome to my main GitLab project space.  
+This repository acts as a central hub for my work in IT infrastructure, data analytics, AI/ML, automation, monitoring, SQL databases, telecom analytics, and homelab engineering.
 
+The goal of this space is not only to store code, but to build practical solutions that connect real systems, data pipelines, observability, automation, and intelligent analysis.
 
-## Getting started
+---
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+## Main Focus Areas
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+| Area | Description |
+|---|---|
+| AI / Machine Learning | XGBoost, Optuna, NLP models, embeddings, sentence transformers, candidate validation |
+| Data Engineering | ETL pipelines, ElasticSearch, MS SQL, PostgreSQL, pandas, SQLAlchemy |
+| Monitoring & Observability | Grafana, Kibana, Elastic Stack, Logstash, Metricbeat, SNMP telemetry |
+| Telecom / SBC Analytics | Oracle SBC, Ribbon SBC, SNMPv3, CDR analysis, SIP error monitoring |
+| Business Intelligence | Power BI, Grafana dashboards, KPI reporting, data models |
+| Infrastructure / Homelab | Proxmox, Ubuntu Server, TrueNAS, Tailscale, RDP, Docker, Linux services |
+| Automation | Python scripts, self-healing processes, scheduled jobs, alerting logic |
+
+---
+
+## Featured Projects
+
+### 1. CV Validator / AI Candidate Validator
+
+An AI-powered application for analyzing CVs, comparing candidates against job descriptions, and evaluating candidate suitability.
+
+**Technologies:**
+
+- Python
+- Sentence Transformers
+- HuggingFace models
+- Zero-shot classification
+- Semantic matching
+- Gradio / Streamlit
+- pandas
+
+**Key Features:**
+
+- CV information extraction
+- Candidate-to-job matching
+- Semantic similarity scoring
+- Candidate suitability assessment
+- Explainable and auditable HR output
+
+Repository: `[CV Validator](./CV-Validator)`
+
+---
+
+### 2. HR Attrition AI / Employee Risk Analytics
+
+A machine learning solution for predicting employee attrition risk and analyzing the factors that influence employee turnover.
+
+**Technologies:**
+
+- Python
+- XGBoost
+- Optuna
+- scikit-learn
+- SQL Server
+- PostgreSQL
+- Power BI
+- Gradio
+- SHAP / feature importance
+
+**Key Features:**
+
+- Employee attrition prediction
+- Hyperparameter tuning with Optuna
+- SQL database integration
+- HR analytics dashboards
+- Employee risk segmentation
+- Feature importance and explainability
+
+Repository: `[HR Attrition AI](./HR-Attrition-AI)`
+
+---
+
+### 3. SBC SNMP Collector
+
+A Python-based SNMPv3 collector for gathering telemetry from Oracle and Ribbon SBC devices and storing the results in Microsoft SQL Server.
+
+**Technologies:**
+
+- Python
+- pysnmp
+- asyncio
+- Microsoft SQL Server
+- SQLAlchemy
+- ODBC Driver 18 for MS SQL
+- Rotating logs
+
+**Key Features:**
+
+- Vendor detection based on `sysObjectID`
+- Oracle / Sonus / Acme Packet and Ribbon SBC support
+- SNMP profile fallback logic
+- Vendor-specific SQL table writes
+- Self-healing restart logic
+- Rotating logs and detailed diagnostics
+
+Repository: `[SBC SNMP Collector](./SBC-SNMP-Collector)`
+
+---
+
+### 4. Elastic / Logstash / Grafana Monitoring
+
+A monitoring and observability lab built around Elastic Stack, Logstash, Metricbeat, SNMP, syslog, and Grafana.
+
+**Technologies:**
+
+- ElasticSearch
+- Logstash
+- Kibana
+- Metricbeat
+- Grafana
+- SNMP
+- Syslog
+- Linux systemd
+
+**Key Features:**
+
+- Centralized syslog ingestion
+- SNMP polling
+- System metrics collection
+- Grafana dashboards
+- CPU, memory, availability, and service monitoring
+- Watchdog-style monitoring logic
+
+Repository: `[Elastic Monitoring Lab](./Elastic-Monitoring-Lab)`
+
+---
+
+### 5. Telecom CDR Anomaly Detection
+
+An anomaly detection pipeline for analyzing SIP 500 errors from telecom CDR data.
+
+**Technologies:**
+
+- Python
+- ElasticSearch
+- pandas
+- XGBoost
+- Optuna
+- Microsoft SQL Server
+- Grafana
+
+**Key Features:**
+
+- CDR extraction from ElasticSearch
+- SIP 500 error filtering
+- Daily aggregation by site, device, and user
+- Expected error volume prediction
+- Anomaly detection for unusual error spikes
+- SQL output for aggregated and detailed results
+- Grafana visualization layer
+
+Repository: `[CDR Anomaly Detection](./CDR-Anomaly-Detection)`
+
+---
+
+### 6. Homelab Infrastructure
+
+Documentation and configuration notes for my own lab environment built around Proxmox, Ubuntu Server, VPN access, monitoring, and self-hosted services.
+
+**Technologies:**
+
+- Proxmox VE
+- Ubuntu Server
+- Tailscale
+- TrueNAS / Samba
+- RDP
+- Elastic Stack
+- Docker
+- systemd
+
+**Key Features:**
+
+- Virtualized lab services
+- Secure remote access over VPN
+- Server monitoring
+- Centralized logging
+- Self-hosted service testing
+- Separation between lab, test, and production-like workloads
+
+Repository: `[Homelab Infrastructure](./Homelab-Infrastructure)`
+
+---
+
+## Tech Stack
+
+### Languages
+
+- Python
+- SQL
+- Bash
+- PowerShell
+- Markdown
+
+### Databases
+
+- Microsoft SQL Server
+- PostgreSQL
+- ElasticSearch
+
+### AI / Machine Learning
+
+- XGBoost
+- Optuna
+- scikit-learn
+- pandas
+- numpy
+- SHAP
+- HuggingFace Transformers
+- Sentence Transformers
+
+### Monitoring & Observability
+
+- Grafana
+- Kibana
+- Logstash
+- Metricbeat
+- SNMP
+- Syslog
+
+### Infrastructure
+
+- Proxmox
+- Ubuntu Server
+- Windows Server
+- Tailscale
+- Docker
+- GitLab CI/CD
+
+---
+
+## Suggested Repository Structure
+
+```text
+.
+├── ai/
+│   ├── cv-validator/
+│   ├── hr-attrition-ai/
+│   └── nlp-experiments/
+│
+├── data-engineering/
+│   ├── elastic-pipelines/
+│   ├── sql-jobs/
+│   └── etl-scripts/
+│
+├── monitoring/
+│   ├── grafana-dashboards/
+│   ├── logstash-pipelines/
+│   └── snmp-collectors/
+│
+├── telecom/
+│   ├── sbc-snmp-collector/
+│   └── cdr-anomaly-detection/
+│
+├── infrastructure/
+│   ├── proxmox/
+│   ├── ubuntu-server/
+│   └── homelab-docs/
+│
+└── docs/
+    ├── architecture/
+    ├── setup-guides/
+    └── troubleshooting/
 
 ## Add your files
 
@@ -43,51 +304,3 @@ Use the built-in continuous integration in GitLab.
 - [ ] [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
 
 ***
-
-# Editing this README
-
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
-
-## Suggestions for a good README
-
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
-
-## Name
-Choose a self-explaining name for your project.
-
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
-
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
-
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
-
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
-
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
-
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
-
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
-
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
-
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
-
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
-
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
-
-## License
-For open source projects, say how it is licensed.
-
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
