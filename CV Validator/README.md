@@ -5,7 +5,7 @@
 Odporucane pre RTX 4070 Super 12GB:
 
 ```env
-LLM_MODEL_ID=nvidia/Llama-3.1-Nemotron-Nano-8B-v1
+LLM_MODEL_ID=Qwen/Qwen3-4B-Thinking-2507
 FALLBACK_LLM_MODEL_ID=Qwen/Qwen2.5-3B-Instruct
 EMBED_MODEL_ID=sentence-transformers/paraphrase-multilingual-mpnet-base-v2
 LLM_LOAD_MODE=auto
