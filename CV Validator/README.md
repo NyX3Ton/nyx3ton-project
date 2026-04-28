@@ -5,20 +5,23 @@
 Odporucane pre RTX 4070 Super 12GB:
 
 ```env
+
 LLM_MODEL_ID=Qwen/Qwen3-4B-Thinking-2507
 FALLBACK_LLM_MODEL_ID=Qwen/Qwen2.5-3B-Instruct
 EMBED_MODEL_ID=sentence-transformers/paraphrase-multilingual-mpnet-base-v2
 LLM_LOAD_MODE=auto
 MAX_GPU_MEMORY=10.5GiB
+
 ```
 
 ## 2. Ako funguje pipeline
 
 ```text
-CV + URL/text inzeratu
+
+CV + URL/text inzeratu (Gradio frontend)
         |
         v
-extrakcia textu
+Extrakcia textu
         |
         v
 LLM extrahuje poziadavky z inzeratu
@@ -27,16 +30,17 @@ LLM extrahuje poziadavky z inzeratu
 CV sa rozdeli na chunky
         |
         v
-embedding model vytvori FAISS index
+Embedding model vytvori FAISS index
         |
         v
-ku kazdej poziadavke sa najdu dokazy z CV
+Ku kazdej poziadavke sa najdu dokazy z CV
         |
         v
 LLM vyhodnoti poziadavku iba z dokazov
         |
         v
-report + JSON vystup
+Report + JSON vystup
+
 ```
 
 ## 3. Podporovane dokumenty
