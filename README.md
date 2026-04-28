@@ -236,39 +236,6 @@ Repository: `[Homelab Infrastructure](./Homelab-Infrastructure)`
 
 ---
 
-## Suggested Repository Structure
-
-```text
-.
-├── ai/
-│   ├── cv-validator/
-│   ├── hr-attrition-ai/
-│   └── nlp-experiments/
-│
-├── data-engineering/
-│   ├── elastic-pipelines/
-│   ├── sql-jobs/
-│   └── etl-scripts/
-│
-├── monitoring/
-│   ├── grafana-dashboards/
-│   ├── logstash-pipelines/
-│   └── snmp-collectors/
-│
-├── telecom/
-│   ├── sbc-snmp-collector/
-│   └── cdr-anomaly-detection/
-│
-├── infrastructure/
-│   ├── proxmox/
-│   ├── ubuntu-server/
-│   └── homelab-docs/
-│
-└── docs/
-    ├── architecture/
-    ├── setup-guides/
-    └── troubleshooting/
-
 ## Add your files
 
 - [ ] [Create](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#create-a-file) or [upload](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#upload-a-file) files
