@@ -1,23 +1,23 @@
 # app.py of nyx3ton-project\CV Validator
-
 from __future__ import annotations
 
-import gc, json, os, re, tempfile, traceback
+# -----------------------------------------------------------------------------
+# 0. IMPORTS
+# -----------------------------------------------------------------------------
+import gc, json, os, re, tempfile, traceback, torch, requests, faiss
 from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, cast
-
+import numpy as np
+import gradio as gr
+from bs4 import BeautifulSoup
+from sentence_transformers import SentenceTransformer
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+from dotenv import load_dotenv
 # -----------------------------------------------------------------------------
-# 0. ENV + GLOBAL SETTINGS
+# 1. ENV + GLOBAL SETTINGS
 # -----------------------------------------------------------------------------
-
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except Exception:
-    pass
-
 DEFAULT_LLM_MODEL_ID = os.getenv("LLM_MODEL_ID", "Qwen/Qwen2.5-7B-Instruct")
 DEFAULT_FALLBACK_LLM_MODEL_ID = os.getenv("FALLBACK_LLM_MODEL_ID", "Qwen/Qwen2.5-3B-Instruct")
 DEFAULT_EMBED_MODEL_ID = os.getenv("EMBED_MODEL_ID","sentence-transformers/paraphrase-multilingual-mpnet-base-v2",)
@@ -28,66 +28,16 @@ MAX_INPUT_TOKENS = int(os.getenv("MAX_INPUT_TOKENS", "8192"))
 MAX_NEW_TOKENS = int(os.getenv("MAX_NEW_TOKENS", "900"))
 CHUNK_WORDS = int(os.getenv("CHUNK_WORDS", "220"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "55"))
-DEFAULT_TOP_K = int(os.getenv("TOP_K", "5"))
+DEFAULT_TOP_K = int(os.getenv("TOP_K", "20"))
 DEFAULT_MAX_REQUIREMENTS = int(os.getenv("MAX_REQUIREMENTS", "12"))
 MIN_RAG_SIMILARITY = float(os.getenv("MIN_RAG_SIMILARITY", "0.20"))
+TEMPERATURE_SETTING = float(os.getenv("DEF_TEMPERATURE_SETTING", "0.20"))
+SAMPLE_SETTING = os.getenv("DEF_SAMPLE_SETTING", "true")
+P_SETTING = float(os.getenv("DEF_P_SETTING", "0.20"))
 
-# Optional local HF cache in project folder. Leave empty to use default user cache.
 HF_HOME_LOCAL = os.getenv("HF_HOME_LOCAL", "").strip()
 if HF_HOME_LOCAL:
     os.environ["HF_HOME"] = str(Path(HF_HOME_LOCAL).expanduser().resolve())
-
-# -----------------------------------------------------------------------------
-# 1. IMPORTS WITH FRIENDLY ERRORS
-# -----------------------------------------------------------------------------
-
-MISSING_IMPORTS: List[str] = []
-
-try:
-    import numpy as np
-except Exception:
-    np = cast(Any, None)
-    MISSING_IMPORTS.append("numpy")
-
-try:
-    import torch
-except Exception:
-    torch = cast(Any, None)
-    MISSING_IMPORTS.append("torch")
-
-try:
-    import gradio as gr
-except Exception:
-    gr = cast(Any, None)
-    MISSING_IMPORTS.append("gradio")
-
-try:
-    import requests
-    from bs4 import BeautifulSoup
-except Exception:
-    requests = cast(Any, None)
-    BeautifulSoup = cast(Any, None)
-    MISSING_IMPORTS.append("requests beautifulsoup4")
-
-try:
-    import faiss
-except Exception:
-    faiss = cast(Any, None)
-    MISSING_IMPORTS.append("faiss-cpu")
-
-try:
-    from sentence_transformers import SentenceTransformer
-except Exception:
-    SentenceTransformer = cast(Any, None)
-    MISSING_IMPORTS.append("sentence-transformers")
-
-try:
-    from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
-except Exception:
-    AutoModelForCausalLM = cast(Any, None)
-    AutoTokenizer = cast(Any, None)
-    BitsAndBytesConfig = cast(Any, None)
-    MISSING_IMPORTS.append("transformers accelerate bitsandbytes")
 
 # -----------------------------------------------------------------------------
 # 2. GLOBAL MODEL CACHE
@@ -541,8 +491,9 @@ def chat_generate(
         out = mdl.generate(
             **inputs,
             max_new_tokens=max_new_tokens,
-            temperature=0.1,
-            do_sample=False,
+            temperature=TEMPERATURE_SETTING,
+            do_sample=SAMPLE_SETTING,
+            top_p=P_SETTING,
             repetition_penalty=1.05,
             pad_token_id=tok.eos_token_id,
         )
