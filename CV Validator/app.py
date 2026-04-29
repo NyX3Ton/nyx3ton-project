@@ -41,10 +41,12 @@ CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "55"))
 DEFAULT_TOP_K = max(2, min(20, int(os.getenv("TOP_K", "5"))))
 DEFAULT_MAX_REQUIREMENTS = max(5, min(25, int(os.getenv("MAX_REQUIREMENTS", "12"))))
 MIN_RAG_SIMILARITY = float(os.getenv("MIN_RAG_SIMILARITY", "0.20"))
-TEMPERATURE_SETTING = float(os.getenv("DEF_TEMPERATURE_SETTING", "0.20"))
+TEMPERATURE_SETTING = float(os.getenv("DEF_TEMPERATURE_SETTING", "1.0"))
 SAMPLE_SETTING = env_bool("DEF_SAMPLE_SETTING", True)
 P_SETTING = float(os.getenv("DEF_P_SETTING", "0.95"))
 GEN_TOP_K_SETTING = int(os.getenv("DEF_TOP_K_SETTING", "20"))
+REPETITION_PEN = float(os.getenv("DEF_REPETITION_PEN", "1.0"))
+
 
 HF_HOME_LOCAL = os.getenv("HF_HOME_LOCAL", "").strip()
 if HF_HOME_LOCAL:
@@ -487,10 +489,13 @@ def chat_generate(
                         }
 
     if SAMPLE_SETTING:
-        generation_kwargs["do_sample"] = True
+        #generation_kwargs["do_sample"] = True
         generation_kwargs["temperature"] = TEMPERATURE_SETTING
         generation_kwargs["top_p"] = P_SETTING
         generation_kwargs["top_k"] = GEN_TOP_K_SETTING
+        generation_kwargs["do_sample"] = SAMPLE_SETTING
+        generation_kwargs["repetition_penalty"] = REPETITION_PEN
+
     else:
         generation_kwargs["do_sample"] = False
 
