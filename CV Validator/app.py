@@ -938,7 +938,7 @@ def build_ui():
                     file_types=[".pdf", ".docx", ".doc", ".rtf", ".txt", ".md"],
                     type="filepath",
                 )
-                job_url = gr.Textbox(label="URL inzeratu", placeholder="https://...")
+                job_url = gr.Textbox(label="URL inzeratu", placeholder="https://")
                 job_text_manual = gr.Textbox(
                     label="Alebo vloz text inzeratu manualne",
                     lines=8,
