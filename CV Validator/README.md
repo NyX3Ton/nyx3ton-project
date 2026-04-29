@@ -1,5 +1,7 @@
 # AI CV Validator 
 
+Momentalne je architektura vo faze "zero shot".
+
 ## 1. Konfiguracia
 
 Odporucane pre RTX 4070 Super 12GB:
