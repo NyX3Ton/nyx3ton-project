@@ -58,4 +58,10 @@ Report + JSON vystup
 
 ### 4. Priklad vystupu z modelu
 
-![Dashboard](images/vyhodnotenie_poziadaviek.png)
+Prve spustenie:
+
+![Dashboard](images/first_load.png)
+
+Priklad vyhodnoteneho zivotopisu a poznamky k poziadavkam:
+
+![Results](images/vyhodnotenie_poziadaviek.png)
