@@ -55,3 +55,7 @@ Report + JSON vystup
 • DOC legacy cez Microsoft Word COM fallback, ak je nainstalovany Word + pywin32
 
 ```
+
+### 4. Priklad vystupu z modelu
+
+![Dashboard](images/vyhodnotenie_poziadaviek.png)
