@@ -31,7 +31,9 @@ MAX_NEW_TOKENS=900
 
 ```
 
-## 2. Ako funguje pipeline (pre zero-shot model)
+## 2. Ako funguje pipeline: 
+
+## a. pre zero-shot model
 
 ```text
 
@@ -57,6 +59,62 @@ LLM vyhodnoti poziadavku z odkazov
         |
         v
 Report + JSON vystup
+
+```
+
+## b. pre few-shots model
+
+```text
+
+CV + URL/text inzeratu alebo manualna pozicia zo schema XLSX (Gradio frontend)
+        |
+        v
+Extrakcia textu z CV
+        |
+        v
+Nacitanie prompt schema z externneho XLSX alebo built-in fallback
+        |
+        v
+LangChain few-shot prompt builder prida priklady k ulohe
+        |
+        v
+LLM few-shot extrahuje poziadavky z inzeratu
+        |
+        v
+Heuristicke + LLM-assisted cistenie poziadaviek
+(canonicalizacia, genericness, deduplikacia)
+        |
+        v
+Kontrola kvality LLM vystupu
+        |
+        +-------------------------------+
+        |                               |
+        | ak je vystup slaby            | ak je vystup dostatocny
+        v                               |
+Dictionary fallback extrakcia           |
+        |                               |
+        +--------------- merge ---------+
+                        |
+                        v
+Finalny zoznam poziadaviek
+        |
+        v
+CV sa rozdeli na chunky
+        |
+        v
+Embedding model vytvori FAISS index
+        |
+        v
+Ku kazdej poziadavke sa najdu dokazy z CV
+        |
+        v
+Few-shot LLM vyhodnoti kazdu poziadavku z odkazov
+        |
+        v
+Agregacia skore + odporucanie
+        |
+        v
+Markdown report + JSON vystup
 
 ```
 
