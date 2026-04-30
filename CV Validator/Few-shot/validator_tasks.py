@@ -10,8 +10,26 @@ from openpyxl import load_workbook
 from langchain_core.prompts import ChatPromptTemplate, FewShotChatMessagePromptTemplate
 
 from dictionary_fallback import fallback_extract_requirements_from_text, build_hybrid_requirement_result
-from validator_utils import (cache_key,dedupe_text_list,normalize_space,normalized_lookup_value,parse_boolish,remove_diacritics,safe_float_value,safe_json_loads,trim_text)
-from validator_llm import (DEFAULT_FALLBACK_LLM_MODEL_ID,DEFAULT_LLM_MODEL_ID,LLM_LOAD_MODE,SYSTEM_JSON,SYSTEM_REQUIREMENT_UTILS_JSON,chat_generate_messages,lc_messages_to_hf_messages)
+from validator_utils import (
+    cache_key,
+    dedupe_text_list,
+    normalize_space,
+    normalized_lookup_value,
+    parse_boolish,
+    remove_diacritics,
+    safe_float_value,
+    safe_json_loads,
+    trim_text,
+)
+from validator_llm import (
+    DEFAULT_FALLBACK_LLM_MODEL_ID,
+    DEFAULT_LLM_MODEL_ID,
+    LLM_LOAD_MODE,
+    SYSTEM_JSON,
+    SYSTEM_REQUIREMENT_UTILS_JSON,
+    chat_generate_messages,
+    lc_messages_to_hf_messages,
+)
 
 # -----------------------------------------------------------------------------
 # 1. FEW-SHOT EXAMPLES + LANGCHAIN PROMPTS
@@ -22,7 +40,6 @@ def env_bool(name: str, default: bool = False) -> bool:
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}
-
 
 DEFAULT_AUX_LLM_MODEL_ID = os.getenv("AUX_LLM_MODEL_ID", "").strip()
 DEFAULT_JOB_SCHEMA_XLSX_PATH = os.getenv("JOB_SCHEMA_XLSX_PATH", str(Path(__file__).resolve().parent / "job_requirement_schema.xlsx"))
@@ -241,10 +258,10 @@ CANONICALIZATION_FEWSHOT = [
 
 
 def build_lc_messages_from_fewshot(
-                                    system_text: str,
-                                    examples: List[Dict[str, Any]],
-                                    example_human_template: str,
-                                    final_human_input: str,
+    system_text: str,
+    examples: List[Dict[str, Any]],
+    example_human_template: str,
+    final_human_input: str,
 ) -> List[Dict[str, str]]:
     example_prompt = ChatPromptTemplate.from_messages(
         [
@@ -262,17 +279,24 @@ def build_lc_messages_from_fewshot(
             }
         )
 
-    few_shot_prompt = FewShotChatMessagePromptTemplate(example_prompt=example_prompt,examples=normalized_examples)
+    few_shot_prompt = FewShotChatMessagePromptTemplate(
+        example_prompt=example_prompt,
+        examples=normalized_examples,
+    )
 
     final_prompt = ChatPromptTemplate.from_messages(
         [
-            ("system", system_text),
+            ("system", "{system_text}"),
             few_shot_prompt,
-            ("human", final_human_input),
+            ("human", "{final_human_input}"),
         ]
     )
 
-    prompt_value = final_prompt.format_prompt()
+    prompt_value = final_prompt.format_prompt(
+        system_text=system_text,
+        final_human_input=final_human_input,
+    )
+
     return lc_messages_to_hf_messages(prompt_value.to_messages())
 
 
@@ -331,7 +355,7 @@ def normalize_requirement_key_basic(text: str) -> str:
                     "excel": "microsoft excel",
                     "aj": "anglictina",
                     "nj": "nemcina",
-    }
+                    }
 
     stop_phrases = [
                     "znalost",
@@ -400,18 +424,21 @@ def direct_canonical_requirement(text: str) -> Optional[Dict[str, Any]]:
                 "bratislava": ("bratislava", "Bratislava", "location"),
                 "II.stupna": ("magisterske","inzinierske", "magister", "inzinier", "masters"),
                 "I.stupna": ("bakalarske", "bakalar", "bachelor"),
-                "III.stupna": ("doktorand", "doktorandke", "doctor")
-                }
+                "III.stupna": ("doktorand", "doktorandke", "doctor"),
+                "2.stupna": ("magisterske","inzinierske", "magister", "inzinier", "masters"),
+                "1.stupna": ("bakalarske", "bakalar", "bachelor"),
+                "3.stupna": ("doktorand", "doktorandke", "doctor")
+            }
 
     if key in mapping:
         canonical_key, canonical_text, category_hint = mapping[key]
         return {
-                    "canonical_key": canonical_key,
-                    "canonical_text": canonical_text,
-                    "category_hint": category_hint,
-                    "confidence": 0.99,
-                    "reason": "Priama heuristicka zhoda.",
-                    "source": "heuristic_direct",
+                "canonical_key": canonical_key,
+                "canonical_text": canonical_text,
+                "category_hint": category_hint,
+                "confidence": 0.99,
+                "reason": "Priama heuristicka zhoda.",
+                "source": "heuristic_direct",
                 }
 
     return None
@@ -430,9 +457,7 @@ def heuristic_genericness_score(text: str) -> Dict[str, Any]:
                         "flexibilita",
                         "odolnost voci stresu",
                         "teamova spolupraca",
-                        "timova spolupraca",
                         "teamovy hrac",
-                        "timovy hrac",
                         "proaktivny pristup",
                         "motivacia",
                         "ucit sa nove veci",
@@ -455,8 +480,8 @@ def heuristic_genericness_score(text: str) -> Dict[str, Any]:
                         "rest api",
                         "api",
                         "git",
-                        "b2",
                         "b1",
+                        "b2",
                         "c1",
                         "c2",
                         "bratislava",
@@ -518,11 +543,11 @@ def resolve_assist_model_id(primary_model_id: str, aux_model_id: Optional[str] =
 
 
 def llm_classify_requirement_genericness(
-                                        text: str,
-                                        model_id: str,
-                                        load_mode: str,
-                                        fallback_model_id: str,
-                                        aux_model_id: Optional[str] = None,
+    text: str,
+    model_id: str,
+    load_mode: str,
+    fallback_model_id: str,
+    aux_model_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     assist_model_id = resolve_assist_model_id(model_id, aux_model_id)
     ck = cache_key("genericness", text, assist_model_id)
@@ -530,28 +555,28 @@ def llm_classify_requirement_genericness(
         return _GENERICNESS_CACHE[ck]
 
     final_user = (
-        "Posud, ci je poziadavka na kandidata prilis vseobecna alebo naopak dost konkretna.\n\n"
-        "Vrat presne tento JSON tvar:\n"
-        "{\n"
-        '  "is_generic": true,\n'
-        '  "confidence": 0.0,\n'
-        '  "reason": "kratke vysvetlenie",\n'
-        '  "suggested_focus": "ak je to vhodne, kratke konkretne jadro poziadavky, inak prazdny string"\n'
-        "}\n\n"
-        "Pravidla:\n"
-        "- true pouzi pri vseobecnych soft-skill formulaciach bez konkretneho obsahu\n"
-        "- false pouzi pri technologii, jazyku, meratelnej poziadavke, nastroji, praxi alebo lokalite\n"
-        "- vrat iba JSON\n\n"
-        "POZIADAVKA:\n"
-        + normalize_space(text)
-    )
+                    "Posud, ci je poziadavka na kandidata prilis vseobecna alebo naopak dost konkretna.\n\n"
+                    "Vrat presne tento JSON tvar:\n"
+                    "{\n"
+                    '  "is_generic": true,\n'
+                    '  "confidence": 0.0,\n'
+                    '  "reason": "kratke vysvetlenie",\n'
+                    '  "suggested_focus": "ak je to vhodne, kratke konkretne jadro poziadavky, inak prazdny string"\n'
+                    "}\n\n"
+                    "Pravidla:\n"
+                    "- true pouzi pri vseobecnych soft-skill formulaciach bez konkretneho obsahu\n"
+                    "- false pouzi pri technologii, jazyku, meratelnej poziadavke, nastroji, praxi alebo lokalite\n"
+                    "- vrat iba JSON\n\n"
+                    "POZIADAVKA:\n"
+                    + normalize_space(text)
+                )
 
     messages = build_lc_messages_from_fewshot(
                                                 system_text=SYSTEM_REQUIREMENT_UTILS_JSON,
                                                 examples=GENERICNESS_FEWSHOT,
                                                 example_human_template="Posud generickost poziadavky.\n\nPOZIADAVKA:\n{input}",
                                                 final_human_input=final_user,
-                                                )
+                                            )
 
     raw = chat_generate_messages(
                                 messages,
@@ -574,10 +599,10 @@ def llm_classify_requirement_genericness(
 
     if not isinstance(data, dict):
         data = {
-                "is_generic": False,
-                "confidence": 0.0,
-                "reason": "LLM klasifikacia zlyhala.",
-                "suggested_focus": "",
+                    "is_generic": False,
+                    "confidence": 0.0,
+                    "reason": "LLM klasifikacia zlyhala.",
+                    "suggested_focus": "",
                 }
 
     result = {
@@ -594,18 +619,18 @@ def llm_classify_requirement_genericness(
 
 
 def score_requirement_genericness(
-                                    text: str,
-                                    model_id: Optional[str] = None,
-                                    load_mode: Optional[str] = None,
-                                    fallback_model_id: Optional[str] = None,
-                                    aux_model_id: Optional[str] = None,
-                                    allow_llm: bool = True,
+    text: str,
+    model_id: Optional[str] = None,
+    load_mode: Optional[str] = None,
+    fallback_model_id: Optional[str] = None,
+    aux_model_id: Optional[str] = None,
+    allow_llm: bool = True,
 ) -> Dict[str, Any]:
     heuristic = heuristic_genericness_score(text)
 
     if heuristic["heuristic_score"] <= GENERIC_HEURISTIC_LOW:
         return {
-                 **heuristic,
+                **heuristic,
                 "is_generic": False,
                 "source": "heuristic_strong_non_generic",
                 }
@@ -630,30 +655,30 @@ def score_requirement_genericness(
 
 
 def is_generic_requirement_text(
-                                text: str,
-                                model_id: Optional[str] = None,
-                                load_mode: Optional[str] = None,
-                                            fallback_model_id: Optional[str] = None,
-                                aux_model_id: Optional[str] = None,
-                                allow_llm: bool = True,
+    text: str,
+    model_id: Optional[str] = None,
+    load_mode: Optional[str] = None,
+    fallback_model_id: Optional[str] = None,
+    aux_model_id: Optional[str] = None,
+    allow_llm: bool = True,
 ) -> bool:
     data = score_requirement_genericness(
-                                        text=text,
-                                        model_id=model_id,
-                                        load_mode=load_mode,
-                                        fallback_model_id=fallback_model_id,
-                                        aux_model_id=aux_model_id,
-                                        allow_llm=allow_llm,
-                                        )
+        text=text,
+        model_id=model_id,
+        load_mode=load_mode,
+        fallback_model_id=fallback_model_id,
+        aux_model_id=aux_model_id,
+        allow_llm=allow_llm,
+    )
     return bool(data.get("is_generic", False))
 
 
 def llm_canonicalize_requirement(
-                                text: str,
-                                model_id: str,
-                                load_mode: str,
-                                fallback_model_id: str,
-                                aux_model_id: Optional[str] = None,
+    text: str,
+    model_id: str,
+    load_mode: str,
+    fallback_model_id: str,
+    aux_model_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     assist_model_id = resolve_assist_model_id(model_id, aux_model_id)
     ck = cache_key("canonical", text, assist_model_id)
@@ -677,7 +702,7 @@ def llm_canonicalize_requirement(
                     "- vrat iba JSON\n\n"
                     "POZIADAVKA:\n"
                     + normalize_space(text)
-    )
+                )
 
     messages = build_lc_messages_from_fewshot(
                                                 system_text=SYSTEM_REQUIREMENT_UTILS_JSON,
@@ -698,13 +723,13 @@ def llm_canonicalize_requirement(
     data = safe_json_loads(
                             raw,
                             fallback={
-                                    "canonical_key": normalize_requirement_key_basic(text),
-                                    "canonical_text": normalize_space(text),
-                                    "category_hint": "unknown",
-                                    "confidence": 0.0,
-                                    "reason": "LLM kanonizacia zlyhala.",
-                                    },
-                        )
+                            "canonical_key": normalize_requirement_key_basic(text),
+                            "canonical_text": normalize_space(text),
+                            "category_hint": "unknown",
+                            "confidence": 0.0,
+                            "reason": "LLM kanonizacia zlyhala.",
+                            },
+                            )
 
     if not isinstance(data, dict):
         data = {
@@ -722,12 +747,12 @@ def llm_canonicalize_requirement(
         category_hint = "unknown"
 
     result = {
-            "canonical_key": canonical_key or normalize_requirement_key_basic(text),
-            "canonical_text": canonical_text or normalize_space(text),
-            "category_hint": category_hint,
-            "confidence": max(0.0, min(1.0, float(data.get("confidence", 0.0) or 0.0))),
-            "reason": normalize_space(str(data.get("reason") or "")),
-            "source": "llm_canonicalizer",
+                "canonical_key": canonical_key or normalize_requirement_key_basic(text),
+                "canonical_text": canonical_text or normalize_space(text),
+                "category_hint": category_hint,
+                "confidence": max(0.0, min(1.0, float(data.get("confidence", 0.0) or 0.0))),
+                "reason": normalize_space(str(data.get("reason") or "")),
+                "source": "llm_canonicalizer",
             }
 
     _CANONICAL_CACHE[ck] = result
@@ -735,12 +760,12 @@ def llm_canonicalize_requirement(
 
 
 def hybrid_normalize_requirement_key(
-                                    text: str,
-                                    model_id: Optional[str] = None,
-                                    load_mode: Optional[str] = None,
-                                    fallback_model_id: Optional[str] = None,
-                                    aux_model_id: Optional[str] = None,
-                                    allow_llm: bool = True,
+    text: str,
+    model_id: Optional[str] = None,
+    load_mode: Optional[str] = None,
+    fallback_model_id: Optional[str] = None,
+    aux_model_id: Optional[str] = None,
+    allow_llm: bool = True,
 ) -> Dict[str, Any]:
     text = normalize_space(text)
     direct = direct_canonical_requirement(text)
@@ -749,12 +774,12 @@ def hybrid_normalize_requirement_key(
 
     basic_key = normalize_requirement_key_basic(text)
     heuristic_result = {
-                        "canonical_key": basic_key,
-                        "canonical_text": text,
-                        "category_hint": "unknown",
-                        "confidence": 0.68 if len(basic_key.split()) <= 3 else 0.52,
-                        "reason": "Heuristicka kanonizacia bez LLM.",
-                        "source": "heuristic",
+                            "canonical_key": basic_key,
+                            "canonical_text": text,
+                            "category_hint": "unknown",
+                            "confidence": 0.68 if len(basic_key.split()) <= 3 else 0.52,
+                            "reason": "Heuristicka kanonizacia bez LLM.",
+                            "source": "heuristic",
                         }
 
     if not allow_llm or not ENABLE_LLM_CANONICALIZATION:
@@ -778,32 +803,32 @@ def hybrid_normalize_requirement_key(
 
 
 def normalize_requirement_key(
-                                text: str,
-                                model_id: Optional[str] = None,
-                                load_mode: Optional[str] = None,
-                                fallback_model_id: Optional[str] = None,
-                                aux_model_id: Optional[str] = None,
-                                allow_llm: bool = True,
+    text: str,
+    model_id: Optional[str] = None,
+    load_mode: Optional[str] = None,
+    fallback_model_id: Optional[str] = None,
+    aux_model_id: Optional[str] = None,
+    allow_llm: bool = True,
 ) -> str:
     data = hybrid_normalize_requirement_key(
-                                            text=text,
-                                            model_id=model_id or DEFAULT_LLM_MODEL_ID,
-                                            load_mode=load_mode or LLM_LOAD_MODE,
-                                            fallback_model_id=fallback_model_id or DEFAULT_FALLBACK_LLM_MODEL_ID,
-                                            aux_model_id=aux_model_id,
-                                            allow_llm=allow_llm,
-                                            )
+        text=text,
+        model_id=model_id or DEFAULT_LLM_MODEL_ID,
+        load_mode=load_mode or LLM_LOAD_MODE,
+        fallback_model_id=fallback_model_id or DEFAULT_FALLBACK_LLM_MODEL_ID,
+        aux_model_id=aux_model_id,
+        allow_llm=allow_llm,
+    )
     return str(data.get("canonical_key") or normalize_requirement_key_basic(text))
 
 
 def clean_requirements(
-                        reqs: List[Any],
-                        max_requirements: int,
-                        model_id: Optional[str] = None,
-                        load_mode: Optional[str] = None,
-                        fallback_model_id: Optional[str] = None,
-                        aux_model_id: Optional[str] = None,
-                        allow_llm: bool = True,
+    reqs: List[Any],
+    max_requirements: int,
+    model_id: Optional[str] = None,
+    load_mode: Optional[str] = None,
+    fallback_model_id: Optional[str] = None,
+    aux_model_id: Optional[str] = None,
+    allow_llm: bool = True,
 ) -> List[Dict[str, Any]]:
     clean_reqs = []
     seen_keys = set()
@@ -817,12 +842,12 @@ def clean_requirements(
             continue
 
         canonical = hybrid_normalize_requirement_key(
-                                                    text=text,
-                                                    model_id=model_id,
-                                                    load_mode=load_mode,
-                                                    fallback_model_id=fallback_model_id,
-                                                    aux_model_id=aux_model_id,
-                                                    allow_llm=allow_llm,
+                                                        text=text,
+                                                        model_id=model_id,
+                                                        load_mode=load_mode,
+                                                        fallback_model_id=fallback_model_id,
+                                                        aux_model_id=aux_model_id,
+                                                        allow_llm=allow_llm,
                                                     )
 
         key = str(canonical.get("canonical_key") or normalize_requirement_key_basic(text))
@@ -848,25 +873,25 @@ def clean_requirements(
             priority = "unknown"
 
         generic_meta = score_requirement_genericness(
-                                                    text=text,
-                                                    model_id=model_id,
-                                                    load_mode=load_mode,
-                                                    fallback_model_id=fallback_model_id,
-                                                    aux_model_id=aux_model_id,
-                                                    allow_llm=allow_llm,
+                                                        text=text,
+                                                        model_id=model_id,
+                                                        load_mode=load_mode,
+                                                        fallback_model_id=fallback_model_id,
+                                                        aux_model_id=aux_model_id,
+                                                        allow_llm=allow_llm,
                                                     )
 
         clean_reqs.append(
-            {
-                "id": str(r.get("id") or f"R{i}"),
-                "text": text,
-                "category": category,
-                "priority": priority,
-                "weight": max(0.5, min(5.0, weight)),
-                "canonical_key": key,
-                "generic_flag": bool(generic_meta.get("is_generic", False)),
-            }
-        )
+                            {
+                                "id": str(r.get("id") or f"R{i}"),
+                                "text": text,
+                                "category": category,
+                                "priority": priority,
+                                "weight": max(0.5, min(5.0, weight)),
+                                "canonical_key": key,
+                                "generic_flag": bool(generic_meta.get("is_generic", False)),
+                            }
+                        )
 
         if len(clean_reqs) >= max_requirements:
             break
@@ -878,13 +903,13 @@ def clean_requirements(
 
 
 def is_weak_requirement_output(
-                                data: Dict[str, Any],
-                                max_requirements: int,
-                                model_id: Optional[str] = None,
-                                load_mode: Optional[str] = None,
-                                fallback_model_id: Optional[str] = None,
-                                aux_model_id: Optional[str] = None,
-                                allow_llm: bool = True,
+    data: Dict[str, Any],
+    max_requirements: int,
+    model_id: Optional[str] = None,
+    load_mode: Optional[str] = None,
+    fallback_model_id: Optional[str] = None,
+    aux_model_id: Optional[str] = None,
+    allow_llm: bool = True,
 ) -> bool:
     reqs = data.get("requirements") or []
     if not isinstance(reqs, list):
@@ -903,12 +928,13 @@ def is_weak_requirement_output(
             continue
 
         text = normalize_space(str(req.get("text", "")))
-        key = str(req.get("canonical_key") or normalize_requirement_key(text,
-                                                                        model_id=model_id,
-                                                                        load_mode=load_mode,
-                                                                        fallback_model_id=fallback_model_id,
-                                                                        aux_model_id=aux_model_id,
-                                                                        allow_llm=allow_llm,
+        key = str(req.get("canonical_key") or normalize_requirement_key(
+                                                                            text,
+                                                                            model_id=model_id,
+                                                                            load_mode=load_mode,
+                                                                            fallback_model_id=fallback_model_id,
+                                                                            aux_model_id=aux_model_id,
+                                                                            allow_llm=allow_llm,
                                                                         ))
 
         if not key:
@@ -918,12 +944,13 @@ def is_weak_requirement_output(
             dup_count += 1
         seen.add(key)
 
-        if bool(req.get("generic_flag")) or is_generic_requirement_text(text,
-                                                                        model_id=model_id,
-                                                                        load_mode=load_mode,
-                                                                        fallback_model_id=fallback_model_id,
-                                                                        aux_model_id=aux_model_id,
-                                                                        allow_llm=allow_llm,
+        if bool(req.get("generic_flag")) or is_generic_requirement_text(
+                                                                            text,
+                                                                            model_id=model_id,
+                                                                            load_mode=load_mode,
+                                                                            fallback_model_id=fallback_model_id,
+                                                                            aux_model_id=aux_model_id,
+                                                                            allow_llm=allow_llm,
         ):
             generic_count += 1
 
@@ -942,13 +969,13 @@ def is_weak_requirement_output(
 
 
 def load_manual_job_requirements_from_excel(
-                                            position_query: str,
-                                            schema_xlsx_path: str,
-                                            max_requirements: int,
-                                            model_id: str,
-                                            load_mode: str,
-                                            fallback_model_id: str,
-                                            aux_model_id: str,
+    position_query: str,
+    schema_xlsx_path: str,
+    max_requirements: int,
+    model_id: str,
+    load_mode: str,
+    fallback_model_id: str,
+    aux_model_id: str,
 ) -> Dict[str, Any]:
     path = Path(schema_xlsx_path or "").expanduser()
 
@@ -985,7 +1012,7 @@ def load_manual_job_requirements_from_excel(
                         "weight": {"weight", "vaha"},
                         "active": {"active", "aktivne", "enabled", "is_active"},
                         "note": {"note", "notes", "poznamka"},
-                        }
+                    }
 
     header_positions: Dict[str, int] = {}
     for canonical_name, variants in header_aliases.items():
@@ -1096,7 +1123,7 @@ def load_manual_job_requirements_from_excel(
                             "matched_group": best_group_name,
                             "match_score": best_score,
                             "prompt_mode": "manual_excel_schema",
-                            },
+                        },
                 }
 
     raw_requirements = []
@@ -1120,7 +1147,7 @@ def load_manual_job_requirements_from_excel(
                                                     fallback_model_id=fallback_model_id,
                                                     aux_model_id=aux_model_id,
                                                     allow_llm=True,
-                                                )
+                                                    )
 
     return job_data
 
@@ -1129,13 +1156,13 @@ def load_manual_job_requirements_from_excel(
 # -----------------------------------------------------------------------------
 
 def extract_job_requirements(
-                            job_text: str,
-                            job_requirement_schema_text: str,
-                            model_id: str,
-                            load_mode: str,
-                            fallback_model_id: str,
-                            aux_model_id: str,
-                            max_requirements: int,
+    job_text: str,
+    job_requirement_schema_text: str,
+    model_id: str,
+    load_mode: str,
+    fallback_model_id: str,
+    aux_model_id: str,
+    max_requirements: int,
 ) -> Dict[str, Any]:
     final_user = (
                     "Z pracovnej ponuky extrahuj atomicke poziadavky na kandidata.\n\n"
@@ -1161,15 +1188,15 @@ def extract_job_requirements(
                                             )
 
     raw = chat_generate_messages(
-                                messages,
-                                model_id,
-                                load_mode,
-                                fallback_model_id,
-                                max_new_tokens=1100,
-                                do_sample=False,
+                                    messages,
+                                    model_id,
+                                    load_mode,
+                                    fallback_model_id,
+                                    max_new_tokens=1100,
+                                    do_sample=False,
                                 )
 
-    print("\n RAW JOB REQUIREMENTS OUTPUT ")
+    print("\n   RAW JOB REQUIREMENTS OUTPUT ")
     print(raw)
     print(" END RAW JOB REQUIREMENTS OUTPUT \n")
 
@@ -1188,7 +1215,7 @@ def extract_job_requirements(
                                                     fallback_model_id=fallback_model_id,
                                                     aux_model_id=aux_model_id,
                                                     allow_llm=True,
-                                                )
+                                                    )
     llm_data["_source"] = "llm_few_shot"
 
     weak_llm = is_weak_requirement_output(
@@ -1206,7 +1233,7 @@ def extract_job_requirements(
                                                     llm_data=llm_data,
                                                     fallback_data=fallback_data,
                                                     max_requirements=max_requirements,
-                                                    )
+                                                )
 
     if not isinstance(hybrid_data, dict):
         hybrid_data = llm_data
@@ -1226,19 +1253,19 @@ def extract_job_requirements(
                                                         allow_llm=True,
                                                     )
 
-    print("\n REQUIREMENT EXTRACTION SUMMARY ")
+    print("\n   REQUIREMENT EXTRACTION SUMMARY  ")
     print(json.dumps(hybrid_data.get("_meta", {}), ensure_ascii=False, indent=2))
     print(f"Source: {hybrid_data.get('_source', 'unknown')}")
-    print(" END REQUIREMENT EXTRACTION SUMMARY \n")
+    print(" END REQUIREMENT EXTRACTION SUMMARY  \n")
 
     return hybrid_data
 
 
 def extract_candidate_summary(
-                                cv_text: str,
-                                model_id: str,
-                                load_mode: str,
-                                fallback_model_id: str,
+    cv_text: str,
+    model_id: str,
+    load_mode: str,
+    fallback_model_id: str,
 ) -> Dict[str, Any]:
     final_user = (
                     "Zo zivotopisu extrahuj anonymizovany profil kandidata.\n\n"
@@ -1280,11 +1307,11 @@ def extract_candidate_summary(
 
 
 def evaluate_one_requirement(
-                                requirement: Dict[str, Any],
-                                evidence: List[str],
-                                model_id: str,
-                                load_mode: str,
-                                fallback_model_id: str,
+    requirement: Dict[str, Any],
+    evidence: List[str],
+    model_id: str,
+    load_mode: str,
+    fallback_model_id: str,
 ) -> Dict[str, Any]:
     final_user = (
                     "Vyhodnot, ci kandidat splna jednu poziadavku z pracovneho inzeratu.\n"
@@ -1307,10 +1334,10 @@ def evaluate_one_requirement(
         eval_examples.append(
             {
                 "input": (
-                            "POZIADAVKA:\n"
-                            + json.dumps(ex["input"]["requirement"], ensure_ascii=False, indent=2)
-                            + "\n\nODKAZY Z CV:\n"
-                            + json.dumps(ex["input"]["evidence"], ensure_ascii=False, indent=2)
+                    "POZIADAVKA:\n"
+                    + json.dumps(ex["input"]["requirement"], ensure_ascii=False, indent=2)
+                    + "\n\nODKAZY Z CV:\n"
+                    + json.dumps(ex["input"]["evidence"], ensure_ascii=False, indent=2)
                 ),
                 "output": ex["output"],
             }
@@ -1354,15 +1381,15 @@ def evaluate_one_requirement(
     evidence_used = dedupe_text_list([str(x) for x in evidence_used], limit=3)
 
     return {
-                "requirement_id": str(data.get("requirement_id") or requirement.get("id", "")),
-                "requirement": str(data.get("requirement") or requirement.get("text", "")),
-                "category": requirement.get("category", "other"),
-                "priority": requirement.get("priority", "unknown"),
-                "weight": requirement.get("weight", 1.0),
-                "status": status,
-                "score": max(0.0, min(100.0, score)),
-                "confidence": max(0.0, min(1.0, confidence)),
-                "evidence_used": evidence_used,
-                "explanation": str(data.get("explanation") or "Bez vysvetlenia."),
-                "risk_note": str(data.get("risk_note") or ""),
+            "requirement_id": str(data.get("requirement_id") or requirement.get("id", "")),
+            "requirement": str(data.get("requirement") or requirement.get("text", "")),
+            "category": requirement.get("category", "other"),
+            "priority": requirement.get("priority", "unknown"),
+            "weight": requirement.get("weight", 1.0),
+            "status": status,
+            "score": max(0.0, min(100.0, score)),
+            "confidence": max(0.0, min(1.0, confidence)),
+            "evidence_used": evidence_used,
+            "explanation": str(data.get("explanation") or "Bez vysvetlenia."),
+            "risk_note": str(data.get("risk_note") or ""),
             }
