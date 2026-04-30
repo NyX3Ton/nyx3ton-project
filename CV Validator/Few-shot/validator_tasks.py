@@ -414,21 +414,24 @@ def direct_canonical_requirement(text: str) -> Optional[Dict[str, Any]]:
                 "sap successfactors": ("sap successfactors", "SAP SuccessFactors", "hard_skill"),
                 "microsoft excel": ("microsoft excel", "Microsoft Excel", "hard_skill"),
                 "microsoft office": ("microsoft office", "Microsoft Office", "hard_skill"),
-                "anglictina": ("anglictina", "anglictina", "language"),
+                "anglictina": ("anglictina", "anglicky jazyk", "language"),
                 "anglictina na urovni b2": ("anglictina na urovni b2", "anglictina na urovni B2", "language"),
+                "anglicky jazyk": ("anglictina", "anglicky jazyk", "language"),
+                "anglicky jazyk na urovni b2": ("anglictina na urovni b2", "anglictina na urovni B2", "language"),
                 "nemcina": ("nemcina", "nemcina", "language"),
-                "teamova spolupraca": ("teamova spolupraca", "teamova spolupraca", "soft_skill"),
+                "teamova spolupraca": ("timova spolupraca", "teamova spolupraca", "soft_skill"),
+                "timova spolupraca": ("timova spolupraca", "teamova spolupraca", "soft_skill"),
                 "komunikacne schopnosti": ("komunikacne schopnosti", "komunikacne schopnosti", "soft_skill"),
                 "samostatnost": ("samostatnost", "samostatnost", "soft_skill"),
                 "zodpovednost": ("zodpovednost", "zodpovednost", "soft_skill"),
                 "bratislava": ("bratislava", "Bratislava", "location"),
                 "II.stupna": ("magisterske","inzinierske", "magister", "inzinier", "masters"),
                 "I.stupna": ("bakalarske", "bakalar", "bachelor"),
-                "III.stupna": ("doktorand", "doktorandke", "doctor"),
+                "III.stupna": ("doktorand", "doktorandske", "doctor"),
                 "2.stupna": ("magisterske","inzinierske", "magister", "inzinier", "masters"),
                 "1.stupna": ("bakalarske", "bakalar", "bachelor"),
                 "3.stupna": ("doktorand", "doktorandke", "doctor")
-            }
+                }
 
     if key in mapping:
         canonical_key, canonical_text, category_hint = mapping[key]

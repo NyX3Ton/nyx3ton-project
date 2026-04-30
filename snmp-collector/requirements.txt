@@ -1,9 +1,0 @@
-pysnmp==7.1.21
-pyasn1==0.6.0
-pycryptodome==3.22.0
-pycryptodomex==3.23.0
-python-jose==3.5.0
-pandas>=2.0
-sqlalchemy>=2.0
-pyodbc>=5.0
-nest-asyncio>=1.5
