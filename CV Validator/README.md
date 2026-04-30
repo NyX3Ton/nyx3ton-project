@@ -73,10 +73,15 @@ Report + JSON vystup
 
 ### 4. Priklad vystupu z modelu
 
-Prve spustenie:
+Uvodne menu:
 
 ![Dashboard](images/first_load.png)
 
-Priklad vyhodnoteneho zivotopisu a poznamky k poziadavkam:
+Priklad vyhodnoteneho zivotopisu (verzia Zero-shot):
 
 ![Results](images/vyhodnotenie_poziadaviek.png)
+
+Priklad vyhodnoteneho zivotopisu (verzia Few-shots):
+
+![Results](images/vyhodnotenie_poziadaviek_few-shot.png)
+
