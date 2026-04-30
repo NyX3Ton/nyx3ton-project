@@ -1,8 +1,24 @@
+# app-zero_shot.py of nyx3ton-project\CV Validator
 from __future__ import annotations
 
 # -----------------------------------------------------------------------------
 # 0. IMPORTS
+# 1. ENV + GLOBAL SETTINGS
+# 2. GLOBAL MODEL CACHE
+# 3. UTILS
+# 4. DOCUMENT LOADING: PDF/DOCX/RTF/TXT/DOC
+# 5. JOB AD SCRAPING
+# 6. CHUNKING + RAG
+# 7. LOCAL HUGGING FACE LLM
+# 8. LLM PROMPTS / TASKS
+# 10. MAIN PIPELINE
+# 11. GRADIO UI
 # -----------------------------------------------------------------------------
+
+# -----------------------------------------------------------------------------
+# 0. IMPORTS
+# -----------------------------------------------------------------------------
+
 import gc, json, os, re, tempfile, traceback, torch, requests, faiss
 from dataclasses import dataclass
 from importlib import import_module
@@ -15,13 +31,12 @@ from sentence_transformers import SentenceTransformer
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from dotenv import load_dotenv
 
-from langchain_core.prompts import ChatPromptTemplate, FewShotChatMessagePromptTemplate
-
-from dictionary_fallback import (fallback_extract_requirements_from_text, build_hybrid_requirement_result)
+from dictionary_fallback import (fallback_extract_requirements_from_text,build_hybrid_requirement_result)
 
 # -----------------------------------------------------------------------------
 # 1. ENV + GLOBAL SETTINGS
 # -----------------------------------------------------------------------------
+
 APP_DIR = Path(__file__).resolve().parent
 load_dotenv(APP_DIR / ".env")
 
@@ -32,8 +47,8 @@ def env_bool(name: str, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}
 
 DEFAULT_LLM_MODEL_ID = os.getenv("LLM_MODEL_ID", "unsloth/Qwen3.5-4B")
-DEFAULT_FALLBACK_LLM_MODEL_ID = os.getenv("FALLBACK_LLM_MODEL_ID", "Qwen/Qwen2.5-3B-Instruct")
-DEFAULT_EMBED_MODEL_ID = os.getenv("EMBED_MODEL_ID","sentence-transformers/paraphrase-multilingual-mpnet-base-v2")
+DEFAULT_FALLBACK_LLM_MODEL_ID = os.getenv("FALLBACK_LLM_MODEL_ID", "Qwen/Qwen3-4B-Thinking-2507")
+DEFAULT_EMBED_MODEL_ID = os.getenv("EMBED_MODEL_ID","sentence-transformers/paraphrase-multilingual-mpnet-base-v2",)
 
 LLM_LOAD_MODE = os.getenv("LLM_LOAD_MODE", "fp16_gpu")  # auto | bnb_4bit | fp16_gpu | cpu
 MAX_GPU_MEMORY = os.getenv("MAX_GPU_MEMORY", "10.5GiB")
@@ -44,11 +59,12 @@ CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "55"))
 DEFAULT_TOP_K = max(2, min(20, int(os.getenv("TOP_K", "5"))))
 DEFAULT_MAX_REQUIREMENTS = max(5, min(25, int(os.getenv("MAX_REQUIREMENTS", "12"))))
 MIN_RAG_SIMILARITY = float(os.getenv("MIN_RAG_SIMILARITY", "0.20"))
-TEMPERATURE_SETTING = float(os.getenv("DEF_TEMPERATURE_SETTING", "0.2"))
-SAMPLE_SETTING = env_bool("DEF_SAMPLE_SETTING", False)
+TEMPERATURE_SETTING = float(os.getenv("DEF_TEMPERATURE_SETTING", "1.0"))
+SAMPLE_SETTING = env_bool("DEF_SAMPLE_SETTING", True)
 P_SETTING = float(os.getenv("DEF_P_SETTING", "0.95"))
 GEN_TOP_K_SETTING = int(os.getenv("DEF_TOP_K_SETTING", "20"))
 REPETITION_PEN = float(os.getenv("DEF_REPETITION_PEN", "1.0"))
+
 
 HF_HOME_LOCAL = os.getenv("HF_HOME_LOCAL", "").strip()
 if HF_HOME_LOCAL:
@@ -57,6 +73,7 @@ if HF_HOME_LOCAL:
 # -----------------------------------------------------------------------------
 # 2. GLOBAL MODEL CACHE
 # -----------------------------------------------------------------------------
+
 _TOKENIZER = None
 _MODEL = None
 _MODEL_INFO = "Model este nie je nacitany."
@@ -103,7 +120,7 @@ def safe_json_loads(text: str, fallback: Any) -> Any:
     parsed_candidates = []
 
     for i, ch in enumerate(cleaned):
-        if ch not in "[{":
+        if ch not in "{[":
             continue
         try:
             obj, _ = decoder.raw_decode(cleaned[i:])
@@ -125,6 +142,7 @@ def trim_text(text: str, max_chars: int = 24000) -> str:
     text = text.strip()
     if len(text) <= max_chars:
         return text
+    # Keep beginning and end; CV often has important skills at both places.
     half = max_chars // 2
     return text[:half] + "\n\n[...SKRATENE...]\n\n" + text[-half:]
 
@@ -143,151 +161,6 @@ def weighted_average(rows: List[Dict[str, Any]]) -> float:
         total_w += max(w, 0.01)
         total += max(0.0, min(100.0, s)) * max(w, 0.01)
     return round(total / total_w, 2) if total_w else 0.0
-
-def normalize_requirement_key(text: str) -> str:
-    text = normalize_space(text).lower()
-    text = re.sub(r"[^a-zA-Z0-9+.#/ ]+", " ", text)
-
-    replacements = {
-        "programovanie v jazyku python": "python",
-        "skusenosti s pythonom": "python",
-        "pokrocila znalost python": "python",
-        "znalost python": "python",
-        "programovanie v jazyku java": "java",
-        "skusenosti s javou": "java",
-        "znalost sql": "sql",
-        "skusenosti so sql": "sql",
-        "anglicky jazyk": "anglictina",
-        "anglictina b2": "anglictina na urovni b2",
-        "english b2": "anglictina na urovni b2",
-        "timova praca": "teamova spolupraca",
-        "praca v time": "teamova spolupraca",
-        "ms office": "microsoft office",
-    }
-
-    text = replacements.get(text, text)
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
-
-def dedupe_text_list(items: List[str], limit: int = 12) -> List[str]:
-    seen = set()
-    result = []
-    for item in items:
-        item = normalize_space(str(item))
-        if not item:
-            continue
-        key = item.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        result.append(item)
-        if len(result) >= limit:
-            break
-    return result
-
-def clean_requirements(reqs: List[Any], max_requirements: int) -> List[Dict[str, Any]]:
-    clean_reqs = []
-    seen_keys = set()
-
-    for i, r in enumerate(reqs[: max_requirements * 2], start=1):
-        if not isinstance(r, dict):
-            continue
-
-        text = normalize_space(str(r.get("text", "")))
-        if not text:
-            continue
-
-        key = normalize_requirement_key(text)
-        if not key or key in seen_keys:
-            continue
-        seen_keys.add(key)
-
-        try:
-            weight = float(r.get("weight", 1.0))
-        except Exception:
-            weight = 1.0
-
-        category = str(r.get("category") or "other")
-        if category not in {"hard_skill", "experience", "education", "language", "soft_skill", "location", "other"}:
-            category = "other"
-
-        priority = str(r.get("priority") or "unknown")
-        if priority not in {"must", "nice", "unknown"}:
-            priority = "unknown"
-
-        clean_reqs.append(
-            {
-                "id": str(r.get("id") or f"R{i}"),
-                "text": text,
-                "category": category,
-                "priority": priority,
-                "weight": max(0.5, min(5.0, weight)),
-            }
-        )
-
-        if len(clean_reqs) >= max_requirements:
-            break
-
-    for idx, item in enumerate(clean_reqs, start=1):
-        item["id"] = f"R{idx}"
-
-    return clean_reqs
-
-def is_generic_requirement_text(text: str) -> bool:
-    text = normalize_requirement_key(text)
-    generic_patterns = [
-        "komunikacne schopnosti",
-        "komunikacia",
-        "samostatnost",
-        "zodpovednost",
-        "flexibilita",
-        "odolnost voci stresu",
-        "teamova spolupraca",
-        "proaktivny pristup",
-        "motivacia",
-        "ucit sa nove veci",
-    ]
-    return any(p in text for p in generic_patterns)
-
-def is_weak_requirement_output(data: Dict[str, Any], max_requirements: int) -> bool:
-    reqs = data.get("requirements") or []
-    if not isinstance(reqs, list):
-        return True
-
-    if len(reqs) < min(3, max_requirements):
-        return True
-
-    generic_count = 0
-    hard_like_count = 0
-    seen = set()
-    dup_count = 0
-
-    for req in reqs:
-        if not isinstance(req, dict):
-            continue
-        text = normalize_space(str(req.get("text", "")))
-        key = normalize_requirement_key(text)
-        if not key:
-            continue
-        if key in seen:
-            dup_count += 1
-        seen.add(key)
-
-        if is_generic_requirement_text(text):
-            generic_count += 1
-
-        category = str(req.get("category") or "other")
-        if category in {"hard_skill", "experience", "education", "language"}:
-            hard_like_count += 1
-
-    if dup_count >= 2:
-        return True
-    if generic_count >= max(2, len(reqs) // 2):
-        return True
-    if hard_like_count == 0:
-        return True
-
-    return False
 
 # -----------------------------------------------------------------------------
 # 4. DOCUMENT LOADING: PDF/DOCX/RTF/TXT/DOC
@@ -315,6 +188,7 @@ def load_docx(path: str) -> str:
     d = docx.Document(path)
     paragraphs = [p.text for p in d.paragraphs if p.text and p.text.strip()]
 
+    # Include tables as text too.
     for table in d.tables:
         for row in table.rows:
             cells = [normalize_space(c.text) for c in row.cells if c.text]
@@ -353,7 +227,8 @@ def load_doc_legacy_windows(path: str) -> str:
         word = win32com.client.Dispatch("Word.Application")
         word.Visible = False
         doc = word.Documents.Open(str(Path(path).resolve()))
-        doc.SaveAs(str(tmp_txt), FileFormat=7)  # 7 = wdFormatUnicodeText
+        # 7 = wdFormatUnicodeText
+        doc.SaveAs(str(tmp_txt), FileFormat=7)
         doc.Close(False)
         return load_txt(str(tmp_txt))
     finally:
@@ -398,11 +273,13 @@ def scrape_url(url: str) -> str:
     for tag in soup(["script", "style", "noscript", "svg", "nav", "footer", "header"]):
         tag.decompose()
 
+    # Prefer main/article if available.
     main = soup.find("main") or soup.find("article") or soup.body or soup
     text = main.get_text("\n")
     lines = [normalize_space(x) for x in text.splitlines()]
     lines = [x for x in lines if len(x) > 2]
 
+    # Remove excessive duplicates while preserving order.
     seen = set()
     unique = []
     for line in lines:
@@ -435,7 +312,7 @@ def get_embedder(model_id: str = DEFAULT_EMBED_MODEL_ID):
     global _EMBEDDER, _EMBEDDER_ID
     if _EMBEDDER is not None and _EMBEDDER_ID == model_id:
         return _EMBEDDER
-    device = "cpu"
+    device = "cpu"  # Keep VRAM free for LLM. Change to cuda if you really want.
     _EMBEDDER = SentenceTransformer(model_id, device=device)
     _EMBEDDER_ID = model_id
     return _EMBEDDER
@@ -447,11 +324,11 @@ def build_faiss_index(chunks: List[str], embed_model_id: str) -> Tuple[Any, Any]
     embedder = get_embedder(embed_model_id)
 
     vectors = embedder.encode(
-        chunks,
-        convert_to_numpy=True,
-        normalize_embeddings=True,
-        show_progress_bar=True,
-    )
+                                chunks,
+                                convert_to_numpy=True,
+                                normalize_embeddings=True,
+                                show_progress_bar=True,
+                            )
 
     np_mod = cast(Any, np)
     vectors = np_mod.asarray(vectors, dtype="float32")
@@ -461,6 +338,7 @@ def build_faiss_index(chunks: List[str], embed_model_id: str) -> Tuple[Any, Any]
 
     faiss_mod = cast(Any, faiss)
     index = cast(Any, faiss_mod.IndexFlatIP(int(vectors.shape[1])))
+
     add_fn = cast(Any, index.add)
     add_fn(vectors)
 
@@ -503,10 +381,10 @@ def unload_llm() -> str:
     return _MODEL_INFO + "\n" + cuda_summary()
 
 def load_llm(
-    model_id: str = DEFAULT_LLM_MODEL_ID,
-    load_mode: str = LLM_LOAD_MODE,
-    fallback_model_id: str = DEFAULT_FALLBACK_LLM_MODEL_ID,
-):
+            model_id: str = DEFAULT_LLM_MODEL_ID,
+            load_mode: str = LLM_LOAD_MODE,
+            fallback_model_id: str = DEFAULT_FALLBACK_LLM_MODEL_ID,
+            ):
     global _TOKENIZER, _MODEL, _MODEL_INFO
 
     desired_signature = f"{model_id}|{load_mode}|fallback={fallback_model_id}"
@@ -525,19 +403,19 @@ def load_llm(
         if not has_cuda:
             raise RuntimeError("CUDA nie je dostupna pre 4-bit GPU load.")
         bnb_config = BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_compute_dtype=torch.float16,
-            bnb_4bit_use_double_quant=True,
-        )
+                                        load_in_4bit=True,
+                                        bnb_4bit_quant_type="nf4",
+                                        bnb_4bit_compute_dtype=torch.float16,
+                                        bnb_4bit_use_double_quant=True,
+                                        )
         tok = _load_tokenizer(mid)
         mdl = AutoModelForCausalLM.from_pretrained(
-            mid,
-            quantization_config=bnb_config,
-            device_map="auto",
-            max_memory={0: MAX_GPU_MEMORY, "cpu": "48GiB"},
-            trust_remote_code=True,
-        )
+                                                    mid,
+                                                    quantization_config=bnb_config,
+                                                    device_map="auto",
+                                                    max_memory={0: MAX_GPU_MEMORY, "cpu": "48GiB"},
+                                                    trust_remote_code=True,
+                                                    )
         return tok, mdl, f"Nacitany model: {mid} | mode=bnb_4bit | {desired_signature}"
 
     def _try_fp16_gpu(mid: str):
@@ -545,22 +423,22 @@ def load_llm(
             raise RuntimeError("CUDA nie je dostupna pre fp16_gpu load.")
         tok = _load_tokenizer(mid)
         mdl = AutoModelForCausalLM.from_pretrained(
-            mid,
-            torch_dtype=torch.float16,
-            device_map="auto",
-            max_memory={0: MAX_GPU_MEMORY, "cpu": "48GiB"},
-            trust_remote_code=True,
-        )
+                                                    mid,
+                                                    torch_dtype=torch.float16,
+                                                    device_map="auto",
+                                                    max_memory={0: MAX_GPU_MEMORY, "cpu": "48GiB"},
+                                                    trust_remote_code=True,
+                                                    )
         return tok, mdl, f"Nacitany model: {mid} | mode=fp16_gpu | {desired_signature}"
 
     def _try_cpu(mid: str):
         tok = _load_tokenizer(mid)
         mdl = AutoModelForCausalLM.from_pretrained(
-            mid,
-            torch_dtype=torch.float32,
-            device_map={"": "cpu"},
-            trust_remote_code=True,
-        )
+                                                    mid,
+                                                    torch_dtype=torch.float32,
+                                                    device_map={"": "cpu"},
+                                                    trust_remote_code=True,
+                                                    )
         return tok, mdl, f"Nacitany model: {mid} | mode=cpu | {desired_signature}"
 
     attempts = []
@@ -574,11 +452,10 @@ def load_llm(
         attempts = [lambda: _try_cpu(model_id)]
     else:
         attempts = [
-            lambda: _try_4bit(model_id),
-            lambda: _try_fp16_gpu(model_id),
-            lambda: _try_fp16_gpu(fallback_model_id),
-            lambda: _try_cpu(fallback_model_id),
-        ]
+                    lambda: _try_4bit(model_id),
+                    lambda: _try_fp16_gpu(fallback_model_id),
+                    lambda: _try_cpu(fallback_model_id),
+                    ]
 
     for attempt in attempts:
         try:
@@ -601,61 +478,49 @@ def model_device(model: Any):
     except Exception:
         return "cuda" if torch.cuda.is_available() else "cpu"
 
-def lc_messages_to_hf_messages(messages: List[Any]) -> List[Dict[str, str]]:
-    role_map = {
-        "system": "system",
-        "human": "user",
-        "ai": "assistant",
-    }
-
-    converted = []
-    for msg in messages:
-        msg_type = getattr(msg, "type", "human")
-        role = role_map.get(msg_type, "user")
-        content = normalize_space(str(getattr(msg, "content", "")))
-        if content:
-            converted.append({"role": role, "content": content})
-    return converted
-
-def chat_generate_messages(
-    messages: List[Dict[str, str]],
-    model_id: str,
-    load_mode: str,
-    fallback_model_id: str,
-    max_new_tokens: int = MAX_NEW_TOKENS,
-    do_sample: bool = False,
-    temperature: float = 0.2,
+def chat_generate(
+                    system: str,
+                    user: str,
+                    model_id: str,
+                    load_mode: str,
+                    fallback_model_id: str,
+                    max_new_tokens: int = MAX_NEW_TOKENS,
 ) -> str:
     tok, mdl, _ = load_llm(model_id, load_mode, fallback_model_id)
+
+    messages = [{"role": "system", "content": system.strip()},{"role": "user", "content": user.strip()}]
 
     if getattr(tok, "chat_template", None):
         prompt = tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
     else:
-        parts = []
-        for m in messages:
-            parts.append(f"{m['role'].capitalize()}:\n{m['content']}")
-        prompt = "\n\n".join(parts) + "\n\nAssistant:\n"
+        prompt = f"System:\n{system.strip()}\n\nUser:\n{user.strip()}\n\nAssistant:\n"
 
-    inputs = tok(prompt, return_tensors="pt", truncation=True, max_length=MAX_INPUT_TOKENS)
+    inputs = tok(prompt,return_tensors="pt",truncation=True,max_length=MAX_INPUT_TOKENS)
     dev = model_device(mdl)
     inputs = {k: v.to(dev) for k, v in inputs.items()}
 
     generation_kwargs = {
-        **inputs,
-        "max_new_tokens": max_new_tokens,
-        "pad_token_id": tok.eos_token_id,
-        "repetition_penalty": REPETITION_PEN,
-        "do_sample": do_sample,
-    }
+                        **inputs,
+                        "max_new_tokens": max_new_tokens,
+                        "repetition_penalty": 1.05,
+                        "pad_token_id": tok.eos_token_id,
+                        }
 
-    if do_sample:
-        generation_kwargs["temperature"] = temperature
+    if SAMPLE_SETTING:
+        #generation_kwargs["do_sample"] = True
+        generation_kwargs["temperature"] = TEMPERATURE_SETTING
         generation_kwargs["top_p"] = P_SETTING
         generation_kwargs["top_k"] = GEN_TOP_K_SETTING
+        generation_kwargs["do_sample"] = SAMPLE_SETTING
+        generation_kwargs["repetition_penalty"] = REPETITION_PEN
+
+    else:
+        generation_kwargs["do_sample"] = False
 
     with torch.no_grad():
         out = mdl.generate(**generation_kwargs)
 
+    # Decode only newly generated part where possible.
     generated = out[0][inputs["input_ids"].shape[-1]:]
     text = tok.decode(generated, skip_special_tokens=True)
     return strip_thinking(text)
@@ -676,242 +541,44 @@ SYSTEM_JSON = """
                 """.strip()
 
 # -----------------------------------------------------------------------------
-# 8. FEW-SHOT EXAMPLES + LANGCHAIN PROMPTS
+# 8. LLM PROMPTS / TASKS
 # -----------------------------------------------------------------------------
-JOB_REQUIREMENT_SCHEMA = """
+def extract_job_requirements(
+                            job_text: str,
+                            model_id: str,
+                            load_mode: str,
+                            fallback_model_id: str,
+                            max_requirements: int,
+) -> Dict[str, Any]:
+    schema = """
 {
     "job_title": "",
     "seniority": "junior|medior|senior|unknown",
     "requirements": [
         {
-            "id": "R1",
-            "text": "konkretna poziadavka",
-            "category": "hard_skill|experience|education|language|soft_skill|location|other",
-            "priority": "must|nice|unknown",
-            "weight": 1.0
-        }
-    ]
+        "id": "R1",
+        "text": "konkretna poziadavka",
+        "category": "hard_skill|experience|education|language|soft_skill|location|other",
+        "priority": "must|nice|unknown",
+        "weight": 1.0
+        }]
 }
 """.strip()
+    user = (
+            "Z pracovnej ponuky extrahuj atomicke poziadavky na kandidata.\n\n"
+            "Vrat presne tento JSON tvar:\n" + schema + "\n\n"
+            "Pravidla:\n"
+            f"- maximalne {max_requirements} najdolezitejsich poziadaviek\n"
+            "- must-have poziadavky daj weight 3 az 5\n"
+            "- nice-to-have poziadavky daj weight 1 az 2\n"
+            "- nerozbijaj jednu poziadavku na duplicitne varianty\n"
+            "- ignoruj benefity firmy, marketing a pravne formulacie\n"
+            "- ak nevies urcit job_title alebo seniority, pouzi hodnotu unknown\n"
+            "- vrat iba JSON, bez komentara\n\n"
+            "PRACOVNA PONUKA:\n" + trim_text(job_text, 22000)
+            )
 
-CANDIDATE_SUMMARY_SCHEMA = """
-{
-    "summary": "kratke zhrnutie kandidata bez mena a citlivych atributov",
-    "skills": ["..."],
-    "experience": ["..."],
-    "education": ["..."],
-    "languages": ["..."],
-    "certifications": ["..."],
-    "risks_or_missing_info": ["..."]
-}
-""".strip()
-
-REQUIREMENT_EVAL_SCHEMA = {
-    "requirement_id": "R1",
-    "requirement": "konkretna poziadavka",
-    "status": "splnene|ciastocne_splnene|nesplnene|nejasne",
-    "score": 0,
-    "confidence": 0.0,
-    "evidence_used": ["kratke citacie/parafrazy dokazov"],
-    "explanation": "kratke vysvetlenie v slovencine bez diakritiky",
-    "risk_note": "co chyba alebo preco je hodnotenie neiste"
-}
-
-JOB_REQ_FEWSHOT = [
-    {
-        "input": """Hladame Python developera pre backendovy tim. Pozadujeme Python, SQL, Git a REST API. Nutna je prax aspon 2 roky s vyvojom aplikacii. Vyhodou je Docker a Kubernetes. Ocenime anglictinu na urovni B2. Ponukame flexibilny home office, multisport kartu a teambuildingy.""",
-        "output": {
-            "job_title": "Python developer",
-            "seniority": "medior",
-            "requirements": [
-                {"id": "R1", "text": "Python", "category": "hard_skill", "priority": "must", "weight": 5.0},
-                {"id": "R2", "text": "SQL", "category": "hard_skill", "priority": "must", "weight": 4.0},
-                {"id": "R3", "text": "Git", "category": "hard_skill", "priority": "must", "weight": 3.0},
-                {"id": "R4", "text": "REST API", "category": "hard_skill", "priority": "must", "weight": 3.0},
-                {"id": "R5", "text": "aspon 2 roky praxe s vyvojom aplikacii", "category": "experience", "priority": "must", "weight": 4.0},
-                {"id": "R6", "text": "Docker", "category": "hard_skill", "priority": "nice", "weight": 2.0},
-                {"id": "R7", "text": "Kubernetes", "category": "hard_skill", "priority": "nice", "weight": 2.0},
-                {"id": "R8", "text": "anglictina na urovni B2", "category": "language", "priority": "nice", "weight": 2.0}
-            ]
-        },
-    },
-    {
-        "input": """Pre klienta hladame HR specialistu. Podmienkou je skusenost s naborom kandidatok a kandidatov, aktivna anglictina, dobra znalost Excelu a komunikacne schopnosti. Vyhodou je skusenost so SAP SuccessFactors. Pozicia je v Bratislave. Firemne benefity a kultura nie su sucast poziadaviek.""",
-        "output": {
-            "job_title": "HR specialista",
-            "seniority": "unknown",
-            "requirements": [
-                {"id": "R1", "text": "skusenost s naborom kandidatok a kandidatov", "category": "experience", "priority": "must", "weight": 4.0},
-                {"id": "R2", "text": "aktivna anglictina", "category": "language", "priority": "must", "weight": 3.0},
-                {"id": "R3", "text": "Excel", "category": "hard_skill", "priority": "must", "weight": 3.0},
-                {"id": "R4", "text": "komunikacne schopnosti", "category": "soft_skill", "priority": "must", "weight": 3.0},
-                {"id": "R5", "text": "SAP SuccessFactors", "category": "hard_skill", "priority": "nice", "weight": 2.0},
-                {"id": "R6", "text": "Bratislava", "category": "location", "priority": "unknown", "weight": 1.0}
-            ]
-        },
-    },
-]
-
-CANDIDATE_FEWSHOT = [
-    {
-        "input": """Jan Novak
-Backend developer
-5 rokov vyvoja v Pythone a Django. Skusenosti s SQL, REST API, Dockerom a Gitom. Anglictina B2. Vzdelanie: STU FEI. Certifikat AWS Cloud Practitioner.""",
-        "output": {
-            "summary": "Kandidat ma viacrocnu prax v backendovom vyvoji so zameranim na Python technologie.",
-            "skills": ["Python", "Django", "SQL", "REST API", "Docker", "Git"],
-            "experience": ["5 rokov backendovy vyvoj"],
-            "education": ["STU FEI"],
-            "languages": ["anglictina B2"],
-            "certifications": ["AWS Cloud Practitioner"],
-            "risks_or_missing_info": ["Nie je jasna uroven prace s Kubernetes."]
-        },
-    }
-]
-
-REQUIREMENT_EVAL_FEWSHOT = [
-    {
-        "input": {
-            "requirement": {"id": "R1", "text": "Python", "category": "hard_skill", "priority": "must", "weight": 5.0},
-            "evidence": [
-                "[similarity=0.882] 5 rokov vyvoja v Pythone a Django.",
-                "[similarity=0.771] Backend developer so zameranim na Python aplikacie."
-            ]
-        },
-        "output": {
-            "requirement_id": "R1",
-            "requirement": "Python",
-            "status": "splnene",
-            "score": 96,
-            "confidence": 0.95,
-            "evidence_used": [
-                "5 rokov vyvoja v Pythone a Django.",
-                "Backend developer so zameranim na Python aplikacie."
-            ],
-            "explanation": "CV obsahuje priamy a silny dokaz o viacrocnej praxi s Pythonom.",
-            "risk_note": ""
-        },
-    },
-    {
-        "input": {
-            "requirement": {"id": "R2", "text": "anglictina na urovni B2", "category": "language", "priority": "must", "weight": 3.0},
-            "evidence": [
-                "[similarity=0.691] Active use of English in international environment.",
-                "[similarity=0.655] Daily communication with foreign clients."
-            ]
-        },
-        "output": {
-            "requirement_id": "R2",
-            "requirement": "anglictina na urovni B2",
-            "status": "ciastocne_splnene",
-            "score": 72,
-            "confidence": 0.74,
-            "evidence_used": [
-                "Active use of English in international environment.",
-                "Daily communication with foreign clients."
-            ],
-            "explanation": "CV naznacuje prakticke pouzivanie anglictiny, ale priamo neuvadza uroven B2.",
-            "risk_note": "Chyba explicitne uvedena jazykova uroven."
-        },
-    },
-    {
-        "input": {
-            "requirement": {"id": "R3", "text": "Kubernetes", "category": "hard_skill", "priority": "nice", "weight": 2.0},
-            "evidence": []
-        },
-        "output": {
-            "requirement_id": "R3",
-            "requirement": "Kubernetes",
-            "status": "nesplnene",
-            "score": 10,
-            "confidence": 0.92,
-            "evidence_used": [],
-            "explanation": "V dodanych odkazoch z CV nie je dokaz o znalosti Kubernetes.",
-            "risk_note": "Poziadavka nemala ziadny relevantny dokaz v CV."
-        },
-    },
-]
-
-def build_lc_messages_from_fewshot(
-    system_text: str,
-    examples: List[Dict[str, Any]],
-    example_human_template: str,
-    final_human_input: str,
-) -> List[Dict[str, str]]:
-    example_prompt = ChatPromptTemplate.from_messages(
-        [
-            ("human", example_human_template),
-            ("ai", "{output}"),
-        ]
-    )
-
-    normalized_examples = []
-    for ex in examples:
-        normalized_examples.append(
-            {
-                **ex,
-                "output": json.dumps(ex["output"], ensure_ascii=False, indent=2),
-            }
-        )
-
-    few_shot_prompt = FewShotChatMessagePromptTemplate(
-        example_prompt=example_prompt,
-        examples=normalized_examples,
-    )
-
-    final_prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", system_text),
-            few_shot_prompt,
-            ("human", final_human_input),
-        ]
-    )
-
-    prompt_value = final_prompt.format_prompt()
-    return lc_messages_to_hf_messages(prompt_value.to_messages())
-
-# -----------------------------------------------------------------------------
-# 9. LLM PROMPTS / TASKS
-# -----------------------------------------------------------------------------
-
-def extract_job_requirements(
-    job_text: str,
-    model_id: str,
-    load_mode: str,
-    fallback_model_id: str,
-    max_requirements: int,
-) -> Dict[str, Any]:
-    final_user = (
-        "Z pracovnej ponuky extrahuj atomicke poziadavky na kandidata.\n\n"
-        "Vrat presne tento JSON tvar:\n"
-        + JOB_REQUIREMENT_SCHEMA
-        + "\n\nPravidla:\n"
-        f"- maximalne {max_requirements} najdolezitejsich poziadaviek\n"
-        "- must-have poziadavky daj weight 3 az 5\n"
-        "- nice-to-have poziadavky daj weight 1 az 2\n"
-        "- nerozbijaj jednu poziadavku na duplicitne varianty\n"
-        "- ignoruj benefity firmy, marketing a pravne formulacie\n"
-        "- ak nevies urcit job_title alebo seniority, pouzi hodnotu unknown\n"
-        "- vrat iba JSON, bez komentara\n\n"
-        "PRACOVNA PONUKA:\n"
-        + trim_text(job_text, 22000)
-    )
-
-    messages = build_lc_messages_from_fewshot(
-        system_text=SYSTEM_JSON,
-        examples=JOB_REQ_FEWSHOT,
-        example_human_template="Z pracovnej ponuky extrahuj atomicke poziadavky na kandidata.\n\nPRACOVNA PONUKA:\n{input}",
-        final_human_input=final_user,
-    )
-
-    raw = chat_generate_messages(
-        messages,
-        model_id,
-        load_mode,
-        fallback_model_id,
-        max_new_tokens=1100,
-        do_sample=False,
-    )
+    raw = chat_generate(SYSTEM_JSON, user, model_id, load_mode, fallback_model_id, max_new_tokens=1200)
 
     print("\n===== RAW JOB REQUIREMENTS OUTPUT =====")
     print(raw)
@@ -924,27 +591,35 @@ def extract_job_requirements(
     if not isinstance(llm_data, dict):
         llm_data = {"job_title": "unknown", "seniority": "unknown", "requirements": []}
 
-    llm_data["requirements"] = clean_requirements(llm_data.get("requirements") or [], max_requirements)
-    llm_data["_source"] = "llm_few_shot"
+    reqs = llm_data.get("requirements") or []
+    clean_reqs = []
+    for i, r in enumerate(reqs[:max_requirements], start=1):
+        if not isinstance(r, dict):
+            continue
 
-    weak_llm = is_weak_requirement_output(llm_data, max_requirements=max_requirements)
+        text = normalize_space(str(r.get("text", "")))
+        if not text:
+            continue
+
+        try:
+            weight = float(r.get("weight", 1.0))
+        except Exception:
+            weight = 1.0
+
+        clean_reqs.append({
+            "id": str(r.get("id") or f"R{i}"),
+            "text": text,
+            "category": str(r.get("category") or "other"),
+            "priority": str(r.get("priority") or "unknown"),
+            "weight": max(0.5, min(5.0, weight)),
+        })
+
+    llm_data["requirements"] = clean_reqs
+    llm_data["_source"] = "llm_json"
+
     fallback_data = fallback_extract_requirements_from_text(job_text, max_requirements)
 
-    hybrid_data = build_hybrid_requirement_result(
-        llm_data=llm_data,
-        fallback_data=fallback_data,
-        max_requirements=max_requirements,
-    )
-
-    if not isinstance(hybrid_data, dict):
-        hybrid_data = llm_data
-
-    hybrid_data.setdefault("_meta", {})
-    if isinstance(hybrid_data["_meta"], dict):
-        hybrid_data["_meta"]["weak_llm"] = weak_llm
-        hybrid_data["_meta"]["prompt_mode"] = "few_shot_langchain"
-
-    hybrid_data["requirements"] = clean_requirements(hybrid_data.get("requirements") or [], max_requirements)
+    hybrid_data = build_hybrid_requirement_result(llm_data=llm_data,fallback_data=fallback_data,max_requirements=max_requirements)
 
     print("\n===== REQUIREMENT EXTRACTION SUMMARY =====")
     print(json.dumps(hybrid_data.get("_meta", {}), ensure_ascii=False, indent=2))
@@ -954,106 +629,73 @@ def extract_job_requirements(
     return hybrid_data
 
 def extract_candidate_summary(
-    cv_text: str,
-    model_id: str,
-    load_mode: str,
-    fallback_model_id: str,
+                                cv_text: str,
+                                model_id: str,
+                                load_mode: str,
+                                fallback_model_id: str,
 ) -> Dict[str, Any]:
-    final_user = (
-        "Zo zivotopisu extrahuj anonymizovany profil kandidata.\n\n"
-        "Vrat presne tento JSON tvar:\n"
-        + CANDIDATE_SUMMARY_SCHEMA
-        + "\n\nPravidla:\n"
-        "- nepouzivaj meno, adresu, vek, pohlavie, rodinny stav ani fotku\n"
-        "- uvadzaj len veci, ktore su v CV\n"
-        "- vrat iba JSON, bez komentara\n\n"
-        "CV TEXT:\n"
-        + trim_text(cv_text, 22000)
-    )
-
-    messages = build_lc_messages_from_fewshot(
-        system_text=SYSTEM_JSON,
-        examples=CANDIDATE_FEWSHOT,
-        example_human_template="Zo zivotopisu extrahuj anonymizovany profil kandidata.\n\nCV TEXT:\n{input}",
-        final_human_input=final_user,
-    )
-
-    raw = chat_generate_messages(
-        messages,
-        model_id,
-        load_mode,
-        fallback_model_id,
-        max_new_tokens=900,
-        do_sample=False,
-    )
-
+    schema = """
+    {
+        "summary": "kratke zhrnutie kandidata bez mena a citlivych atributov",
+        "skills": ["..."],
+        "experience": ["..."],
+        "education": ["..."],
+        "languages": ["..."],
+        "certifications": ["..."],
+        "risks_or_missing_info": ["..."]
+    }
+""".strip()
+    user = (
+                "Zo zivotopisu extrahuj anonymizovany profil kandidata.\n\n"
+                "Vrat presne tento JSON tvar:\n" + schema + "\n\n"
+                "Pravidla:\n"
+                "- nepouzivaj meno, adresu, vek, pohlavie, rodinny stav ani fotku\n"
+                "- uvadzaj len veci, ktore su v CV\n"
+                "- vrat iba JSON, bez komentara\n\n"
+                "CV TEXT:\n" + trim_text(cv_text, 22000)
+            )
+    raw = chat_generate(SYSTEM_JSON, user, model_id, load_mode, fallback_model_id, max_new_tokens=1100)
     data = safe_json_loads(raw, fallback={"summary": "Nepodarilo sa spolahlivo extrahovat profil.", "skills": []})
     if not isinstance(data, dict):
         data = {"summary": "Nepodarilo sa spolahlivo extrahovat profil.", "skills": []}
-
-    for key in ["skills", "experience", "education", "languages", "certifications", "risks_or_missing_info"]:
-        vals = data.get(key)
-        data[key] = dedupe_text_list(vals if isinstance(vals, list) else [], limit=12)
-
     return data
 
 def evaluate_one_requirement(
-    requirement: Dict[str, Any],
-    evidence: List[str],
-    model_id: str,
-    load_mode: str,
-    fallback_model_id: str,
+                            requirement: Dict[str, Any],
+                            evidence: List[str],
+                            model_id: str,
+                            load_mode: str,
+                            fallback_model_id: str,
 ) -> Dict[str, Any]:
-    final_user = (
-        "Vyhodnot, ci kandidat splna jednu poziadavku z pracovneho inzeratu.\n"
-        "Pouzi iba dodane odkazy z CV. Ak dokaz chyba, nehadaj.\n\n"
-        "Vrat presne tento JSON tvar:\n"
-        + json.dumps(REQUIREMENT_EVAL_SCHEMA, ensure_ascii=False, indent=2)
-        + "\n\nSkorovanie:\n"
-        "- 90-100 = jasne splnene\n"
-        "- 60-89 = skor splnene alebo ciastocne\n"
-        "- 30-59 = slabe/nepriame odkazy\n"
-        "- 0-29 = nesplnene alebo chyba dokaz\n\n"
-        "POZIADAVKA:\n"
-        + json.dumps(requirement, ensure_ascii=False, indent=2)
-        + "\n\nODKAZY Z CV:\n"
-        + json.dumps(evidence, ensure_ascii=False, indent=2)
-    )
-
-    eval_examples = []
-    for ex in REQUIREMENT_EVAL_FEWSHOT:
-        eval_examples.append(
-            {
-                "input": (
-                    "POZIADAVKA:\n"
-                    + json.dumps(ex["input"]["requirement"], ensure_ascii=False, indent=2)
-                    + "\n\nODKAZY Z CV:\n"
-                    + json.dumps(ex["input"]["evidence"], ensure_ascii=False, indent=2)
-                ),
-                "output": ex["output"],
-            }
-        )
-
-    messages = build_lc_messages_from_fewshot(
-        system_text=SYSTEM_JSON,
-        examples=eval_examples,
-        example_human_template="Vyhodnot, ci kandidat splna jednu poziadavku z pracovneho inzeratu.\n\n{input}",
-        final_human_input=final_user,
-    )
-
-    raw = chat_generate_messages(
-        messages,
-        model_id,
-        load_mode,
-        fallback_model_id,
-        max_new_tokens=700,
-        do_sample=False,
-    )
-
+    schema = {
+                "requirement_id": str(requirement.get("id", "")),
+                "requirement": str(requirement.get("text", "")),
+                "status": "splnene|ciastocne_splnene|nesplnene|nejasne",
+                "score": 0,
+                "confidence": 0.0,
+                "evidence_used": ["kratke citacie/parafrazy dokazov"],
+                "explanation": "kratke vysvetlenie v slovencine bez diakritiky",
+                "risk_note": "co chyba alebo preco je hodnotenie neiste",
+                }
+    user = (
+            "Vyhodnot, ci kandidat splna jednu poziadavku z pracovneho inzeratu.\n"
+            "Pouzi iba dodane odkazy z CV. Ak dokaz chyba, nehadaj.\n\n"
+            "Vrat presne tento JSON tvar:\n"
+            + json.dumps(schema, ensure_ascii=False, indent=2)
+            + "\n\nSkorovanie:\n"
+            "- 90-100 = jasne splnene\n"
+            "- 60-89 = skor splnene alebo ciastocne\n"
+            "- 30-59 = slabe/nepriame odkazy\n"
+            "- 0-29 = nesplnene alebo chyba dokaz\n\n"
+            "POZIADAVKA:\n" + json.dumps(requirement, ensure_ascii=False) + "\n\n"
+            "odkazy Z CV:\n" + json.dumps(evidence, ensure_ascii=False, indent=2)
+            )
+    raw = chat_generate(SYSTEM_JSON, user, model_id, load_mode, fallback_model_id, max_new_tokens=850)
     data = safe_json_loads(raw, fallback={})
     if not isinstance(data, dict):
         data = {}
 
+    # Normalize robustly.
     status = str(data.get("status") or "nejasne")
     if status not in {"splnene", "ciastocne_splnene", "nesplnene", "nejasne"}:
         status = "nejasne"
@@ -1062,40 +704,36 @@ def evaluate_one_requirement(
         score = float(data.get("score", 0))
     except Exception:
         score = 0.0
-
     try:
         confidence = float(data.get("confidence", 0))
     except Exception:
         confidence = 0.0
 
-    evidence_used = data.get("evidence_used") if isinstance(data.get("evidence_used"), list) else evidence[:2]
-    evidence_used = dedupe_text_list([str(x) for x in evidence_used], limit=3)
-
     return {
-        "requirement_id": str(data.get("requirement_id") or requirement.get("id", "")),
-        "requirement": str(data.get("requirement") or requirement.get("text", "")),
-        "category": requirement.get("category", "other"),
-        "priority": requirement.get("priority", "unknown"),
-        "weight": requirement.get("weight", 1.0),
-        "status": status,
-        "score": max(0.0, min(100.0, score)),
-        "confidence": max(0.0, min(1.0, confidence)),
-        "evidence_used": evidence_used,
-        "explanation": str(data.get("explanation") or "Bez vysvetlenia."),
-        "risk_note": str(data.get("risk_note") or ""),
-    }
+            "requirement_id": str(data.get("requirement_id") or requirement.get("id", "")),
+            "requirement": str(data.get("requirement") or requirement.get("text", "")),
+            "category": requirement.get("category", "other"),
+            "priority": requirement.get("priority", "unknown"),
+            "weight": requirement.get("weight", 1.0),
+            "status": status,
+            "score": max(0.0, min(100.0, score)),
+            "confidence": max(0.0, min(1.0, confidence)),
+            "evidence_used": data.get("evidence_used") if isinstance(data.get("evidence_used"), list) else evidence[:2],
+            "explanation": str(data.get("explanation") or "Bez vysvetlenia."),
+            "risk_note": str(data.get("risk_note") or ""),
+            }
 
 # -----------------------------------------------------------------------------
-# 10. REPORTING
+# 9. REPORTING
 # -----------------------------------------------------------------------------
 
 def status_icon(status: str) -> str:
     return {
-        "splnene": "✅",
-        "ciastocne_splnene": "🟡",
-        "nesplnene": "❌",
-        "nejasne": "⚪",
-    }.get(status, "⚪")
+            "splnene": "✅",
+            "ciastocne_splnene": "🟡",
+            "nesplnene": "❌",
+            "nejasne": "⚪",
+            }.get(status, "⚪")
 
 def verdict(score: float) -> str:
     if score >= 80:
@@ -1109,7 +747,7 @@ def verdict(score: float) -> str:
 def render_markdown_report(job_data: Dict[str, Any], candidate: Dict[str, Any], evals: List[Dict[str, Any]]) -> str:
     score = weighted_average(evals)
     lines = []
-    lines.append("# AI CV validator")
+    lines.append(f"# AI CV validator")
     lines.append("")
     lines.append(f"**Pozicia:** {job_data.get('job_title', 'unknown')}")
     lines.append(f"**Seniorita:** {job_data.get('seniority', 'unknown')}")
@@ -1167,21 +805,22 @@ def render_markdown_report(job_data: Dict[str, Any], candidate: Dict[str, Any], 
     return "\n".join(lines)
 
 # -----------------------------------------------------------------------------
-# 11. MAIN PIPELINE
+# 10. MAIN PIPELINE
 # -----------------------------------------------------------------------------
 
 def run_validation(
-    cv_file: str,
-    job_url: str,
-    job_text_manual: str,
-    model_id: str,
-    fallback_model_id: str,
-    load_mode: str,
-    embed_model_id: str,
-    top_k: int,
-    max_requirements: int,
-    include_candidate_summary: bool,
+                    cv_file: str,
+                    job_url: str,
+                    job_text_manual: str,
+                    model_id: str,
+                    fallback_model_id: str,
+                    load_mode: str,
+                    embed_model_id: str,
+                    top_k: int,
+                    max_requirements: int,
+                    include_candidate_summary: bool,
 ) -> Tuple[str, str, str]:
+
     if not cv_file:
         raise gr.Error("Nahraj CV subor.")
 
@@ -1193,7 +832,6 @@ def run_validation(
     runtime.append(f"Embedding model: {embed_model_id}")
     runtime.append(f"Top-K: {top_k}")
     runtime.append(f"Max requirements: {max_requirements}")
-    runtime.append("Prompt mode: LangChain few-shot")
 
     cv_text = load_document(cv_file)
     if len(cv_text) < 100:
@@ -1213,6 +851,7 @@ def run_validation(
     if len(job_text) < 100:
         raise gr.Error("Z inzeratu sa podarilo ziskat velmi malo textu. Vloz text inzeratu manualne.")
 
+    # Load LLM once before subtasks.
     _, _, model_info = load_llm(model_id, load_mode, fallback_model_id)
     runtime.append(model_info)
 
@@ -1229,7 +868,6 @@ def run_validation(
         runtime.append(f"Fallback count: {meta.get('fallback_count', 0)}")
         runtime.append(f"Weak LLM: {meta.get('weak_llm', False)}")
         runtime.append(f"Merged count: {meta.get('merged_count', 0)}")
-        runtime.append(f"Prompt mode meta: {meta.get('prompt_mode', 'few_shot_langchain')}")
 
     candidate = {}
     if include_candidate_summary:
@@ -1246,13 +884,13 @@ def run_validation(
         evals.append(ev)
 
     final = {
-        "job": job_data,
-        "candidate_profile": candidate,
-        "overall_score": weighted_average(evals),
-        "verdict": verdict(weighted_average(evals)),
-        "evaluations": evals,
-        "runtime": runtime,
-    }
+            "job": job_data,
+            "candidate_profile": candidate,
+            "overall_score": weighted_average(evals),
+            "verdict": verdict(weighted_average(evals)),
+            "evaluations": evals,
+            "runtime": runtime,
+            }
 
     md = render_markdown_report(job_data, candidate, evals)
     js = json.dumps(final, ensure_ascii=False, indent=2)
@@ -1268,12 +906,14 @@ def gradio_run_wrapper(*args):
         return "# Chyba pri spracovani\n\n```text\n" + err + "\n```", "{}", err
 
 # -----------------------------------------------------------------------------
-# 12. GRADIO UI
+# 11. GRADIO UI
 # -----------------------------------------------------------------------------
 
 def build_ui():
+
     with gr.Blocks(title="Lokalny AI CV Validator") as demo:
-        gr.Markdown("")
+        gr.Markdown(
+        )
 
         with gr.Row():
             with gr.Column(scale=1):
@@ -1320,17 +960,17 @@ def build_ui():
         run_btn.click(
             fn=gradio_run_wrapper,
             inputs=[
-                cv_file,
-                job_url,
-                job_text_manual,
-                model_id,
-                fallback_model_id,
-                load_mode,
-                embed_model_id,
-                top_k,
-                max_requirements,
-                include_candidate_summary,
-            ],
+                    cv_file,
+                    job_url,
+                    job_text_manual,
+                    model_id,
+                    fallback_model_id,
+                    load_mode,
+                    embed_model_id,
+                    top_k,
+                    max_requirements,
+                    include_candidate_summary,
+                    ],
             outputs=[report_md, json_report, runtime_info],
         )
         unload_btn.click(fn=unload_llm, inputs=[], outputs=[runtime_info])
