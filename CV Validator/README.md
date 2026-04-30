@@ -16,7 +16,7 @@ MAX_GPU_MEMORY=10.5GiB
 
 ```
 
-## 2. Ako funguje pipeline
+## 2. Ako funguje pipeline (pre zero-shot model)
 
 ```text
 
