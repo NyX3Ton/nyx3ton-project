@@ -430,7 +430,10 @@ def direct_canonical_requirement(text: str) -> Optional[Dict[str, Any]]:
                 "III.stupna": ("doktorand", "doktorandske", "doctor"),
                 "2.stupna": ("magisterske","inzinierske", "magister", "inzinier", "masters"),
                 "1.stupna": ("bakalarske", "bakalar", "bachelor"),
-                "3.stupna": ("doktorand", "doktorandke", "doctor")
+                "3.stupna": ("doktorand", "doktorandke", "doctor"),
+                "data engineer" : ("data warehouse experience", "data engineering", "data engineer", "hard_skill"), 
+                "presentation skills" : ("customer facing position", "stakeholder presentation","customer facing presentation","komunikacia so zakaznikmi", "prezentacia zakaznikom", "prezentacia stakeholderom", "soft_skill"),
+                "prezentacne schopnosti" : ("customer facing position", "stakeholder presentation","customer facing presentation","komunikacia so zakaznikmi", "prezentacia zakaznikom", "prezentacia stakeholderom", "soft_skill"),
                 }
 
     if key in mapping:
