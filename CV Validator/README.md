@@ -14,6 +14,21 @@ EMBED_MODEL_ID=sentence-transformers/paraphrase-multilingual-mpnet-base-v2
 LLM_LOAD_MODE=auto
 MAX_GPU_MEMORY=10.5GiB
 
+# RAG/chunk nastavenia
+CHUNK_WORDS= 180
+CHUNK_OVERLAP= 45
+TOP_K=20
+MAX_REQUIREMENTS= 12
+MIN_RAG_SIMILARITY= 0.20
+DEF_TEMPERATURE_SETTING= 1.0
+DEF_SAMPLE_SETTING = true
+DEF_P_SETTING = 0.0
+DEF_REPETITION_PEN = 1.0
+
+# Kontext a generovanie
+MAX_INPUT_TOKENS=8192
+MAX_NEW_TOKENS=900
+
 ```
 
 ## 2. Ako funguje pipeline (pre zero-shot model)
