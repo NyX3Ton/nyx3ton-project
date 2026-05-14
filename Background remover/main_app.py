@@ -1,5 +1,4 @@
 # filename: main_app.ipynb
-
 !pip install gradio rembg pillow onnxruntime-gpu
 # -----------------------------------------------------------------------------
 # 0. IMPORTS
@@ -69,14 +68,14 @@ def get_available_runtime_info() -> str:
     lines.append("")
 
     if "CUDAExecutionProvider" in providers:
-        lines.append("Stav GPU: CUDAExecutionProvider je dostupny.")
+        lines.append("GPU: CUDAExecutionProvider is available.")
     else:
-        lines.append("Stav GPU: CUDAExecutionProvider nie je dostupny, pouzije sa CPU.")
+        lines.append("GPU: CUDAExecutionProvider is not available, CPU version will be applied.")
 
     if "TensorrtExecutionProvider" in providers:
-        lines.append("TensorRT: dostupny, ale odporucam ho brat ako experimental.")
+        lines.append("TensorRT: available in experimental version.")
     else:
-        lines.append("TensorRT: nie je dostupny.")
+        lines.append("TensorRT: not available.")
 
     return "\n".join(lines)
 
@@ -121,7 +120,7 @@ def get_active_providers_from_session(session: Any) -> List[str]:
     except Exception:
         pass
 
-    return ["Neviem nacitat aktivne providery zo session."]
+    return ["Unable to read active provider sessions."]
 
 def get_session(model_name: str, provider_mode: str):
     cache_key = (model_name, provider_mode)
@@ -144,7 +143,7 @@ def get_session(model_name: str, provider_mode: str):
         except Exception as exc:
             errors.append(f"{provider_label}: {str(exc)}")
 
-    raise RuntimeError("Nepodarilo sa vytvorit rembg session ani cez fallback.\n" + "\n".join(errors))
+    raise RuntimeError("Unable to create REMGB session after fallback.\n" + "\n".join(errors))
 
 # --------------------------------------------------
 # 3. FILES\OUTPUTS\FORMATS
@@ -153,7 +152,7 @@ def sanitize_suffix(suffix: str) -> str:
     suffix = suffix.strip()
 
     if not suffix:
-        suffix = "_bez_pozadia"
+        suffix = "_no_bckg"
 
     if not suffix.startswith("_"):
         suffix = "_" + suffix
@@ -210,7 +209,7 @@ def save_same_format(output_image: Image.Image,output_path: Path,ext: str,jpg_ba
         rgb_image.save(output_path,format="JPEG",quality=int(jpg_quality),optimize=True,subsampling=0)
         return
 
-    raise ValueError(f"Nepodporovany vystupny format: {ext}")
+    raise ValueError(f"Image format not supported: {ext}")
 
 # --------------------------------------------------
 # 4. MAIN LOGIC
@@ -231,13 +230,13 @@ def remove_background_and_save(
     output_suffix: str):
 
     if image_file is None:
-        return None, None, "Nebol nahraty ziadny subor."
+        return None, None, "No file uploaded."
 
     input_path = Path(image_file)
     ext = input_path.suffix.lower()
 
     if ext not in ALLOWED_EXTENSIONS:
-        return None, None, "Nepodporovany format. Pouzi JPG, JPEG alebo PNG."
+        return None, None, "Unsupported file format. Please, use JPG, JPEG or PNG."
 
     try:
         input_image = Image.open(input_path)
@@ -258,7 +257,7 @@ def remove_background_and_save(
                             )
 
         if not isinstance(output_image, Image.Image):
-            raise RuntimeError("Neocakavany vystup z rembg. Očakaval sa PIL Image.")
+            raise RuntimeError("Unexpected REMBG output. PIL Image was expected.")
 
         output_image = output_image.convert("RGBA")
 
@@ -273,37 +272,37 @@ def remove_background_and_save(
                         )
 
         status = (
-                    "Hotovo.\n\n"
-                    f"Vstupny subor: {input_path.name}\n"
-                    f"Vystupny subor: {output_path.name}\n"
+                    "Finished.\n\n"
+                    f"Input file: {input_path.name}\n"
+                    f"Output file: {output_path.name}\n"
                     f"Model: {model_name}\n"
-                    f"Zvoleny backend: {provider_mode}\n"
-                    f"Realne pouzity backend: {active_provider_label}\n"
-                    f"Aktivne providery: {active_providers}\n"
+                    f"Selected backend: {provider_mode}\n"
+                    f"Used backend: {active_provider_label}\n"
+                    f"Active provider: {active_providers}\n"
                     f"Alpha matting: {alpha_matting}\n"
-                    f"Post-processing masky: {post_process_mask}\n"
+                    f"Post-processing mask: {post_process_mask}\n"
                     f"Only mask: {only_mask}"
                 )
 
         return str(output_path), str(output_path), status
 
     except Exception as exc:
-        return None, None, f"Nastala chyba:\n{str(exc)}"
+        return None, None, f"Error occured:\n{str(exc)}"
 
 def apply_preset(preset_name: str):
-    if preset_name == "Produktova fotka - kvalita":
+    if preset_name == "Production image - High quality":
         return ("isnet-general-use",True,240,10,10,True,False)
 
-    if preset_name == "Portret / osoba":
+    if preset_name == "Portrait / Person":
         return ("u2net_human_seg",True,240,10,12,True,False)
 
-    if preset_name == "Rychle spracovanie":
+    if preset_name == "Fast processing":
         return ("u2netp",False,240,10,10,True,False)
 
-    if preset_name == "Jemne okraje / vlasy":
+    if preset_name == "Soft edges / Hair":
         return ("isnet-general-use",True,220,20,5,True,False)
 
-    if preset_name == "Diagnostika masky":
+    if preset_name == "Mask diagnostics":
         return ("isnet-general-use",False,240,10,10,True,True)
 
     return ("isnet-general-use",True,240,10,10,True,False)
@@ -316,53 +315,53 @@ def clear_all():
 # 5. GRADIO UI
 # --------------------------------------------------
 
-with gr.Blocks(title="AI odstranenie pozadia",theme=gr.themes.Soft()) as demo:
-    gr.Markdown("# AI odstranenie pozadia z obrazka")
+with gr.Blocks(title="AI Background remover",theme=gr.themes.Soft()) as demo:
+    gr.Markdown("# AI for image background removal")
     gr.Markdown(
-                "Nahraj obrazok vo formate **JPG, JPEG alebo PNG**. "
-                "Aplikacia odstrani pozadie pomocou neuronovej siete, pouzije GPU ak je dostupne "
-                "a ulozi vysledok v rovnakom formate s upravenym nazvom suboru."
+                "Upload image in format **JPG, JPEG alebo PNG**. "
+                "Application will remove image backgound using deep neural network, primarily GPU if available "
+                "Result will be saved with selected suffix filename."
                 )
 
     with gr.Row():
         with gr.Column(scale=1):
-            image_input = gr.File(label="Vstupny obrazok",file_types=[".jpg", ".jpeg", ".png"],type="filepath")
+            image_input = gr.File(label="Input image",file_types=[".jpg", ".jpeg", ".png"],type="filepath")
 
-            process_btn = gr.Button("Odstranit pozadie",variant="primary")
+            process_btn = gr.Button("Delete background",variant="primary")
 
-            clear_btn = gr.Button("Vymazat")
+            clear_btn = gr.Button("Delete image")
 
         with gr.Column(scale=1):
-            output_preview = gr.Image(label="Nahlad vysledku",type="filepath")
+            output_preview = gr.Image(label="Draft",type="filepath")
 
-            output_file = gr.File(label="Stiahnut vysledny subor")
+            output_file = gr.File(label="Download resulting image")
 
-            status_text = gr.Textbox(label="Stav",interactive=False,lines=10)
+            status_text = gr.Textbox(label="Current state",interactive=False,lines=10)
 
-    with gr.Accordion("GPU / ONNX Runtime diagnostika", open=True):
-        runtime_info = gr.Textbox(value=get_available_runtime_info(),label="Dostupne backendy",interactive=False,lines=8)
+    with gr.Accordion("GPU / ONNX Runtime diagnostic", open=True):
+        runtime_info = gr.Textbox(value=get_available_runtime_info(),label="Available backends",interactive=False,lines=8)
 
-        provider_mode = gr.Dropdown(choices=PROVIDER_MODE_OPTIONS,value="CUDA / GPU",label="Vypoctovy backend")
+        provider_mode = gr.Dropdown(choices=PROVIDER_MODE_OPTIONS,value="CUDA / GPU",label="Processing backend")
 
-    with gr.Accordion("Pokrocile ladenie neuronovej siete", open=False):
+    with gr.Accordion("Advanced neural network tuning", open=False):
         preset_name = gr.Dropdown(
             choices=[
-                        "Produktova fotka - kvalita",
-                        "Portret / osoba",
-                        "Rychle spracovanie",
-                        "Jemne okraje / vlasy",
-                        "Diagnostika masky",
-                        "Vlastne nastavenie",
-                    ],value="Produktova fotka - kvalita",label="Rychly profil")
+                        "Production image - High quality",
+                        "Portrait / Person",
+                        "Fast processing",
+                        "Soft edges / Hair",
+                        "Mask diagnostics",
+                        "Customize setup",
+                    ],value="Production image - High quality",label="ast processing")
 
-        model_name = gr.Dropdown(choices=MODEL_OPTIONS,value="isnet-general-use",label="Model neuronovej siete")
+        model_name = gr.Dropdown(choices=MODEL_OPTIONS,value="isnet-general-use",label="Neural network model")
 
-        output_suffix = gr.Textbox(value="_bez_pozadia",label="Suffix nazvu suboru",placeholder="_bez_pozadia")
+        output_suffix = gr.Textbox(value="_no_bckg",label="Suffix without filename",placeholder="_no_bckg")
 
         with gr.Row():
-            alpha_matting = gr.Checkbox(value=True,label="Alpha matting - lepsie okraje objektu")
-            post_process_mask = gr.Checkbox(value=True,label="Post-processing masky")
-            only_mask = gr.Checkbox(value=False,label="Diagnosticky vystup iba ako maska")
+            alpha_matting = gr.Checkbox(value=True,label="Alpha matting - edge detection")
+            post_process_mask = gr.Checkbox(value=True,label="Mask post-processing")
+            only_mask = gr.Checkbox(value=False,label="Mask only")
 
         with gr.Row():
             alpha_fg_threshold = gr.Slider(minimum=0,maximum=300,value=240,step=1,label="Foreground threshold")
@@ -370,18 +369,18 @@ with gr.Blocks(title="AI odstranenie pozadia",theme=gr.themes.Soft()) as demo:
             alpha_erode_size = gr.Slider(minimum=0,maximum=50,value=10,step=1,label="Erode size")
 
         with gr.Row():
-            jpg_background_color = gr.ColorPicker(value="#ffffff",label="Pozadie pre JPG/JPEG")
-            jpg_quality = gr.Slider(minimum=50,maximum=100,value=95,step=1,label="JPEG kvalita")
+            jpg_background_color = gr.ColorPicker(value="#ffffff",label="Background for JPG/JPEG")
+            jpg_quality = gr.Slider(minimum=50,maximum=100,value=95,step=1,label="JPEG quality")
 
         gr.Markdown(
                     """
-                    ### Prakticke odporucanie
+                    ### Practical recommendations
 
-                    - **Produktova fotka - kvalita**: najlepsi default pre predmety, produkty, bezne fotky.
-                    - **Portret / osoba**: vhodne pre ludi a portrety.
-                    - **Rychle spracovanie**: mensi model, rychlejsi vysledok.
-                    - **Jemne okraje / vlasy**: skus pri vlasoch, srsti, jemnych hranach.
-                    - **Diagnostika masky**: zobrazi iba masku, vhodne na hladanie problemu.
+                    - **Production image - High quality**: recommended default for general use.
+                    - **Portrait / Person**: portrait photos with humans in focus.
+                    - **Fast processing**: image drafts creation.
+                    - **Soft edges / Hair**: ideal for hair, soft textures and edges.
+                    - **Mask diagnostics**: mask view for diagnostic purposes.
                     """
                     )
 
