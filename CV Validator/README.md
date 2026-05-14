@@ -1,6 +1,6 @@
 # AI CV Validator 
 
-Momentalne je architektura vo faze "zero shot".
+Momentalne je architektura vo faze "zero shot" a "few shot".
 
 ## 1. Konfiguracia
 
