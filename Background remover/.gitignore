@@ -60,7 +60,9 @@ Thumbs.db
 *.parquet
 *.txt
 *.html
-
+*.jpg
+*.jpeg
+*.png
 # =====================
 # Project-specific
 # =====================
