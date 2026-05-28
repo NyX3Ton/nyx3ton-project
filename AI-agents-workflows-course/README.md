@@ -16,7 +16,7 @@ https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507
 
 ```
 
-![Qwen3-0.6B](images/first_load.png)
+![Qwen3-0.6B](images/Qwen3.png)
 
 
 ```text
