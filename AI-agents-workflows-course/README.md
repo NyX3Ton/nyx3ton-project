@@ -1,5 +1,9 @@
 # AI prompt simulator 
 
+```text
+https://gitlab.com/nyx3ton-group/nyx3ton-project/-/blob/main/AI-agents-workflows-course/chapter-1-ai-workflows-openvino-gradio.ipynb
+```
+
 - Architektura bezi na OpenVINO.
 - Podporuje upravy MAX_INPUT_TOKENS, TOP_P a TEMPERATURE v Gradio UI
 - Podporuje Zero-shot, Few-Shot, User and System Prompt
