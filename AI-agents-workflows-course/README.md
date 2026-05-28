@@ -18,8 +18,10 @@ https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507
 
 ![Qwen3-0.6B](images/Qwen3.png)
 
+Povinne kniznice:
 
 ```text
+python -m pip install --upgrade torch --index-url https://download.pytorch.org/whl/cpu
 python -m pip install --upgrade openvino optimum-intel transformers accelerate safetensors sentencepiece huggingface_hub requests python-dotenv gradio
 ```
 
