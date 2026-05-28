@@ -60,6 +60,7 @@ Thumbs.db
 *.parquet
 *.txt
 *.html
+*.xml
 
 # =====================
 # Project-specific
@@ -70,7 +71,9 @@ Thumbs.db
 /__temp__/
 Keyword tokenizer/RAG_store/
 *.sqlite3
-
+*.safetensors
+*.blob
+*.jinja
 
 # =====================
 # Secrets
