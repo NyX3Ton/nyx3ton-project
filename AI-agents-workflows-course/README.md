@@ -21,8 +21,8 @@ https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507
 Povinne kniznice:
 
 ```text
-python -m pip install --upgrade torch --index-url https://download.pytorch.org/whl/cpu
-python -m pip install --upgrade openvino optimum-intel transformers accelerate safetensors sentencepiece huggingface_hub requests python-dotenv gradio
+!python -m pip install --upgrade torch --index-url https://download.pytorch.org/whl/cpu
+!python -m pip install --upgrade openvino optimum-intel transformers accelerate safetensors sentencepiece huggingface_hub requests python-dotenv gradio
 ```
 
 ## 1. Konfiguracia
