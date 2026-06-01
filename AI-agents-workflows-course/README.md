@@ -33,7 +33,7 @@ Povinne kniznice:
 
 ## 1. Konfiguracia
 
-Odporucane pre RTX 4070 Super 12GB:
+Odporucane pre x86-64 Processory s porpodou OpenVINO (AVX-512):
 
 ```env
 
