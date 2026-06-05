@@ -20,8 +20,8 @@ def env_bool(name: str, default: bool = False) -> bool:
         return default
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}
 
-DEFAULT_LLM_MODEL_ID = os.getenv("LLM_MODEL_ID", "Qwen/Qwen3-4B-Thinking-2507")
-DEFAULT_FALLBACK_LLM_MODEL_ID = os.getenv("FALLBACK_LLM_MODEL_ID", "Qwen/Qwen2.5-3B-Instruct")
+DEFAULT_LLM_MODEL_ID = os.getenv("LLM_MODEL_ID", "unsloth/Qwen3-8B")
+DEFAULT_FALLBACK_LLM_MODEL_ID = os.getenv("FALLBACK_LLM_MODEL_ID", "unsloth/Qwen3-1.7B")
 LLM_LOAD_MODE = os.getenv("LLM_LOAD_MODE", "fp16_gpu")
 MAX_GPU_MEMORY = os.getenv("MAX_GPU_MEMORY", "10.5GiB")
 MAX_INPUT_TOKENS = int(os.getenv("MAX_INPUT_TOKENS", "8192"))
@@ -56,8 +56,7 @@ def unload_llm() -> str:
     return _MODEL_INFO + "\n" + cuda_summary()
 
 
-def load_llm(model_id: str = DEFAULT_LLM_MODEL_ID,load_mode: str = LLM_LOAD_MODE,fallback_model_id: str = DEFAULT_FALLBACK_LLM_MODEL_ID,
-):
+def load_llm(model_id: str = DEFAULT_LLM_MODEL_ID,load_mode: str = LLM_LOAD_MODE,fallback_model_id: str = DEFAULT_FALLBACK_LLM_MODEL_ID):
     global _TOKENIZER, _MODEL, _MODEL_INFO
 
     desired_signature = f"{model_id}|{load_mode}|fallback={fallback_model_id}"
@@ -76,19 +75,19 @@ def load_llm(model_id: str = DEFAULT_LLM_MODEL_ID,load_mode: str = LLM_LOAD_MODE
         if not has_cuda:
             raise RuntimeError("CUDA nie je dostupna pre 4-bit GPU load.")
         bnb_config = BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_compute_dtype=torch.float16,
-            bnb_4bit_use_double_quant=True,
-        )
+                                        load_in_4bit=True,
+                                        bnb_4bit_quant_type="nf4",
+                                        bnb_4bit_compute_dtype=torch.float16,
+                                        bnb_4bit_use_double_quant=True,
+                                        )
         tok = _load_tokenizer(mid)
         mdl = AutoModelForCausalLM.from_pretrained(
-            mid,
-            quantization_config=bnb_config,
-            device_map="auto",
-            max_memory={0: MAX_GPU_MEMORY, "cpu": "48GiB"},
-            trust_remote_code=True,
-        )
+                                                    mid,
+                                                    quantization_config=bnb_config,
+                                                    device_map="auto",
+                                                    max_memory={0: MAX_GPU_MEMORY, "cpu": "48GiB"},
+                                                    trust_remote_code=True,
+                                                    )
         return tok, mdl, f"Nacitany model: {mid} | mode=bnb_4bit | {desired_signature}"
 
     def _try_fp16_gpu(mid: str):
@@ -96,40 +95,37 @@ def load_llm(model_id: str = DEFAULT_LLM_MODEL_ID,load_mode: str = LLM_LOAD_MODE
             raise RuntimeError("CUDA nie je dostupna pre fp16_gpu load.")
         tok = _load_tokenizer(mid)
         mdl = AutoModelForCausalLM.from_pretrained(
-            mid,
-            torch_dtype=torch.float16,
-            device_map="auto",
-            max_memory={0: MAX_GPU_MEMORY, "cpu": "48GiB"},
-            trust_remote_code=True,
-        )
+                                                    mid,
+                                                    torch_dtype=torch.float16,
+                                                    device_map="auto",
+                                                    max_memory={0: MAX_GPU_MEMORY, "cpu": "48GiB"},
+                                                    trust_remote_code=True,
+                                                    )
         return tok, mdl, f"Nacitany model: {mid} | mode=fp16_gpu | {desired_signature}"
 
     def _try_cpu(mid: str):
         tok = _load_tokenizer(mid)
         mdl = AutoModelForCausalLM.from_pretrained(
-            mid,
-            torch_dtype=torch.float32,
-            device_map={"": "cpu"},
-            trust_remote_code=True,
-        )
+                                                    mid,
+                                                    dtype=torch.float32,
+                                                    device_map={"": "cpu"},
+                                                    trust_remote_code=True,
+                                                    )
         return tok, mdl, f"Nacitany model: {mid} | mode=cpu | {desired_signature}"
 
     attempts = []
     mode = (load_mode or "auto").lower().strip()
 
-    if mode == "bnb_4bit":
-        attempts = [lambda: _try_4bit(model_id)]
-    elif mode == "fp16_gpu":
-        attempts = [lambda: _try_fp16_gpu(model_id)]
-    elif mode == "cpu":
-        attempts = [lambda: _try_cpu(model_id)]
+    if mode == "bnb_4bit": attempts = [lambda: _try_4bit(model_id)]
+    elif mode == "fp16_gpu": attempts = [lambda: _try_fp16_gpu(model_id)]
+    elif mode == "cpu": attempts = [lambda: _try_cpu(model_id)]
     else:
         attempts = [
-            lambda: _try_4bit(model_id),
-            lambda: _try_fp16_gpu(model_id),
-            lambda: _try_fp16_gpu(fallback_model_id),
-            lambda: _try_cpu(fallback_model_id),
-        ]
+                    lambda: _try_4bit(model_id),
+                    lambda: _try_fp16_gpu(model_id),
+                    lambda: _try_fp16_gpu(fallback_model_id),
+                    lambda: _try_cpu(fallback_model_id),
+                    ]
 
     for attempt in attempts:
         try:
@@ -142,9 +138,7 @@ def load_llm(model_id: str = DEFAULT_LLM_MODEL_ID,load_mode: str = LLM_LOAD_MODE
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
-    raise RuntimeError(
-        "Nepodarilo sa nacitat lokalny LLM.\n\nPokusy:\n- " + "\n- ".join(errors)
-    )
+    raise RuntimeError("Nepodarilo sa nacitat lokalny LLM.\n\nPokusy:\n- " + "\n- ".join(errors))
 
 
 def model_device(model: Any):
@@ -195,12 +189,13 @@ def chat_generate_messages(
     inputs = {k: v.to(dev) for k, v in inputs.items()}
 
     generation_kwargs = {
-        **inputs,
-        "max_new_tokens": max_new_tokens,
-        "pad_token_id": tok.eos_token_id,
-        "repetition_penalty": REPETITION_PEN,
-        "do_sample": do_sample,
-    }
+                        **inputs,
+                        "max_new_tokens": max_new_tokens,
+                        "pad_token_id": tok.eos_token_id,
+                        "repetition_penalty": REPETITION_PEN,
+                        "do_sample": do_sample,
+                        "attn_implementation": "eager",
+                        }
 
     if do_sample:
         generation_kwargs["temperature"] = temperature
