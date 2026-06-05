@@ -5,11 +5,13 @@
 #!python -m pip install --upgrade ipykernel jupyter
 #!python -m pip install --upgrade mlflow
 #!python -m pip install --upgrade openvino optimum-intel transformers accelerate safetensors sentencepiece huggingface_hub requests python-dotenv gradio bs4
+#!python -m pip install --upgrade hf_xet nncf
 
 # 1. Imports
 import os, platform, traceback, torch, transformers, re, requests, time, json, hashlib, mlflow
+import sys, socket, atexit, subprocess, webbrowser
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Any, cast
 import gradio as gr
 
 from bs4 import BeautifulSoup
@@ -67,17 +69,102 @@ OV_CONFIG = {
             "CACHE_DIR": str(ov_cache),
             }
 # a. MLFlow ENV setup
-MLFLOW_TRACKING_DIR = Path(os.getenv("MLFLOW_TRACKING_DIR", "./mlruns")).expanduser().resolve()
-MLFLOW_EXPERIMENT_NAME = os.getenv("MLFLOW_EXPERIMENT_NAME", "local-prompt-simulator")
+MLFLOW_ROOT_DIR = Path(os.getenv("MLFLOW_ROOT_DIR", "./mlflow_runs")).expanduser().resolve()
 
-MLFLOW_TRACKING_DIR.mkdir(parents=True, exist_ok=True)
+MLFLOW_DB_PATH = MLFLOW_ROOT_DIR / "mlflow.db"
+MLFLOW_ARTIFACTS_DIR = MLFLOW_ROOT_DIR / "artifacts"
+
+MLFLOW_EXPERIMENT_NAME = os.getenv("MLFLOW_EXPERIMENT_NAME","local-prompt-simulator")
+
+MLFLOW_ROOT_DIR.mkdir(parents=True, exist_ok=True)
+MLFLOW_ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
+
+START_MLFLOW_UI = os.getenv("START_MLFLOW_UI", "1").strip().lower() in {"1", "true", "yes", "y"}
+OPEN_MLFLOW_UI_BROWSER = os.getenv("OPEN_MLFLOW_UI_BROWSER", "1").strip().lower() in {"1", "true", "yes", "y"}
+
+MLFLOW_UI_HOST = os.getenv("MLFLOW_UI_HOST", "127.0.0.1")
+MLFLOW_UI_PORT = int(os.getenv("MLFLOW_UI_PORT", "5000"))
+
+MLFLOW_UI_PROCESS = None
+
+def is_port_open(host: str, port: int) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=1):
+            return True
+    except OSError:
+        return False
+
+def start_mlflow_ui(open_browser: bool = False):
+    global MLFLOW_UI_PROCESS
+
+    if not START_MLFLOW_UI:
+        print("MLflow UI autostart is disabled.")
+        return None
+
+    if is_port_open(MLFLOW_UI_HOST, MLFLOW_UI_PORT):
+        print(f"MLflow UI already running at http://{MLFLOW_UI_HOST}:{MLFLOW_UI_PORT}")
+        if open_browser:
+            webbrowser.open(f"http://{MLFLOW_UI_HOST}:{MLFLOW_UI_PORT}")
+        return None
+
+    backend_store_uri = f"sqlite:///{MLFLOW_DB_PATH.as_posix()}"
+
+    cmd = [
+            sys.executable,
+            "-m",
+            "mlflow",
+            "ui",
+            "--backend-store-uri",
+            backend_store_uri,
+            "--host",
+            MLFLOW_UI_HOST,
+            "--port",
+            str(MLFLOW_UI_PORT),
+            ]
+
+    creationflags = 0
+    if os.name == "nt":
+        creationflags = subprocess.CREATE_NO_WINDOW
+
+    MLFLOW_UI_PROCESS = subprocess.Popen(cmd,stdout=subprocess.DEVNULL,stderr=subprocess.STDOUT,creationflags=creationflags)
+
+    print(f"MLflow UI started at http://{MLFLOW_UI_HOST}:{MLFLOW_UI_PORT}")
+
+    if open_browser:
+        time.sleep(2)
+        webbrowser.open(f"http://{MLFLOW_UI_HOST}:{MLFLOW_UI_PORT}")
+
+    return MLFLOW_UI_PROCESS
+
+def stop_mlflow_ui():
+    global MLFLOW_UI_PROCESS
+
+    if MLFLOW_UI_PROCESS is not None and MLFLOW_UI_PROCESS.poll() is None:
+        try:
+            MLFLOW_UI_PROCESS.terminate()
+        except Exception:
+            pass
+
+atexit.register(stop_mlflow_ui)
 
 def setup_mlflow() -> None:
-    mlflow.set_tracking_uri(MLFLOW_TRACKING_DIR.as_uri())
+
+    tracking_uri = os.getenv("MLFLOW_TRACKING_URI")
+    if not tracking_uri:
+        tracking_uri = f"sqlite:///{MLFLOW_DB_PATH.as_posix()}"
+
+    mlflow.set_tracking_uri(tracking_uri)
+    existing_experiment = mlflow.get_experiment_by_name(MLFLOW_EXPERIMENT_NAME)
+
+    if existing_experiment is None:
+        mlflow.create_experiment(
+                                name=MLFLOW_EXPERIMENT_NAME,
+                                artifact_location=MLFLOW_ARTIFACTS_DIR.as_uri(),
+                                )
     mlflow.set_experiment(MLFLOW_EXPERIMENT_NAME)
-    #mlflow.set_tracking_uri("http://127.0.0.1:5000")
 
 setup_mlflow()
+start_mlflow_ui(open_browser=OPEN_MLFLOW_UI_BROWSER)
 
 print("Runtime:", platform.platform())
 print("Python backend libraries:")
@@ -117,7 +204,7 @@ tokenizer = load_tokenizer()
 def load_openvino_model():
     if (ov_model_path / "openvino_model.xml").exists():
         print("\nLoading already exported OpenVINO model from disk.")
-        ov_model = OVModelForCausalLM.from_pretrained(str(ov_model_path),device=OPENVINO_DEVICE,compile=False,ov_config=OV_CONFIG)
+        ov_model: Any = OVModelForCausalLM.from_pretrained(str(ov_model_path),device=OPENVINO_DEVICE,compile=False,ov_config=OV_CONFIG)
     else:
         print("\nExporting Hugging Face model to OpenVINO IR.")
         print("First export can take several minutes. After export, the model will be reused from ./ov_models.")
@@ -135,7 +222,7 @@ def load_openvino_model():
         if HF_TOKEN and not OFFLINE_MODE:
             model_kwargs["token"] = HF_TOKEN
 
-        ov_model = OVModelForCausalLM.from_pretrained(MODEL_NAME, **model_kwargs)
+        ov_model: Any = OVModelForCausalLM.from_pretrained(MODEL_NAME, **model_kwargs)
 
         ov_model_path.mkdir(parents=True, exist_ok=True)
         ov_model.save_pretrained(str(ov_model_path))
@@ -171,7 +258,7 @@ def load_huggingface_fallback_model():
     else:
         hf_kwargs["torch_dtype"] = "auto"
 
-    hf_model = AutoModelForCausalLM.from_pretrained(MODEL_NAME, **hf_kwargs)
+    hf_model: Any = AutoModelForCausalLM.from_pretrained(MODEL_NAME, **hf_kwargs)
 
     if not torch.cuda.is_available():
         hf_model.to("cpu")
@@ -251,14 +338,16 @@ def run_local_llm(prompt: str,system_prompt: Optional[str] = None,max_new_tokens
         generation_kwargs["temperature"] = gen_temperature
         generation_kwargs["top_p"] = gen_top_p
 
+    active_model: Any = model
+
     if BACKEND == "huggingface":
-        model_device = next(model.parameters()).device
+        model_device = next(active_model.parameters()).device
         inputs = {key: value.to(model_device) for key, value in inputs.items()}
 
         with torch.inference_mode():
-            output_ids = model.generate(**inputs, **generation_kwargs)
+            output_ids = active_model.generate(**inputs, **generation_kwargs)
     else:
-        output_ids = model.generate(**inputs, **generation_kwargs)
+        output_ids = active_model.generate(**inputs, **generation_kwargs)
 
     generated_ids = output_ids[0][inputs["input_ids"].shape[-1]:]
     return tokenizer.decode(generated_ids, skip_special_tokens=True).strip()
@@ -952,7 +1041,7 @@ with gr.Blocks(
                                                             )
 
                     web_urls_box = gr.Textbox(
-                                                labe    l="URLs - one web location per line",
+                                                label="URLs - one web location per line",
                                                 value=DEFAULT_WEB_URLS,
                                                 lines=10,
                                                 placeholder="https://example.com\nhttps://wikipedia.org",
@@ -975,9 +1064,8 @@ with gr.Blocks(
                     gr.HTML(
                             """
                                 <p class="few-shot-note">
-                                Local MLflow UI can be started with:<br>
-                                <code>mlflow ui --backend-store-uri ./mlruns</code><br>
-                                Then open <code>http://127.0.0.1:5000</code>.
+                                Local MLflow UI can be found under URL:<br>
+                                <code>http://127.0.0.1:5000</code>.
                                 </p>
                             """
                             )
