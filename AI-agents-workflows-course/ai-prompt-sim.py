@@ -38,11 +38,11 @@ OV_CACHE_DIR = os.getenv("OV_CACHE_DIR", str(SCRIPT_DIR / "ov_cache"))
 OPENVINO_DEVICE = os.getenv("OPENVINO_DEVICE", "CPU")
 
 MAX_INPUT_TOKENS = int(os.getenv("MAX_INPUT_TOKENS", "2048"))
-MAX_NEW_TOKENS = int(os.getenv("MAX_NEW_TOKENS", "300"))
+MAX_NEW_TOKENS = int(os.getenv("MAX_NEW_TOKENS", "320"))
 TEMPERATURE = float(os.getenv("TEMPERATURE", "0.7"))
 TOP_P = float(os.getenv("TOP_P", "0.9"))
 
-OFFLINE_MODE = os.getenv("LOCAL_FILES_ONLY", "0").strip().lower() in {"1", "true", "yes", "y"} # for first run set it to 0, to download seledcted model from HF
+OFFLINE_MODE = os.getenv("LOCAL_FILES_ONLY", "1").strip().lower() in {"1", "true", "yes", "y"} # for first run set it to 0, to download seledcted model from HF
 FORCE_HF_FALLBACK = os.getenv("FORCE_HF_FALLBACK", "0").strip().lower() in {"1", "true", "yes", "y"}
 
 cache_path = Path(HF_CACHE_DIR).expanduser().resolve()
@@ -369,20 +369,20 @@ def count_tokens(text: str) -> int:
         return 0
 
 def log_prompt_run_to_mlflow(
-    system_prompt: str,
-    user_prompt: str,
-    topic: str,
-    final_prompt: str,
-    output: str,
-    few_shot_enabled: bool,
-    few_shot_examples: str,
-    web_scraping_enabled: bool,
-    web_urls: str,
-    max_new_tokens: int,
-    temperature: float,
-    top_p: float,
-    generation_time_sec: float,
-) -> str:
+                            system_prompt: str,
+                            user_prompt: str,
+                            topic: str,
+                            final_prompt: str,
+                            output: str,
+                            few_shot_enabled: bool,
+                            few_shot_examples: str,
+                            web_scraping_enabled: bool,
+                            web_urls: str,
+                            max_new_tokens: int,
+                            temperature: float,
+                            top_p: float,
+                            generation_time_sec: float,
+                            ) -> str:
     input_tokens = count_tokens(final_prompt)
     output_tokens = count_tokens(output)
 
@@ -1078,7 +1078,7 @@ with gr.Blocks(
                                                         minimum=32,
                                                         maximum=2048,
                                                         value=MAX_NEW_TOKENS,
-                                                        step=16,
+                                                        step=32,
                                                         label="Max new tokens - limit of answer length",
                                                     )
 
@@ -1092,7 +1092,7 @@ with gr.Blocks(
 
                     top_p_slider = gr.Slider(
                                             minimum=0.1,
-                                            maximum=1.0,
+                                            maximum=2.0,
                                             value=TOP_P,
                                             step=0.1,
                                             label="Top-p - lower = conservative, higher = varied",

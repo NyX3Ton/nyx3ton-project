@@ -60,7 +60,7 @@ Thumbs.db
 *.parquet
 *.txt
 *.html
-
+*.incomplete
 # =====================
 # Project-specific
 # =====================
