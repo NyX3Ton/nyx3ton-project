@@ -41,7 +41,6 @@ except ImportError:
 
 mlflow: Any = _mlflow
 
-
 # -----------------------------------------------------------------------------
 # 1. ENV + GLOBAL SETTINGS
 # -----------------------------------------------------------------------------
@@ -64,7 +63,6 @@ MIN_RAG_SIMILARITY = float(os.getenv("MIN_RAG_SIMILARITY", "0.20"))
 HF_HOME_LOCAL = os.getenv("HF_HOME_LOCAL", "").strip()
 if HF_HOME_LOCAL:
     os.environ["HF_HOME"] = str(Path(HF_HOME_LOCAL).expanduser().resolve())
-
 
 # -----------------------------------------------------------------------------
 # 1A. MLFLOW EXPERIMENT TRACKING SETTINGS
@@ -133,7 +131,6 @@ def _is_port_open(host: str, port: int) -> bool:
 
 
 def start_mlflow_ui(open_browser: bool = False) -> Optional[subprocess.Popen]:
-    """Start MLflow UI as a background process when requested by env variable."""
     global _MLFLOW_UI_PROCESS
 
     if not MLFLOW_READY:
@@ -149,28 +146,28 @@ def start_mlflow_ui(open_browser: bool = False) -> Optional[subprocess.Popen]:
     backend_store_uri = f"sqlite:///{MLFLOW_DB_PATH.as_posix()}"
 
     cmd = [
-        sys.executable,
-        "-m",
-        "mlflow",
-        "ui",
-        "--backend-store-uri",
-        backend_store_uri,
-        "--host",
-        MLFLOW_UI_HOST,
-        "--port",
-        str(MLFLOW_UI_PORT),
-    ]
+            sys.executable,
+            "-m",
+            "mlflow",
+            "ui",
+            "--backend-store-uri",
+            backend_store_uri,
+            "--host",
+            MLFLOW_UI_HOST,
+            "--port",
+            str(MLFLOW_UI_PORT),
+        ]
 
     creationflags = 0
     if os.name == "nt":
         creationflags = subprocess.CREATE_NO_WINDOW
 
     _MLFLOW_UI_PROCESS = subprocess.Popen(
-        cmd,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.STDOUT,
-        creationflags=creationflags,
-    )
+                                            cmd,
+                                            stdout=subprocess.DEVNULL,
+                                            stderr=subprocess.STDOUT,
+                                            creationflags=creationflags,
+                                        )
 
     print(f"MLflow UI started at http://{MLFLOW_UI_HOST}:{MLFLOW_UI_PORT}")
 
@@ -301,17 +298,16 @@ def load_document(path: str) -> str:
 # -----------------------------------------------------------------------------
 # 4. JOB AD SCRAPING
 # -----------------------------------------------------------------------------
-
 def scrape_url(url: str) -> str:
     if not url or not url.strip():
         return ""
 
     headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122 Safari/537.36"
-        )
-    }
+                "User-Agent": (
+                                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122 Safari/537.36"
+                                )
+                }
     resp = requests.get(url.strip(), headers=headers, timeout=25)
     resp.raise_for_status()
 
@@ -338,7 +334,6 @@ def scrape_url(url: str) -> str:
 # -----------------------------------------------------------------------------
 # 5. CHUNKING + RAG
 # -----------------------------------------------------------------------------
-
 def chunk_text(text: str, words_per_chunk: int = CHUNK_WORDS, overlap: int = CHUNK_OVERLAP) -> List[str]:
     words = text.split()
     if not words:
@@ -403,7 +398,6 @@ def rag_search(query: str, chunks: List[str], index: Any, embed_model_id: str, t
 # -----------------------------------------------------------------------------
 # 6. REPORTING
 # -----------------------------------------------------------------------------
-
 def status_icon(status: str) -> str:
     return {"splnene": "✅","ciastocne_splnene": "🟡","nesplnene": "❌","nejasne": "⚪",}.get(status, "⚪")
 
@@ -456,10 +450,10 @@ def render_markdown_report(job_data: Dict[str, Any], candidate: Dict[str, Any], 
         exp = str(r.get("explanation", "")).replace("|", "/")
         req = str(r.get("requirement", "")).replace("|", "/")
         lines.append(
-            f"| {status_icon(r.get('status', ''))} {r.get('status', '')} "
-            f"| {req} | {float(r.get('score', 0)):.0f} "
-            f"| {r.get('priority', '')} / w={r.get('weight', 1)} | {exp} |"
-        )
+                    f"| {status_icon(r.get('status', ''))} {r.get('status', '')} "
+                    f"| {req} | {float(r.get('score', 0)):.0f} "
+                    f"| {r.get('priority', '')} / w={r.get('weight', 1)} | {exp} |"
+                    )
 
     lines.append("")
     lines.append("## Odkazy a poznamky")
@@ -482,7 +476,6 @@ def render_markdown_report(job_data: Dict[str, Any], candidate: Dict[str, Any], 
 # -----------------------------------------------------------------------------
 _TOKENIZER_COUNTER_CACHE: Dict[str, Any] = {}
 
-
 def _safe_mlflow_param(value: Any, max_len: int = 250) -> str:
     """Return a compact MLflow-safe string parameter value."""
     text = str(value if value is not None else "")
@@ -491,9 +484,7 @@ def _safe_mlflow_param(value: Any, max_len: int = 250) -> str:
         return text[:max_len] + "..."
     return text
 
-
 def _approx_token_count(text: str) -> int:
-    """Very small fallback token estimate when tokenizer cannot be loaded."""
     text = str(text or "")
     if not text:
         return 0
@@ -502,12 +493,6 @@ def _approx_token_count(text: str) -> int:
 
 
 def count_text_tokens(text: str, model_id: Optional[str] = None) -> int:
-    """Count tokens using the selected model tokenizer, with safe fallback.
-
-    The tokenizer is loaded only for counting and cached in memory. If it is not
-    available locally, the function falls back to an approximate count so MLflow
-    logging never breaks the validation pipeline.
-    """
     text = str(text or "")
     if not text:
         return 0
@@ -534,7 +519,6 @@ def count_text_tokens(text: str, model_id: Optional[str] = None) -> int:
 
 
 def _extract_metrics_from_json_report(json_report: str) -> Dict[str, float]:
-    """Extract numeric metrics from the generated validation JSON."""
     metrics: Dict[str, float] = {}
 
     try:
@@ -604,12 +588,6 @@ def log_validation_run_to_mlflow(
                                 elapsed_sec: float,
                                 log_input_artifacts: bool = False,
                                 ) -> str:
-    """Log one CV validation run to MLflow.
-
-    By default, sensitive source inputs such as full CV files and full job text are
-    not logged. Enable `log_input_artifacts` only when you are allowed to store
-    those artifacts in the local MLflow directory.
-    """
     if not MLFLOW_READY or mlflow is None:
         raise RuntimeError(MLFLOW_SETUP_ERROR or "MLflow is not ready.")
 
@@ -622,98 +600,98 @@ def log_validation_run_to_mlflow(
     runtime_info = str(runtime_info or "")
 
     source_fingerprint = "|".join(
-        [
-            Path(cv_file).name if cv_file else "",
-            job_url,
-            manual_position_name,
-            model_id,
-            embed_model_id,
-            str(top_k),
-            str(max_requirements),
-        ]
-    )
+                                    [
+                                    Path(cv_file).name if cv_file else "",
+                                    job_url,
+                                    manual_position_name,
+                                    model_id,
+                                    embed_model_id,
+                                    str(top_k),
+                                    str(max_requirements),
+                                    ]
+                                )
     run_hash = hashlib.sha256(source_fingerprint.encode("utf-8", errors="ignore")).hexdigest()[:12]
     run_name = f"cv_validation_{run_hash}"
 
     input_text_for_count = "\n\n".join(
-        [
-            job_url,
-            job_text_manual,
-            manual_position_name,
-            job_schema_xlsx_path,
-        ]
-    )
+                                        [
+                                        job_url,
+                                        job_text_manual,
+                                        manual_position_name,
+                                        job_schema_xlsx_path,
+                                        ]
+                                        )
     output_text_for_count = "\n\n".join([report_md, json_report, runtime_info])
 
     input_tokens = count_text_tokens(input_text_for_count, model_id=model_id)
     output_tokens = count_text_tokens(output_text_for_count, model_id=model_id)
 
     metrics = {
-        "input_tokens_estimated": float(input_tokens),
-        "output_tokens_estimated": float(output_tokens),
-        "total_tokens_estimated": float(input_tokens + output_tokens),
-        "elapsed_sec": float(elapsed_sec),
-        "job_text_chars": float(len(job_text_manual)),
-        "report_chars": float(len(report_md)),
-        "json_chars": float(len(json_report)),
-    }
+                "input_tokens_estimated": float(input_tokens),
+                "output_tokens_estimated": float(output_tokens),
+                "total_tokens_estimated": float(input_tokens + output_tokens),
+                "elapsed_sec": float(elapsed_sec),
+                "job_text_chars": float(len(job_text_manual)),
+                "report_chars": float(len(report_md)),
+                "json_chars": float(len(json_report)),
+                }
     metrics.update(_extract_metrics_from_json_report(json_report))
 
     with mlflow.start_run(run_name=run_name) as run:
         mlflow.log_params(
-            {
-                "app": "few-shot-cv-validator",
-                "model_id": _safe_mlflow_param(model_id),
-                "fallback_model_id": _safe_mlflow_param(fallback_model_id),
-                "aux_model_id": _safe_mlflow_param(aux_model_id),
-                "load_mode": _safe_mlflow_param(load_mode),
-                "embed_model_id": _safe_mlflow_param(embed_model_id),
-                "top_k": int(top_k),
-                "max_requirements": int(max_requirements),
-                "include_candidate_summary": bool(include_candidate_summary),
-                "job_source": "manual_position" if manual_position_name else ("url" if job_url else "manual_text"),
-                "manual_position_name": _safe_mlflow_param(manual_position_name),
-                "job_url": _safe_mlflow_param(job_url),
-                "cv_file_name": _safe_mlflow_param(Path(cv_file).name if cv_file else ""),
-                "cv_file_ext": _safe_mlflow_param(file_ext(cv_file) if cv_file else ""),
-                "log_input_artifacts": bool(log_input_artifacts),
-                "run_hash": run_hash,
-            }
-        )
+                            {
+                                "app": "few-shot-cv-validator",
+                                "model_id": _safe_mlflow_param(model_id),
+                                "fallback_model_id": _safe_mlflow_param(fallback_model_id),
+                                "aux_model_id": _safe_mlflow_param(aux_model_id),
+                                "load_mode": _safe_mlflow_param(load_mode),
+                                "embed_model_id": _safe_mlflow_param(embed_model_id),
+                                "top_k": int(top_k),
+                                "max_requirements": int(max_requirements),
+                                "include_candidate_summary": bool(include_candidate_summary),
+                                "job_source": "manual_position" if manual_position_name else ("url" if job_url else "manual_text"),
+                                "manual_position_name": _safe_mlflow_param(manual_position_name),
+                                "job_url": _safe_mlflow_param(job_url),
+                                "cv_file_name": _safe_mlflow_param(Path(cv_file).name if cv_file else ""),
+                                "cv_file_ext": _safe_mlflow_param(file_ext(cv_file) if cv_file else ""),
+                                "log_input_artifacts": bool(log_input_artifacts),
+                                "run_hash": run_hash,
+                                }
+                            )
 
         mlflow.log_metrics(metrics)
 
         mlflow.set_tags(
-            {
-                "app": "few-shot-cv-validator",
-                "task_type": "cv_job_matching",
-                "prompt_mode": "few_shot_langchain",
-            }
-        )
+                        {
+                        "app": "few-shot-cv-validator",
+                        "task_type": "cv_job_matching",
+                        "prompt_mode": "few_shot_langchain",
+                        }
+                        )
 
         mlflow.log_text(report_md, "outputs/report.md")
         mlflow.log_text(json_report, "outputs/report.json")
         mlflow.log_text(runtime_info, "outputs/runtime_info.txt")
 
         run_metadata = {
-            "model_id": model_id,
-            "fallback_model_id": fallback_model_id,
-            "aux_model_id": aux_model_id,
-            "load_mode": load_mode,
-            "embed_model_id": embed_model_id,
-            "top_k": int(top_k),
-            "max_requirements": int(max_requirements),
-            "include_candidate_summary": bool(include_candidate_summary),
-            "elapsed_sec": float(elapsed_sec),
-            "input_tokens_estimated": input_tokens,
-            "output_tokens_estimated": output_tokens,
-            "mlflow_tracking_uri": mlflow.get_tracking_uri(),
-            "mlflow_experiment_name": MLFLOW_EXPERIMENT_NAME,
-        }
+                        "model_id": model_id,
+                        "fallback_model_id": fallback_model_id,
+                        "aux_model_id": aux_model_id,
+                        "load_mode": load_mode,
+                        "embed_model_id": embed_model_id,
+                        "top_k": int(top_k),
+                        "max_requirements": int(max_requirements),
+                        "include_candidate_summary": bool(include_candidate_summary),
+                        "elapsed_sec": float(elapsed_sec),
+                        "input_tokens_estimated": input_tokens,
+                        "output_tokens_estimated": output_tokens,
+                        "mlflow_tracking_uri": mlflow.get_tracking_uri(),
+                        "mlflow_experiment_name": MLFLOW_EXPERIMENT_NAME,
+                        }
         mlflow.log_text(
-            json.dumps(run_metadata, ensure_ascii=False, indent=2),
-            "metadata/run_metadata.json",
-        )
+                        json.dumps(run_metadata, ensure_ascii=False, indent=2),
+                        "metadata/run_metadata.json",
+                        )
 
         if log_input_artifacts:
             if job_text_manual:
@@ -726,7 +704,6 @@ def log_validation_run_to_mlflow(
                 mlflow.log_artifact(cv_file, artifact_path="inputs/cv_file")
 
         return run.info.run_id
-
 
 # -----------------------------------------------------------------------------
 # 7. MAIN PIPELINE
@@ -768,9 +745,7 @@ def run_validation(
         raise gr.Error("Z CV sa podarilo vytiahnut velmi malo textu. Skus iny format, idealne PDF/DOCX.")
     runtime.append(f"CV text: {len(cv_text):,} znakov")
 
-    job_requirement_schema_text, prompt_schema_source = load_job_requirement_schema_text(
-        job_schema_xlsx_path or DEFAULT_JOB_SCHEMA_XLSX_PATH
-    )
+    job_requirement_schema_text, prompt_schema_source = load_job_requirement_schema_text(job_schema_xlsx_path or DEFAULT_JOB_SCHEMA_XLSX_PATH)
     runtime.append(f"Prompt schema source: {prompt_schema_source}")
 
     _, _, model_info = load_llm(model_id, load_mode, fallback_model_id)
@@ -873,15 +848,6 @@ def run_validation(
     return md, js, "\n".join(runtime)
 
 def gradio_run_wrapper(*args):
-    """Gradio wrapper with optional MLflow tracking.
-
-    The last two UI inputs are:
-    - mlflow_enabled
-    - mlflow_log_input_artifacts
-
-    They are intentionally handled here so the core validation pipeline stays
-    focused on validation logic.
-    """
     try:
         if len(args) < 15:
             return run_validation(*args)
@@ -899,40 +865,39 @@ def gradio_run_wrapper(*args):
         if mlflow_enabled and MLFLOW_READY:
             if not MLFLOW_READY:
                 runtime_info = (
-                    f"{runtime_info}\n"
-                    f"MLflow logging skipped: {MLFLOW_SETUP_ERROR or 'MLflow is not ready.'}"
-                )
+                                f"{runtime_info}\n"
+                                f"MLflow logging skipped: {MLFLOW_SETUP_ERROR or 'MLflow is not ready.'}"
+                                )
                 return report_md, json_report, runtime_info
 
             try:
                 run_id = log_validation_run_to_mlflow(
-                    cv_file=validation_args[0],
-                    job_url=validation_args[1],
-                    job_text_manual=validation_args[2],
-                    job_schema_xlsx_path=validation_args[3],
-                    manual_position_name=validation_args[4],
-                    model_id=validation_args[5],
-                    fallback_model_id=validation_args[6],
-                    aux_model_id=validation_args[7],
-                    load_mode=validation_args[8],
-                    embed_model_id=validation_args[9],
-                    top_k=int(validation_args[10]),
-                    max_requirements=int(validation_args[11]),
-                    include_candidate_summary=bool(validation_args[12]),
-                    report_md=report_md,
-                    json_report=json_report,
-                    runtime_info=runtime_info,
-                    elapsed_sec=elapsed_sec,
-                    log_input_artifacts=mlflow_log_input_artifacts,
-                )
+                                                        cv_file=validation_args[0],
+                                                        job_url=validation_args[1],
+                                                        job_text_manual=validation_args[2],
+                                                        job_schema_xlsx_path=validation_args[3],
+                                                        manual_position_name=validation_args[4],
+                                                        model_id=validation_args[5],
+                                                        fallback_model_id=validation_args[6],
+                                                        aux_model_id=validation_args[7],
+                                                        load_mode=validation_args[8],
+                                                        embed_model_id=validation_args[9],
+                                                        top_k=int(validation_args[10]),
+                                                        max_requirements=int(validation_args[11]),
+                                                        include_candidate_summary=bool(validation_args[12]),
+                                                        report_md=report_md,
+                                                        json_report=json_report,
+                                                        runtime_info=runtime_info,
+                                                        elapsed_sec=elapsed_sec,
+                                                        log_input_artifacts=mlflow_log_input_artifacts,
+                                                    )
                 runtime_info = f"{runtime_info}\nMLflow run logged: {run_id}"
 
             except Exception as log_exc:
                 runtime_info = (
-                    f"{runtime_info}\n"
-                    f"MLflow logging failed: {type(log_exc).__name__}: {log_exc}"
-                )
-
+                                f"{runtime_info}\n"
+                                f"MLflow logging failed: {type(log_exc).__name__}: {log_exc}"
+                                )
         return report_md, json_report, runtime_info
 
     except gr.Error:
@@ -944,7 +909,6 @@ def gradio_run_wrapper(*args):
 # -----------------------------------------------------------------------------
 # 8. GRADIO UI
 # -----------------------------------------------------------------------------
-
 def build_ui():
     with gr.Blocks(title="Lokalny AI CV Validator") as demo:
         gr.Markdown("")
@@ -952,80 +916,63 @@ def build_ui():
         with gr.Row():
             with gr.Column(scale=1):
                 cv_file = gr.File(
-                    label="CV subor",
-                    file_types=[".pdf", ".docx", ".doc", ".rtf", ".txt", ".md"],
-                    type="filepath",
-                )
+                                    label="CV subor",
+                                    file_types=[".pdf", ".docx", ".doc", ".rtf", ".txt", ".md"],
+                                    type="filepath",
+                                    )
                 job_url = gr.Textbox(label="URL inzeratu", placeholder="https://")
                 job_text_manual = gr.Textbox(
-                    label="Alebo vloz text inzeratu manualne",
-                    lines=8,
-                    placeholder="Text pracovnej ponuky",
-                )
+                                            label="Alebo vloz text inzeratu manualne",
+                                            lines=8,
+                                            placeholder="Text pracovnej ponuky",
+                                            )
 
                 with gr.Accordion("Externy schema XLSX", open=False):
-                    job_schema_xlsx_path = gr.Textbox(
-                        label="Schema XLSX path",
-                        value=DEFAULT_JOB_SCHEMA_XLSX_PATH,
-                    )
+                    job_schema_xlsx_path = gr.Textbox(label="Schema XLSX path",value=DEFAULT_JOB_SCHEMA_XLSX_PATH)
                     manual_position_name = gr.Textbox(
-                        label="Manualna pozicia zo schema XLSX",
-                        placeholder="napr. python_backend_medior alebo Python developer",
-                    )
+                                                        label="Manualna pozicia zo schema XLSX",
+                                                        placeholder="napr. python_backend_medior alebo Python developer",
+                                                    )
 
                 with gr.Accordion("Model nastavenia", open=False):
                     model_id = gr.Textbox(label="LLM model z Hugging Face", value=DEFAULT_LLM_MODEL_ID)
                     fallback_model_id = gr.Textbox(label="Fallback LLM model", value=DEFAULT_FALLBACK_LLM_MODEL_ID)
                     aux_model_id = gr.Textbox(label="Aux LLM model pre canonicalizaciu/genericnost", value=DEFAULT_AUX_LLM_MODEL_ID or DEFAULT_LLM_MODEL_ID)
-                    load_mode = gr.Dropdown(
-                        label="Load mode",
-                        choices=["auto", "bnb_4bit", "fp16_gpu", "cpu"],
-                        value=LLM_LOAD_MODE,
-                    )
+                    load_mode = gr.Dropdown(label="Load mode",choices=["auto", "bnb_4bit", "fp16_gpu", "cpu"],value=LLM_LOAD_MODE)
                     embed_model_id = gr.Textbox(label="Embedding model z Hugging Face", value=DEFAULT_EMBED_MODEL_ID)
                     top_k = gr.Slider(label="Top-K dokazov z CV", minimum=2, maximum=20, step=1, value=DEFAULT_TOP_K)
-                    max_requirements = gr.Slider(
-                        label="Max pocet poziadaviek z inzeratu",
-                        minimum=5,
-                        maximum=25,
-                        step=1,
-                        value=DEFAULT_MAX_REQUIREMENTS,
-                    )
+                    max_requirements = gr.Slider(label="Max pocet poziadaviek z inzeratu",minimum=5,maximum=25,step=1,value=DEFAULT_MAX_REQUIREMENTS)
                     include_candidate_summary = gr.Checkbox(label="Extrahovat anonymizovany profil kandidata", value=True)
 
                 with gr.Accordion("MLflow experiment tracking", open=False):
                     mlflow_status_text = (
-                        "MLflow ready - local SQLite tracking is enabled."
-                        if MLFLOW_READY
-                        else f"MLflow not ready - {MLFLOW_SETUP_ERROR or 'install mlflow first'}"
-                    )
+                                            "MLflow ready - local SQLite tracking is enabled."
+                                            if MLFLOW_READY
+                                            else f"MLflow not ready - {MLFLOW_SETUP_ERROR or 'install mlflow first'}"
+                                        )
                     gr.Markdown(
-                        f"""
-                        **Prompt / validation benchmarking**
+                                f"""
+                                **Prompt / validation benchmarking**
 
-                        MLflow can store each validation run as an experiment:
-                        model settings, generated report, JSON output, estimated token usage and runtime.
+                                MLflow can store each validation run as an experiment:
+                                model settings, generated report, JSON output, estimated token usage and runtime.
 
-                        Status: `{mlflow_status_text}`
+                                Status: `{mlflow_status_text}`
 
-                        Local UI command:
-                        `mlflow ui --backend-store-uri sqlite:///{MLFLOW_DB_PATH.as_posix()}`
+                                Local UI command:
+                                `mlflow ui --backend-store-uri sqlite:///{MLFLOW_DB_PATH.as_posix()}`
 
-                        Optional auto-start from script:
-                        set `START_MLFLOW_UI=1` and optionally `OPEN_MLFLOW_UI_BROWSER=1`.
-                        """
-                    )
+                                Optional auto-start from script:
+                                set `START_MLFLOW_UI=1` and optionally `OPEN_MLFLOW_UI_BROWSER=1`.
+                                """
+                                )
 
-                    mlflow_enabled = gr.Checkbox(
-                        label="Enable MLflow logging",
-                        value=False,
-                        interactive=MLFLOW_READY,
-                    )
+                    mlflow_enabled = gr.Checkbox(label="Enable MLflow logging",value=False,interactive=MLFLOW_READY)
                     mlflow_log_input_artifacts = gr.Checkbox(
-                        label="Also log source inputs/CV file as artifacts - use only for non-sensitive data",
-                        value=False,
-                        interactive=MLFLOW_READY,
-                    )
+                                                                label="Also log source inputs/CV file as artifacts - use only for non-sensitive data",
+                                                                value=False,
+                                                                interactive=MLFLOW_READY
+                                                            )
 
                 with gr.Row():
                     run_btn = gr.Button("Spustit validaciu", variant="primary")
@@ -1037,26 +984,26 @@ def build_ui():
                 json_report = gr.Code(label="JSON report", language="json", lines=20)
 
         run_btn.click(
-            fn=gradio_run_wrapper,
-            inputs=[
-                    cv_file,
-                    job_url,
-                    job_text_manual,
-                    job_schema_xlsx_path,
-                    manual_position_name,
-                    model_id,
-                    fallback_model_id,
-                    aux_model_id,
-                    load_mode,
-                    embed_model_id,
-                    top_k,
-                    max_requirements,
-                    include_candidate_summary,
-                    mlflow_enabled,
-                    mlflow_log_input_artifacts,
-                    ],
-            outputs=[report_md, json_report, runtime_info],
-        )
+                        fn=gradio_run_wrapper,
+                        inputs=[
+                                cv_file,
+                                job_url,
+                                job_text_manual,
+                                job_schema_xlsx_path,
+                                manual_position_name,
+                                model_id,
+                                fallback_model_id,
+                                aux_model_id,
+                                load_mode,
+                                embed_model_id,
+                                top_k,
+                                max_requirements,
+                                include_candidate_summary,
+                                mlflow_enabled,
+                                mlflow_log_input_artifacts,
+                                ],
+                        outputs=[report_md, json_report, runtime_info],
+                        )
         unload_btn.click(fn=unload_llm, inputs=[], outputs=[runtime_info])
 
     return demo
