@@ -1,10 +1,13 @@
+# 0. Mandatory library installs
 
 #!python -m pip install --upgrade pip setuptools wheel
 #!python -m pip install --upgrade torch --index-url https://download.pytorch.org/whl/cpu
 #!python -m pip install --upgrade ipykernel jupyter
+#!python -m pip install --upgrade mlflow
 #!python -m pip install --upgrade openvino optimum-intel transformers accelerate safetensors sentencepiece huggingface_hub requests python-dotenv gradio bs4
 
-import os, platform, traceback, torch, transformers, re, requests
+# 1. Imports
+import os, platform, traceback, torch, transformers, re, requests, time, json, hashlib, mlflow
 from pathlib import Path
 from typing import Optional
 import gradio as gr
@@ -16,6 +19,8 @@ import openvino as ov
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from optimum.intel import OVModelForCausalLM
 
+# 2. Environment configurations
+
 #MODEL_NAME = os.getenv("LOCAL_MODEL_NAME", "Qwen/Qwen3-0.6B")
 MODEL_NAME = os.getenv("LOCAL_MODEL_NAME", "Qwen/Qwen3-4B-Instruct-2507")
 
@@ -25,7 +30,6 @@ HF_CACHE_DIR = os.getenv("HF_CACHE_DIR", "./hf_cache")
 OV_MODELS_DIR = os.getenv("OV_MODELS_DIR", "./ov_models")
 OV_CACHE_DIR = os.getenv("OV_CACHE_DIR", "./ov_cache")
 
-# Pre Intel CPU/NPU/GPU mozes skusit napr. CPU, GPU, NPU alebo AUTO.
 OPENVINO_DEVICE = os.getenv("OPENVINO_DEVICE", "CPU")
 
 MAX_INPUT_TOKENS = int(os.getenv("MAX_INPUT_TOKENS", "2048"))
@@ -33,7 +37,7 @@ MAX_NEW_TOKENS = int(os.getenv("MAX_NEW_TOKENS", "300"))
 TEMPERATURE = float(os.getenv("TEMPERATURE", "0.7"))
 TOP_P = float(os.getenv("TOP_P", "0.9"))
 
-OFFLINE_MODE = os.getenv("LOCAL_FILES_ONLY", "0").strip().lower() in {"1", "true", "yes", "y"}
+OFFLINE_MODE = os.getenv("LOCAL_FILES_ONLY", "0").strip().lower() in {"1", "true", "yes", "y"} # for first run set it to 0, to download seledcted model from HF
 FORCE_HF_FALLBACK = os.getenv("FORCE_HF_FALLBACK", "0").strip().lower() in {"1", "true", "yes", "y"}
 
 cache_path = Path(HF_CACHE_DIR).expanduser().resolve()
@@ -62,6 +66,18 @@ OV_CONFIG = {
             "NUM_STREAMS": "1",
             "CACHE_DIR": str(ov_cache),
             }
+# a. MLFlow ENV setup
+MLFLOW_TRACKING_DIR = Path(os.getenv("MLFLOW_TRACKING_DIR", "./mlruns")).expanduser().resolve()
+MLFLOW_EXPERIMENT_NAME = os.getenv("MLFLOW_EXPERIMENT_NAME", "local-prompt-simulator")
+
+MLFLOW_TRACKING_DIR.mkdir(parents=True, exist_ok=True)
+
+def setup_mlflow() -> None:
+    mlflow.set_tracking_uri(MLFLOW_TRACKING_DIR.as_uri())
+    mlflow.set_experiment(MLFLOW_EXPERIMENT_NAME)
+    #mlflow.set_tracking_uri("http://127.0.0.1:5000")
+
+setup_mlflow()
 
 print("Runtime:", platform.platform())
 print("Python backend libraries:")
@@ -75,6 +91,8 @@ print(f"OpenVINO model path: {ov_model_path}")
 print(f"OpenVINO runtime cache: {ov_cache}")
 print(f"Offline/cache-only mode: {OFFLINE_MODE}")
 print(f"Force Hugging Face fallback: {FORCE_HF_FALLBACK}")
+
+# 3. Model loader local\offline or remote\online from HuggingFace (initial load)
 
 def load_tokenizer():
     tokenizer_kwargs = {"trust_remote_code": True,"cache_dir": str(cache_path),"local_files_only": OFFLINE_MODE, "fix_mistral_regex": True}
@@ -198,6 +216,7 @@ def build_chat_input(prompt: str, system_prompt: Optional[str] = None) -> str:
 
     return prompt
 
+# 4. Model run function + manual conmfiguration
 
 def run_local_llm(prompt: str,system_prompt: Optional[str] = None,max_new_tokens: Optional[int] = None,temperature: Optional[float] = None,top_p: Optional[float] = None) -> str:
     prompt = str(prompt).strip()
@@ -246,6 +265,105 @@ def run_local_llm(prompt: str,system_prompt: Optional[str] = None,max_new_tokens
 
 print("\nHelper function ready: run_local_llm(prompt, system_prompt=None)")
 
+# a. Token counter function
+def count_tokens(text: str) -> int:
+    text = str(text or "")
+    if not text:
+        return 0
+
+    try:
+        return len(tokenizer(text, return_tensors=None)["input_ids"])
+    except Exception:
+        return 0
+
+def log_prompt_run_to_mlflow(
+    system_prompt: str,
+    user_prompt: str,
+    topic: str,
+    final_prompt: str,
+    output: str,
+    few_shot_enabled: bool,
+    few_shot_examples: str,
+    web_scraping_enabled: bool,
+    web_urls: str,
+    max_new_tokens: int,
+    temperature: float,
+    top_p: float,
+    generation_time_sec: float,
+) -> str:
+    input_tokens = count_tokens(final_prompt)
+    output_tokens = count_tokens(output)
+
+    prompt_hash = hashlib.sha256(final_prompt.encode("utf-8", errors="ignore")).hexdigest()[:12]
+
+    run_name = f"prompt_run_{prompt_hash}"
+
+    with mlflow.start_run(run_name=run_name) as run:
+        mlflow.log_params(
+                            {
+                                "model_name": MODEL_NAME,
+                                "backend": BACKEND,
+                                "openvino_device": OPENVINO_DEVICE if BACKEND == "openvino" else "hf_fallback",
+                                "max_input_tokens": MAX_INPUT_TOKENS,
+                                "max_new_tokens": int(max_new_tokens),
+                                "temperature": float(temperature),
+                                "top_p": float(top_p),
+                                "few_shot_enabled": bool(few_shot_enabled),
+                                "web_scraping_enabled": bool(web_scraping_enabled),
+                                "prompt_hash": prompt_hash,
+                            }
+                        )
+
+        mlflow.log_metrics(
+                            {
+                                "input_tokens": input_tokens,
+                                "output_tokens": output_tokens,
+                                "total_tokens": input_tokens + output_tokens,
+                                "generation_time_sec": float(generation_time_sec),
+                            }
+                            )
+
+        mlflow.set_tags(
+                        {
+                            "app": "local-openvino-prompt-simulator",
+                            "task_type": "prompt_generation",
+                        }
+                        )
+
+        mlflow.log_text(system_prompt or "", "prompts/system_prompt.txt")
+        mlflow.log_text(user_prompt or "", "prompts/user_prompt_template.txt")
+        mlflow.log_text(topic or "", "prompts/topic.txt")
+        mlflow.log_text(final_prompt or "", "prompts/final_prompt.txt")
+        mlflow.log_text(output or "", "outputs/model_output.txt")
+
+        if few_shot_examples:mlflow.log_text(few_shot_examples, "prompts/few_shot_examples.txt")
+
+        if web_urls:mlflow.log_text(web_urls, "sources/web_urls.txt")
+
+        metadata = {
+                    "model_name": MODEL_NAME,
+                    "backend": BACKEND,
+                    "openvino_device": OPENVINO_DEVICE,
+                    "max_input_tokens": MAX_INPUT_TOKENS,
+                    "max_new_tokens": int(max_new_tokens),
+                    "temperature": float(temperature),
+                    "top_p": float(top_p),
+                    "few_shot_enabled": bool(few_shot_enabled),
+                    "web_scraping_enabled": bool(web_scraping_enabled),
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "generation_time_sec": float(generation_time_sec),
+                    }
+
+        mlflow.log_text(
+                            json.dumps(metadata, indent=2, ensure_ascii=False),
+                            "metadata/run_metadata.json",
+                        )
+
+        return run.info.run_id
+
+# 5. Web Scrapper BeatifulSoup 4 loader
+
 def extract_urls_from_text(urls_text: str) -> list[str]:
     urls_text = str(urls_text or "").strip()
 
@@ -259,7 +377,6 @@ def extract_urls_from_text(urls_text: str) -> list[str]:
         if not line:
             continue
 
-        # Ak user zada URL bez https://
         if not line.startswith(("http://", "https://")):
             line = "https://" + line
 
@@ -276,12 +393,11 @@ def clean_scraped_text(text: str, max_chars: int = 6000) -> str:
     text = text.strip()
 
     if len(text) > max_chars:
-        text = text[:max_chars] + "\n\n[Text bol skrateny kvoli limitu dlzky.]"
+        text = text[:max_chars] + "\n\n[Text was truncated due to character limit.]"
 
     return text
 
 def scrape_single_url(url: str, timeout: int = 15, max_chars: int = 6000) -> dict:
-    """Stiahne a vycisti text z jednej webovej stranky."""
     headers = {
                 "User-Agent": (
                                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -296,7 +412,6 @@ def scrape_single_url(url: str, timeout: int = 15, max_chars: int = 6000) -> dic
 
         soup = BeautifulSoup(response.text, "html.parser")
 
-        # Odstranit technicke / navigacne casti
         for tag in soup(["script", "style", "noscript", "nav", "footer", "header", "aside", "form"]):
             tag.decompose()
 
@@ -411,6 +526,8 @@ Input topic: premium family SUV
 Output:
 Room for the family. Presence for the road.
 A premium SUV designed around calm driving, smart space and confident long-distance travel."""
+
+# 6. CSS styling of the Geradio interface
 
 APP_CSS = r"""
                 /* Local Assistant UI*/
@@ -594,11 +711,21 @@ APP_CSS = r"""
                 background: rgba(15, 23, 42, 0.54) !important;
                 margin-top: 12px !important;
                 }
-
+                #mlflow-panel {
+                border: 1px solid var(--border) !important;
+                border-radius: 20px !important;
+                background: rgba(15, 23, 42, 0.54) !important;
+                margin-top: 12px !important;
+                }
+                #mlflow-toggle {
+                border: 1px solid rgba(148, 163, 184, 0.18) !important;
+                border-radius: 16px !important;
+                padding: 8px 10px !important;
+                background: rgba(2, 6, 23, 0.34) !important;
+                }
                 #web-urls textarea {
                 min-height: 150px !important;
                 }
-
                 #web-scraping-toggle {
                 border: 1px solid rgba(148, 163, 184, 0.18) !important;
                 border-radius: 16px !important;
@@ -639,6 +766,7 @@ APP_CSS = r"""
                     #left-panel, #right-panel { padding: 14px; border-radius: 22px; }
                 }
                 """
+# 7. Gradio frontend and prepwork for run
 
 def prepare_user_prompt(user_prompt: str, topic: str) -> str:
     user_prompt = str(user_prompt or "").strip()
@@ -676,7 +804,19 @@ def apply_few_shot_prompting(final_prompt: str,few_shot_enabled: bool,few_shot_e
                 </actual_task>
             """
 
-def generate_from_ui(system_prompt: str,user_prompt: str,topic: str,few_shot_enabled: bool,few_shot_examples: str,web_scraping_enabled: bool,web_urls: str,max_new_tokens: int,temperature: float,top_p: float) -> str:
+def generate_from_ui(
+                    system_prompt: str,
+                    user_prompt: str,
+                    topic: str,
+                    few_shot_enabled: bool,
+                    few_shot_examples: str,
+                    web_scraping_enabled: bool,
+                    web_urls: str,
+                    mlflow_enabled: bool,
+                    max_new_tokens: int,
+                    temperature: float,
+                    top_p: float,
+                    ) -> str:
     final_prompt = prepare_user_prompt(user_prompt, topic)
 
     final_prompt = apply_web_context_to_prompt(final_prompt=final_prompt,web_scraping_enabled=web_scraping_enabled,urls_text=web_urls)
@@ -687,20 +827,43 @@ def generate_from_ui(system_prompt: str,user_prompt: str,topic: str,few_shot_ena
         return "Add user prompt or main topic."
 
     try:
-        return run_local_llm(
-                            final_prompt,
-                            system_prompt=system_prompt,
-                            max_new_tokens=int(max_new_tokens),
-                            temperature=float(temperature),
-                            top_p=float(top_p),
-                            )
+        started_at = time.perf_counter()
+
+        output = run_local_llm(final_prompt,system_prompt=system_prompt,max_new_tokens=int(max_new_tokens),temperature=float(temperature),top_p=float(top_p))
+
+        generation_time_sec = time.perf_counter() - started_at
+
+        if mlflow_enabled:
+            run_id = log_prompt_run_to_mlflow(
+                                                system_prompt=system_prompt,
+                                                user_prompt=user_prompt,
+                                                topic=topic,
+                                                final_prompt=final_prompt,
+                                                output=output,
+                                                few_shot_enabled=few_shot_enabled,
+                                                few_shot_examples=few_shot_examples,
+                                                web_scraping_enabled=web_scraping_enabled,
+                                                web_urls=web_urls,
+                                                max_new_tokens=max_new_tokens,
+                                                temperature=temperature,
+                                                top_p=top_p,
+                                                generation_time_sec=generation_time_sec,
+                                                )
+
+            return (f"{output}\n\n"f"---\n"f"MLflow run logged: {run_id}\n"f"Generation time: {generation_time_sec:.2f} sec")
+
+        return output
+
     except Exception as exc:
         return f"Generation failed: {type(exc).__name__}: {exc}"
 
 def clear_output() -> str:
     return ""
 
-with gr.Blocks(title="Local OpenVINO Assistant",css=APP_CSS,) as demo:
+with gr.Blocks(
+    title="Local OpenVINO Assistant",
+    css=APP_CSS,
+) as demo:
     with gr.Column(elem_id="app-shell"):
         gr.HTML(
             f"""
@@ -711,6 +874,7 @@ with gr.Blocks(title="Local OpenVINO Assistant",css=APP_CSS,) as demo:
                     <span class="status-pill">Model: <strong>{MODEL_NAME}</strong></span>
                     <span class="status-pill">Device: <strong>{OPENVINO_DEVICE if BACKEND == 'openvino' else 'HF fallback'}</strong></span>
                     <span class="status-pill">Local URL: <strong>127.0.0.1:7860</strong></span>
+                    <span class="status-pill">Tracking: <strong>MLflow optional</strong></span>
                 </div>
             </div>
             """
@@ -725,40 +889,43 @@ with gr.Blocks(title="Local OpenVINO Assistant",css=APP_CSS,) as demo:
                         )
 
                 system_prompt_box = gr.Textbox(
-                                                label="System prompt/Persona",
+                                                label="System prompt / Persona",
                                                 value=DEFAULT_SYSTEM_PROMPT,
                                                 lines=10,
-                                                placeholder="Example: You are a helpful assistant",
-                                                elem_id="system-prompt"
-                                                )
+                                                placeholder="Example: You are a helpful assistant.",
+                                                elem_id="system-prompt")
 
                 topic_box = gr.Textbox(
                                         label="Topic",
                                         value=DEFAULT_TOPIC,
                                         lines=5,
                                         placeholder="Example: new car model",
-                                        elem_id="topic-box"
+                                        elem_id="topic-box",
                                         )
 
                 user_prompt_box = gr.Textbox(
                                             label="User prompt / instruction",
                                             value=DEFAULT_USER_PROMPT,
                                             lines=15,
-                                            placeholder="Inset model instruction. Please use {topic}.",
+                                            placeholder="Insert model instruction. You can use {topic}.",
                                             elem_id="user-prompt",
                                             )
 
                 with gr.Accordion("Few-shot prompting", open=False, elem_id="few-shot-panel"):
                     gr.HTML(
                             """
-                                <p class="few-shot-note">
-                                Enable few-shot prompting.
-                                Examples maybe inserted in plan text format as Input / Output.
-                                </p>
+                            <p class="few-shot-note">
+                                Enable few-shot prompting when you want to show the model examples of the expected structure, tone or output style.
+                                Examples can be inserted as plain text in Input / Output format.
+                            </p>
                             """
-                    )
+                            )
 
-                    few_shot_enabled_box = gr.Checkbox(label="Enable few-shot prompting",value=False,elem_id="few-shot-toggle")
+                    few_shot_enabled_box = gr.Checkbox(
+                                                        label="Enable few-shot prompting",
+                                                        value=False,
+                                                        elem_id="few-shot-toggle",
+                                                        )
 
                     few_shot_examples_box = gr.Textbox(
                                                         label="Few-shot examples - plain text",
@@ -767,55 +934,119 @@ with gr.Blocks(title="Local OpenVINO Assistant",css=APP_CSS,) as demo:
                                                         placeholder="Example 1\nInput: ...\nOutput: ...\n\nExample 2\nInput: ...\nOutput: ...",
                                                         elem_id="few-shot-examples",
                                                         )
+
                 with gr.Accordion("Web scraping", open=False, elem_id="web-scraping-panel"):
-                    gr.HTML("""<p class="few-shot-note">Toggle for optional URL Web scrapping (Non-JavaScript).</p>""")
+                    gr.HTML(
+                            """
+                                <p class="few-shot-note">
+                                Optional URL context. The app will try to download and clean text from static web pages.
+                                This works best for non-JavaScript websites.
+                                </p>
+                            """
+                            )
 
-                    web_scraping_enabled_box = gr.Checkbox(label="Enable web scraping",value=False,elem_id="web-scraping-toggle")
+                    web_scraping_enabled_box = gr.Checkbox(
+                                                            label="Enable web scraping",
+                                                            value=False,
+                                                            elem_id="web-scraping-toggle",
+                                                            )
 
-                    web_urls_box = gr.Textbox(label="URLs - one web location per line",value=DEFAULT_WEB_URLS,lines=10,placeholder="https://example.com\nhttps://wikipedia.org",elem_id="web-urls")
+                    web_urls_box = gr.Textbox(
+                                                labe    l="URLs - one web location per line",
+                                                value=DEFAULT_WEB_URLS,
+                                                lines=10,
+                                                placeholder="https://example.com\nhttps://wikipedia.org",
+                                                elem_id="web-urls",
+                                            )
+
+                with gr.Accordion("Experiment tracking", open=False, elem_id="mlflow-panel"):
+                    gr.HTML(
+                            """
+                                <p class="few-shot-note">
+                                Optional MLflow logging. When enabled, the app saves the prompt, output, model settings,
+                                token counts and generation time into a local MLflow experiment.
+                                </p>
+                            """
+                            )
+
+                    mlflow_enabled_box = gr.Checkbox(
+                        label="Enable MLflow logging",value=False,elem_id="mlflow-toggle")
+
+                    gr.HTML(
+                            """
+                                <p class="few-shot-note">
+                                Local MLflow UI can be started with:<br>
+                                <code>mlflow ui --backend-store-uri ./mlruns</code><br>
+                                Then open <code>http://127.0.0.1:5000</code>.
+                                </p>
+                            """
+                            )
 
                 with gr.Accordion("Generation settings", open=False, elem_id="settings-panel"):
-                    max_new_tokens_slider = gr.Slider(minimum=32,maximum=2048,value=MAX_NEW_TOKENS,step=16,label="Max new tokens - Output lenght ")
+                    max_new_tokens_slider = gr.Slider(
+                                                        minimum=32,
+                                                        maximum=2048,
+                                                        value=MAX_NEW_TOKENS,
+                                                        step=16,
+                                                        label="Max new tokens - limit of answer length",
+                                                    )
 
-                    temperature_slider = gr.Slider(minimum=0.0,maximum=2.0,value=TEMPERATURE,step=0.1,label="Temperature - Creativity/Randomnes")
+                    temperature_slider = gr.Slider(
+                                                    minimum=0.0,
+                                                    maximum=2.0,
+                                                    value=TEMPERATURE,
+                                                    step=0.1,
+                                                    label="Temperature - lower = precise, higher = creative",
+                                                    )
 
-                    top_p_slider = gr.Slider(minimum=0.1,maximum=1.0,value=TOP_P,step=0.1,label="Top-P - Output text colorfulness")
+                    top_p_slider = gr.Slider(
+                                            minimum=0.1,
+                                            maximum=1.0,
+                                            value=TOP_P,
+                                            step=0.1,
+                                            label="Top-p - lower = conservative, higher = varied",
+                                            )
 
             with gr.Column(scale=4, elem_id="right-panel"):
                 gr.HTML(
-                            """
-                            <h2 class="section-title">Assistant output</h2>
-                            """
+                        """
+                        <h2 class="section-title">Assistant output</h2>
+                        """
                         )
 
-                output_box = gr.Textbox(label="Output",lines=20,placeholder="Model output: ",elem_id="output-box")
+                output_box = gr.Textbox(
+                                        label="Output",
+                                        lines=20,
+                                        placeholder="Model output:",
+                                        elem_id="output-box",
+                                        )
 
                 with gr.Row():
-                    generate_button = gr.Button("Generate", variant="primary", elem_id="generate-btn")
-                    clear_button = gr.Button("Clear output", elem_id="clear-btn")
+                    generate_button = gr.Button("Generate",variant="primary",elem_id="generate-btn")
+                    clear_button = gr.Button("Clear output",elem_id="clear-btn")
 
         generate_button.click(
-                            fn=generate_from_ui,
-                            inputs=[
-                                    system_prompt_box,
-                                    user_prompt_box,
-                                    topic_box,
-                                    few_shot_enabled_box,
-                                    few_shot_examples_box,
-                                    web_scraping_enabled_box,
-                                    web_urls_box,
-                                    max_new_tokens_slider,
-                                    temperature_slider,
-                                    top_p_slider,
-                                    ],
-                            outputs=output_box,
+                                fn=generate_from_ui,
+                                inputs=[
+                                        system_prompt_box,
+                                        user_prompt_box,
+                                        topic_box,
+                                        few_shot_enabled_box,
+                                        few_shot_examples_box,
+                                        web_scraping_enabled_box,
+                                        web_urls_box,
+                                        mlflow_enabled_box,
+                                        max_new_tokens_slider,
+                                        temperature_slider,
+                                        top_p_slider,
+                                        ],
+                                outputs=output_box
                             )
 
         clear_button.click(fn=clear_output,inputs=None,outputs=output_box)
 
 demo.launch(
             server_name=os.getenv("GRADIO_SERVER_NAME", "127.0.0.1"),
-            #server_port=int(os.getenv("GRADIO_SERVER_PORT", "7860")),
             share=False,
             inbrowser=True,
             )
