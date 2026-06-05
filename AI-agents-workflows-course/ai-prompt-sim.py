@@ -10,7 +10,10 @@
 # 1. Imports
 import os, platform, traceback, torch, transformers, re, requests, time, json, hashlib, mlflow
 import sys, socket, atexit, subprocess, webbrowser
+
 from pathlib import Path
+SCRIPT_DIR = Path(__file__).resolve().parent
+
 from typing import Optional, Any, cast
 import gradio as gr
 
@@ -28,9 +31,9 @@ MODEL_NAME = os.getenv("LOCAL_MODEL_NAME", "Qwen/Qwen3-4B-Instruct-2507")
 
 HF_TOKEN = os.getenv("HF_TOKEN") or None
 
-HF_CACHE_DIR = os.getenv("HF_CACHE_DIR", "./hf_cache")
-OV_MODELS_DIR = os.getenv("OV_MODELS_DIR", "./ov_models")
-OV_CACHE_DIR = os.getenv("OV_CACHE_DIR", "./ov_cache")
+HF_CACHE_DIR = os.getenv("HF_CACHE_DIR", str(SCRIPT_DIR / "hf_cache"))
+OV_MODELS_DIR = os.getenv("OV_MODELS_DIR", str(SCRIPT_DIR / "ov_models"))
+OV_CACHE_DIR = os.getenv("OV_CACHE_DIR", str(SCRIPT_DIR / "ov_cache"))
 
 OPENVINO_DEVICE = os.getenv("OPENVINO_DEVICE", "CPU")
 
@@ -69,7 +72,7 @@ OV_CONFIG = {
             "CACHE_DIR": str(ov_cache),
             }
 # a. MLFlow ENV setup
-MLFLOW_ROOT_DIR = Path(os.getenv("MLFLOW_ROOT_DIR", "./mlflow_runs")).expanduser().resolve()
+MLFLOW_ROOT_DIR = Path(os.getenv("MLFLOW_ROOT_DIR", str(SCRIPT_DIR / "mlflow_runs"))).expanduser().resolve()
 
 MLFLOW_DB_PATH = MLFLOW_ROOT_DIR / "mlflow.db"
 MLFLOW_ARTIFACTS_DIR = MLFLOW_ROOT_DIR / "artifacts"
