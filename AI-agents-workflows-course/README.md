@@ -61,7 +61,7 @@ OFFLINE_MODE = os.getenv("LOCAL_FILES_ONLY", "1").strip().lower() in {"1", "true
 FORCE_HF_FALLBACK = os.getenv("FORCE_HF_FALLBACK", "0").strip().lower() in {"1", "true", "yes", "y"}
 
 ```
-### 3. Vystup z MLFlow porovnania behov
+### 2. Vystup z MLFlow a porovnanie behov
 
 
 ![MLFlow](images/ml_flow_incorporation.png)
