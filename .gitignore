@@ -72,6 +72,10 @@ Keyword tokenizer/RAG_store/
 *.sqlite3
 /Models/
 /Thesaurus/
+*.jinja
+*.safetensors
+*.xml
+*.blob
 
 # =====================
 # Secrets

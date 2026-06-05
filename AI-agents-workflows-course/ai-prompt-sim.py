@@ -2,7 +2,7 @@
 #!python -m pip install --upgrade pip setuptools wheel
 #!python -m pip install --upgrade torch --index-url https://download.pytorch.org/whl/cpu
 #!python -m pip install --upgrade ipykernel jupyter
-#!python -m pip install --upgrade openvino optimum-intel transformers accelerate safetensors sentencepiece huggingface_hub requests python-dotenv gradio
+#!python -m pip install --upgrade openvino optimum-intel transformers accelerate safetensors sentencepiece huggingface_hub requests python-dotenv gradio bs4
 
 import os, platform, traceback, torch, transformers, re, requests
 from pathlib import Path
@@ -33,7 +33,7 @@ MAX_NEW_TOKENS = int(os.getenv("MAX_NEW_TOKENS", "300"))
 TEMPERATURE = float(os.getenv("TEMPERATURE", "0.7"))
 TOP_P = float(os.getenv("TOP_P", "0.9"))
 
-OFFLINE_MODE = os.getenv("LOCAL_FILES_ONLY", "1").strip().lower() in {"1", "true", "yes", "y"}
+OFFLINE_MODE = os.getenv("LOCAL_FILES_ONLY", "0").strip().lower() in {"1", "true", "yes", "y"}
 FORCE_HF_FALLBACK = os.getenv("FORCE_HF_FALLBACK", "0").strip().lower() in {"1", "true", "yes", "y"}
 
 cache_path = Path(HF_CACHE_DIR).expanduser().resolve()

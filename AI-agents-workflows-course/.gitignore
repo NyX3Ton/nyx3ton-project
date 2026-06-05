@@ -75,7 +75,6 @@ Keyword tokenizer/RAG_store/
 *.blob
 *.jinja
 *.lock
-*.incomplete
 
 # =====================
 # Secrets
