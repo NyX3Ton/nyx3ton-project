@@ -27,7 +27,7 @@ from optimum.intel import OVModelForCausalLM
 # 2. Environment configurations
 
 #MODEL_NAME = os.getenv("LOCAL_MODEL_NAME", "Qwen/Qwen3-0.6B")
-MODEL_NAME = os.getenv("LOCAL_MODEL_NAME", "Qwen/Qwen3-4B-Instruct-2507")
+MODEL_NAME = os.getenv("LOCAL_MODEL_NAME", "Qwen/Qwen3-4B-Thinking-2507")
 
 HF_TOKEN = os.getenv("HF_TOKEN") or None
 
