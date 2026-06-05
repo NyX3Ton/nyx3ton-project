@@ -9,6 +9,7 @@ https://gitlab.com/nyx3ton-group/nyx3ton-project/-/blob/main/AI-agents-workflows
 - Podporuje upravy MAX_INPUT_TOKENS, TOP_P a TEMPERATURE v Gradio UI
 - Podporuje Zero-shot, Few-Shot, User and System Prompt
 - Podporuje viacpolozkovy Web Scrapping cez BeautifulSoup (non-JavaScript Web URLs)
+- Architektura podporuje a je merana pomocou MLFlow
 
 
 ```text
@@ -60,8 +61,12 @@ OFFLINE_MODE = os.getenv("LOCAL_FILES_ONLY", "1").strip().lower() in {"1", "true
 FORCE_HF_FALLBACK = os.getenv("FORCE_HF_FALLBACK", "0").strip().lower() in {"1", "true", "yes", "y"}
 
 ```
+### 3. Vystup z MLFlow porovnania behov
 
-### 2. Priklad vystupu z modelu
+
+![MLFlow](images/ml_flow_incorporation.png)
+
+### 3. Priklad vystupu z modelu
 
 Menu s outputom:
 
