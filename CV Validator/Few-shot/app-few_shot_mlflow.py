@@ -812,7 +812,28 @@ def run_validation(
                                             )
     requirements = job_data.get("requirements", [])
     if not requirements:
-        raise gr.Error("LLM ani fallback neextrahovali ziadne poziadavky z inzeratu. Skus vlozit cistejsi text inzeratu.")
+        job_preview = (job_text or "").strip()
+
+        if len(job_preview) >= 100:
+            requirements = [
+                            {
+                            "id": "REQ-001",
+                            "requirement": "General match against the provided job advertisement",
+                            "category": "general",
+                            "priority": "medium",
+                            "source": job_preview[:2000],
+                            }
+                            ]
+
+            print(
+                    "Warning: No structured requirements were extracted. "
+                    "Using full job advertisement as one general fallback requirement."
+                    )
+        else:
+            raise gr.Error(
+                            "Inzerat je prazdny alebo prilis kratky. "
+                            "Skontroluj, ci si vlozil spravny subor alebo cisty text inzeratu."
+                            )
     runtime.append(f"Extrahovane poziadavky: {len(requirements)}")
     runtime.append(f"Zdroj poziadaviek: {job_data.get('_source', 'unknown')}")
 
