@@ -76,6 +76,8 @@ Keyword tokenizer/RAG_store/
 *.safetensors
 *.xml
 *.blob
+*.db
+
 
 # =====================
 # Secrets
