@@ -194,7 +194,7 @@ def chat_generate_messages(
                         "pad_token_id": tok.eos_token_id,
                         "repetition_penalty": REPETITION_PEN,
                         "do_sample": do_sample,
-                        "attn_implementation": "eager",
+                        #"attn_implementation": "eager",
                         }
 
     if do_sample:

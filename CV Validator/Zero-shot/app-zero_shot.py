@@ -424,7 +424,7 @@ def load_llm(
         tok = _load_tokenizer(mid)
         mdl = AutoModelForCausalLM.from_pretrained(
                                                     mid,
-                                                    torch_dtype=torch.float16,
+                                                    dtype=torch.float16,
                                                     device_map="auto",
                                                     max_memory={0: MAX_GPU_MEMORY, "cpu": "48GiB"},
                                                     trust_remote_code=True,
@@ -435,7 +435,7 @@ def load_llm(
         tok = _load_tokenizer(mid)
         mdl = AutoModelForCausalLM.from_pretrained(
                                                     mid,
-                                                    torch_dtype=torch.float32,
+                                                    dtype=torch.float32,
                                                     device_map={"": "cpu"},
                                                     trust_remote_code=True,
                                                     )
