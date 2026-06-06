@@ -27,9 +27,6 @@ from bs4 import BeautifulSoup
 from sentence_transformers import SentenceTransformer
 from dotenv import load_dotenv
 from dictionary_fallback import (fallback_extract_requirements_from_text, build_hybrid_requirement_result)
-
-# Optional experiment tracking.
-# The app still works without MLflow installed; logging is enabled only when available.
 from typing import Any
 
 try:
@@ -121,14 +118,12 @@ MLFLOW_UI_HOST = os.getenv("MLFLOW_UI_HOST", "127.0.0.1")
 MLFLOW_UI_PORT = int(os.getenv("MLFLOW_UI_PORT", "5001"))
 _MLFLOW_UI_PROCESS = None
 
-
 def _is_port_open(host: str, port: int) -> bool:
     try:
         with socket.create_connection((host, port), timeout=1):
             return True
     except OSError:
         return False
-
 
 def start_mlflow_ui(open_browser: bool = False) -> Optional[subprocess.Popen]:
     global _MLFLOW_UI_PROCESS
@@ -187,12 +182,10 @@ def stop_mlflow_ui() -> None:
         except Exception:
             pass
 
-
 atexit.register(stop_mlflow_ui)
 
 if START_MLFLOW_UI:
     start_mlflow_ui(open_browser=OPEN_MLFLOW_UI_BROWSER)
-
 
 # -----------------------------------------------------------------------------
 # 1. GLOBAL MODEL CACHE
@@ -260,9 +253,9 @@ def load_doc_legacy_windows(path: str) -> str:
         import win32com.client  # type: ignore
     except Exception as exc:
         raise RuntimeError(
-            "Subor .doc je legacy format. Pre native Windows fallback treba mat nainstalovany "
-            "Microsoft Word + pywin32. Alternativa: uloz CV ako .docx alebo .pdf."
-        ) from exc
+                            "Subor .doc je legacy format. Pre native Windows fallback treba mat nainstalovany "
+                            "Microsoft Word + pywin32. Alternativa: uloz CV ako .docx alebo .pdf."
+                            ) from exc
 
     tmp_dir = Path(tempfile.mkdtemp(prefix="cvdoc_"))
     tmp_txt = tmp_dir / "converted.txt"
@@ -299,21 +292,15 @@ def load_document(path: str) -> str:
 # 4. JOB AD SCRAPING
 # -----------------------------------------------------------------------------
 def scrape_url(url: str) -> str:
-    """Download job-ad text while preserving line structure for fallback extraction.
-
-    Important: do NOT run normalize_space() on the final joined text.
-    The fallback extractor is line-oriented and needs bullets / paragraphs as
-    separate lines.
-    """
     if not url or not url.strip():
         return ""
 
     headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122 Safari/537.36"
-        )
-    }
+                "User-Agent": (
+                                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122 Safari/537.36"
+                                )
+            }
     resp = requests.get(url.strip(), headers=headers, timeout=25)
     resp.raise_for_status()
 

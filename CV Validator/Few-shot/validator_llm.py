@@ -34,7 +34,6 @@ _TOKENIZER = None
 _MODEL = None
 _MODEL_INFO = "Model este nie je nacitany."
 
-
 def cuda_summary() -> str:
     if not torch.cuda.is_available():
         return "CUDA nie je dostupna, pouzije sa CPU alebo fallback."
@@ -43,7 +42,6 @@ def cuda_summary() -> str:
     allocated_gb = torch.cuda.memory_allocated(0) / 1024 ** 3
     reserved_gb = torch.cuda.memory_reserved(0) / 1024 ** 3
     return f"CUDA OK: {name}, VRAM total={total_gb:.1f} GB, allocated={allocated_gb:.2f} GB, reserved={reserved_gb:.2f} GB"
-
 
 def unload_llm() -> str:
     global _TOKENIZER, _MODEL, _MODEL_INFO
@@ -229,7 +227,6 @@ def chat_generate_messages(
         print("--- RAW LLM OUTPUT END ---\n")
 
     return text
-
 
 SYSTEM_JSON = """
                 Si lokalny AI asistent pre validaciu zivotopisov voci pracovnemu inzeratu.
