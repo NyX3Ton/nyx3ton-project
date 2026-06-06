@@ -20,8 +20,8 @@ def env_bool(name: str, default: bool = False) -> bool:
         return default
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}
 
-DEFAULT_LLM_MODEL_ID = os.getenv("LLM_MODEL_ID", "unsloth/DeepSeek-R1-Distill-Qwen-7B")
-DEFAULT_FALLBACK_LLM_MODEL_ID = os.getenv("FALLBACK_LLM_MODEL_ID", "unsloth/Qwen3.5-4B")
+DEFAULT_LLM_MODEL_ID = os.getenv("LLM_MODEL_ID", "unsloth/Qwen3.5-4B")
+DEFAULT_FALLBACK_LLM_MODEL_ID = os.getenv("FALLBACK_LLM_MODEL_ID", "unsloth/DeepSeek-R1-Distill-Qwen-7B")
 LLM_LOAD_MODE = os.getenv("LLM_LOAD_MODE", "fp16_gpu")
 MAX_GPU_MEMORY = os.getenv("MAX_GPU_MEMORY", "10.5GiB")
 MAX_INPUT_TOKENS = int(os.getenv("MAX_INPUT_TOKENS", "8192"))
@@ -177,7 +177,18 @@ def chat_generate_messages(
     tok, mdl, _ = load_llm(model_id, load_mode, fallback_model_id)
 
     if getattr(tok, "chat_template", None):
-        prompt = tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        # Qwen/DeepSeek-style thinking models may emit <think> blocks and then
+        # fail JSON parsing. For CV validation tasks we need deterministic JSON,
+        # so we explicitly disable thinking when the tokenizer supports it.
+        try:
+            prompt = tok.apply_chat_template(
+                                                messages,
+                                                tokenize=False,
+                                                add_generation_prompt=True,
+                                                enable_thinking=False,
+                                            )
+        except TypeError:
+            prompt = tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
     else:
         parts = []
         for m in messages:
@@ -188,13 +199,16 @@ def chat_generate_messages(
     dev = model_device(mdl)
     inputs = {k: v.to(dev) for k, v in inputs.items()}
 
+    eos_token_id = tok.eos_token_id
+    pad_token_id = tok.pad_token_id if tok.pad_token_id is not None else eos_token_id
+
     generation_kwargs = {
                         **inputs,
                         "max_new_tokens": max_new_tokens,
-                        "pad_token_id": tok.eos_token_id,
+                        "pad_token_id": pad_token_id,
+                        "eos_token_id": eos_token_id,
                         "repetition_penalty": REPETITION_PEN,
                         "do_sample": do_sample,
-                        #"attn_implementation": "eager",
                         }
 
     if do_sample:
@@ -206,8 +220,15 @@ def chat_generate_messages(
         out = mdl.generate(**generation_kwargs)
 
     generated = out[0][inputs["input_ids"].shape[-1]:]
-    text = tok.decode(generated, skip_special_tokens=True)
-    return strip_thinking(text)
+    raw_text = tok.decode(generated, skip_special_tokens=True)
+    text = strip_thinking(raw_text).strip()
+
+    if env_bool("DEBUG_LLM_RAW", False):
+        print("\n--- RAW LLM OUTPUT START ---")
+        print(raw_text[:4000])
+        print("--- RAW LLM OUTPUT END ---\n")
+
+    return text
 
 
 SYSTEM_JSON = """

@@ -154,7 +154,13 @@ def line_score(line: str, current_section: Optional[str]) -> float:
     low = line.lower()
     score = 0.0
 
-    if len(line) < 12 or len(line) > 320:
+    # Very short fragments are noise; very long lines are usually full-page
+    # flattening from a job portal. Long-but-structured lines are handled by
+    # split_job_ad_lines() before scoring.
+    if len(line) < 8 or len(line) > 650:
+        return 0.0
+
+    if len(line) > 320 and not current_section:
         return 0.0
 
     if re.match(r"^[•\-\*\u2022]", line):
@@ -184,7 +190,7 @@ def line_score(line: str, current_section: Optional[str]) -> float:
     if any(re.search(p, low) for p in SOFT_SKILL_PATTERNS):
         score += 1.5
 
-    if ":" in line and len(line.split(":")[0]) < 35:
+    if ":" in line and len(line.split(":")[0]) < 45:
         score += 0.5
 
     return score
@@ -194,33 +200,145 @@ def line_score(line: str, current_section: Optional[str]) -> float:
 # 3. DYNAMIC FALLBACK EXTRACTION
 # -----------------------------------------------------------------------------
 
+def split_job_ad_lines(job_text: str) -> List[str]:
+    """Return stable, requirement-friendly lines from URL/manual job text.
+
+    The URL scraper now preserves newlines, but this function also protects us
+    from already-flattened text, copied web pages, and bullet lists embedded in
+    a single paragraph.
+    """
+    text = str(job_text or "").replace("\r", "\n")
+
+    # Put common bullets and HTML-list leftovers on their own line.
+    text = re.sub(r"[\t ]*[•●▪▫◦‣⁃\u2022][\t ]*", "\n- ", text)
+    text = re.sub(r"[\t ]+(?=-\s+)", "\n", text)
+    text = re.sub(
+        r"\s+(?=(requirements|qualifications|minimum qualifications|preferred qualifications|nice to have|what you bring|your profile|pozadujeme|poziadavky|vyzadujeme|vyhodou je)\s*:)",
+        "\n",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    raw = []
+    for part in text.split("\n"):
+        part = normalize_space(part)
+        if not part:
+            continue
+
+        # Some portals flatten into one huge line. Split at strong section cues
+        # and sentence boundaries before known requirement terms.
+        if len(part) > 450:
+            part = re.sub(
+                r"\s+(?=(requirements|required|must have|what you bring|your profile|qualification|qualifications|we expect|pozadujeme|poziadavky|vyzadujeme|nice to have|preferred|bonus|advantage)\b)",
+                "\n",
+                part,
+                flags=re.IGNORECASE,
+            )
+            part = re.sub(r"(?<=[.;])\s+(?=[A-Z][a-z])", "\n", part)
+
+        for sub in part.split("\n"):
+            sub = normalize_space(sub)
+            if sub:
+                raw.append(sub)
+
+    # If still nearly one-line, split on semicolons and long dash-separated
+    # requirement clusters. This is intentionally conservative to avoid turning
+    # normal prose into nonsense.
+    expanded = []
+    for line in raw:
+        if len(line) > 320 and (";" in line or " - " in line):
+            chunks = re.split(r"\s*;\s*|\s+-\s+", line)
+            chunks = [normalize_space(x) for x in chunks if normalize_space(x)]
+            if len(chunks) >= 2:
+                expanded.extend(chunks)
+                continue
+        expanded.append(line)
+
+    # De-duplicate while keeping order.
+    result = []
+    seen = set()
+    for line in expanded:
+        key = normalize_key(line)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        result.append(line)
+
+    return result
+
+
 def fallback_extract_requirements_from_text(job_text: str, max_requirements: int) -> Dict[str, Any]:
-    text = job_text.replace("\r", "\n")
-    raw_lines = [normalize_space(x) for x in text.split("\n")]
-    raw_lines = [x for x in raw_lines if x]
+    raw_lines = split_job_ad_lines(job_text)
+    text = "\n".join(raw_lines)
 
     candidates = []
     current_section = None
 
     for line in raw_lines:
         maybe_section = detect_section(line)
-        if maybe_section is not None:
+        header_keys = {normalize_key(h) for values in SECTION_HEADERS.values() for h in values}
+        line_key = normalize_key(line.rstrip(":-"))
+        has_requirement_signal = any(re.search(p, line.lower()) for p in (HARD_SKILL_PATTERNS + EDUCATION_PATTERNS + LANGUAGE_PATTERNS + LOCATION_PATTERNS + SOFT_SKILL_PATTERNS))
+        pure_section_header = (
+            line_key in header_keys
+            or (len(line) <= 60 and line.rstrip().endswith(":") and not has_requirement_signal)
+        )
+        if maybe_section is not None and pure_section_header:
             current_section = maybe_section
             continue
 
-        score = line_score(line, current_section)
+        # If the section header and content are on one line, keep the content
+        # after the colon/dash and score it in that section.
+        section_for_line = current_section
+        maybe_inline_section = detect_section(line)
+        line_to_score = line
+        if maybe_inline_section is not None:
+            section_for_line = maybe_inline_section
+            if ":" in line and len(line.split(":", 1)[0]) <= 60:
+                line_to_score = normalize_space(line.split(":", 1)[1])
+
+        score = line_score(line_to_score, section_for_line)
         if score < 2.5:
             continue
 
-        clean_line = re.sub(r"^[•\-\*\u2022]\s*", "", line).strip()
+        clean_line = re.sub(r"^[•\-\*\u2022]\s*", "", line_to_score).strip()
         clean_line = normalize_space(clean_line)
+        clean_line = re.split(
+            r"\b(benefits|what we offer|we offer|ponukame|benefity)\s*:",
+            clean_line,
+            maxsplit=1,
+            flags=re.IGNORECASE,
+        )[0].strip()
+
+        # Avoid carrying section-only headings as requirements, but do not drop
+        # real requirements just because they contain words like "advantage".
+        clean_key = normalize_key(clean_line.rstrip(":-"))
+        if (not clean_line) or clean_key in header_keys:
+            continue
 
         candidates.append({
             "text": clean_line,
             "category": classify_category(clean_line),
-            "priority": infer_priority(clean_line, current_section),
+            "priority": infer_priority(clean_line, section_for_line),
             "score_hint": score,
         })
+
+    # Last-resort extraction for technology lists that stayed in prose.
+    if not candidates:
+        skill_hits = []
+        for pattern in HARD_SKILL_PATTERNS + LANGUAGE_PATTERNS + EDUCATION_PATTERNS:
+            for m in re.finditer(pattern, text.lower()):
+                hit = normalize_space(text[max(0, m.start() - 50): m.end() + 70])
+                if 8 <= len(hit) <= 220:
+                    skill_hits.append(hit)
+
+        for hit in skill_hits[: max_requirements * 2]:
+            candidates.append({
+                "text": hit,
+                "category": classify_category(hit),
+                "priority": infer_priority(hit, None),
+                "score_hint": 2.5,
+            })
 
     dedup = []
     for item in candidates:
@@ -250,8 +368,8 @@ def fallback_extract_requirements_from_text(job_text: str, max_requirements: int
         })
 
     job_title = "unknown"
-    for line in raw_lines[:20]:
-        if 8 <= len(line) <= 120 and any(x in line.lower() for x in ["engineer", "scientist", "developer", "analyst", "manager", "specialist"]):
+    for line in raw_lines[:30]:
+        if 8 <= len(line) <= 120 and any(x in line.lower() for x in ["engineer", "scientist", "developer", "analyst", "manager", "specialist", "consultant", "architect"]):
             job_title = line
             break
 

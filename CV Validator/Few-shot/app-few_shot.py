@@ -157,6 +157,12 @@ def load_document(path: str) -> str:
 # -----------------------------------------------------------------------------
 
 def scrape_url(url: str) -> str:
+    """Download job-ad text while preserving line structure for fallback extraction.
+
+    Important: do NOT run normalize_space() on the final joined text.
+    The fallback extractor is line-oriented and needs bullets / paragraphs as
+    separate lines.
+    """
     if not url or not url.strip():
         return ""
 
@@ -174,20 +180,31 @@ def scrape_url(url: str) -> str:
         tag.decompose()
 
     main = soup.find("main") or soup.find("article") or soup.body or soup
+
+    # Add separators around common block elements. Some job portals render lists
+    # as nested spans/divs, so get_text("\n") alone can still flatten content.
+    for tag in main.find_all(["br", "p", "li", "div", "section", "h1", "h2", "h3", "h4"]):
+        try:
+            tag.insert_before("\n")
+            tag.insert_after("\n")
+        except Exception:
+            pass
+
     text = main.get_text("\n")
     lines = [normalize_space(x) for x in text.splitlines()]
     lines = [x for x in lines if len(x) > 2]
 
+    # Preserve order but remove exact / near-exact duplicate lines.
     seen = set()
     unique = []
     for line in lines:
-        key = line.lower()
+        key = re.sub(r"\s+", " ", line.lower()).strip()
         if key in seen:
             continue
         seen.add(key)
         unique.append(line)
 
-    return normalize_space("\n".join(unique))
+    return "\n".join(unique).strip()
 
 # -----------------------------------------------------------------------------
 # 5. CHUNKING + RAG
@@ -392,7 +409,7 @@ def run_validation(
     else:
         job_text = ""
         if job_text_manual and job_text_manual.strip():
-            job_text = normalize_space(job_text_manual)
+            job_text = "\n".join(normalize_space(x) for x in job_text_manual.splitlines() if normalize_space(x))
             runtime.append("Inzerat: pouzity manualne vlozeny text")
         elif job_url and job_url.strip():
             job_text = scrape_url(job_url)
@@ -414,7 +431,36 @@ def run_validation(
                                             )
     requirements = job_data.get("requirements", [])
     if not requirements:
-        raise gr.Error("LLM ani fallback neextrahovali ziadne poziadavky z inzeratu. Skus vlozit cistejsi text inzeratu.")
+        job_preview = (job_text or "").strip()
+
+        if len(job_preview) >= 100:
+            requirements = [
+                            {
+                            "id": "R1",
+                            "text": "General match against the provided job advertisement",
+                            "category": "other",
+                            "priority": "unknown",
+                            "weight": 1.0,
+                            "source": job_preview[:2000],
+                            }
+                            ]
+            job_data["requirements"] = requirements
+            job_data["_source"] = "full_job_ad_general_fallback"
+            job_data.setdefault("_meta", {})
+            if isinstance(job_data["_meta"], dict):
+                job_data["_meta"].update({
+                    "llm_count": 0,
+                    "fallback_count": 0,
+                    "weak_llm": True,
+                    "merged_count": 1,
+                    "prompt_mode": "general_fallback",
+                })
+            print(
+                    "Warning: No structured requirements were extracted. "
+                    "Using full job advertisement as one general fallback requirement."
+                    )
+        else:
+            raise gr.Error("LLM ani fallback neextrahovali ziadne poziadavky z inzeratu. Skus vlozit cistejsi text inzeratu.")
     runtime.append(f"Extrahovane poziadavky: {len(requirements)}")
     runtime.append(f"Zdroj poziadaviek: {job_data.get('_source', 'unknown')}")
 
