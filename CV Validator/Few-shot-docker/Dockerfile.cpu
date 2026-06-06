@@ -1,0 +1,34 @@
+FROM python:3.12-slim
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    HF_HOME=/app/.cache/huggingface \
+    TOKENIZERS_PARALLELISM=false \
+    GRADIO_SERVER_NAME=0.0.0.0 \
+    GRADIO_SERVER_PORT=7860 \
+    GRADIO_INBROWSER=0 \
+    START_MLFLOW_UI=1 \
+    OPEN_MLFLOW_UI_BROWSER=0 \
+    MLFLOW_UI_HOST=0.0.0.0 \
+    MLFLOW_UI_PORT=5001 \
+    LLM_LOAD_MODE=cpu
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    curl \
+    build-essential \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements-cpu-docker.txt /app/requirements-cpu-docker.txt
+RUN python -m pip install --upgrade pip setuptools wheel && \
+    python -m pip install -r /app/requirements-cpu-docker.txt
+
+COPY . /app
+
+EXPOSE 7860 5001
+
+CMD ["python", "app-few_shot_mlflow.py"]

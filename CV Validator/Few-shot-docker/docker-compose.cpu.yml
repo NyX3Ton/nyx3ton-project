@@ -1,0 +1,31 @@
+services:
+  few-shot-validator-cpu:
+    build:
+      context: .
+      dockerfile: Dockerfile.cpu
+    image: few-shot-validator:qwen35-cpu
+    container_name: few-shot-validator-cpu
+    ports:
+      - "127.0.0.1:7860:7860"
+      - "127.0.0.1:5001:5001"
+    volumes:
+      - ./hf_cache:/app/.cache/huggingface
+      - ./mlflow_runs:/app/mlflow_runs
+      - ./outputs:/app/outputs
+    environment:
+      LLM_MODEL_ID: "Qwen/Qwen2.5-3B-Instruct"
+      FALLBACK_LLM_MODEL_ID: "Qwen/Qwen2.5-3B-Instruct"
+      AUX_LLM_MODEL_ID: "Qwen/Qwen2.5-3B-Instruct"
+      LLM_LOAD_MODE: "cpu"
+      MAX_INPUT_TOKENS: "4096"
+      MAX_NEW_TOKENS: "600"
+      GRADIO_SERVER_NAME: "0.0.0.0"
+      GRADIO_SERVER_PORT: "7860"
+      GRADIO_INBROWSER: "0"
+      START_MLFLOW_UI: "1"
+      OPEN_MLFLOW_UI_BROWSER: "0"
+      MLFLOW_UI_HOST: "0.0.0.0"
+      MLFLOW_UI_PORT: "5001"
+      MLFLOW_EXPERIMENT_NAME: "few-shot-cv-validator-docker-cpu"
+      HF_HOME_LOCAL: "/app/.cache/huggingface"
+    restart: unless-stopped

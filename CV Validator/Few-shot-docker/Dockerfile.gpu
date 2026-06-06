@@ -1,0 +1,60 @@
+FROM python:3.13-slim-bookworm
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    HF_HOME=/app/.cache/huggingface \
+    TOKENIZERS_PARALLELISM=false \
+    GRADIO_SERVER_NAME=0.0.0.0 \
+    GRADIO_SERVER_PORT=7860 \
+    GRADIO_INBROWSER=0 \
+    START_MLFLOW_UI=1 \
+    OPEN_MLFLOW_UI_BROWSER=0 \
+    MLFLOW_UI_HOST=0.0.0.0 \
+    MLFLOW_UI_PORT=5001 \
+    LLM_LOAD_MODE=auto \
+    MAX_GPU_MEMORY=10.5GiB
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    curl \
+    build-essential \
+    ca-certificates \
+    ninja-build \
+    pkg-config \
+    libgomp1 \
+    libgl1 \
+    libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python -m pip install --upgrade pip setuptools wheel packaging
+
+# CUDA 12.6 PyTorch stack
+RUN python -m pip install --no-cache-dir \
+    torch==2.11.0+cu126 \
+    torchvision==0.26.0+cu126 \
+    torchaudio==2.11.0+cu126 \
+    --index-url https://download.pytorch.org/whl/cu126
+
+COPY requirements-docker.txt /app/requirements-docker.txt
+
+# Install project dependencies after torch, so packages can detect the CUDA torch stack.
+RUN python -m pip install --no-cache-dir -r /app/requirements-docker.txt
+
+# Fast path libraries for Qwen / linear-attention style architectures.
+# causal-conv1d is intentionally not installed by default, because recent FLA includes Triton conv1d kernels.
+RUN python -m pip install --no-cache-dir \
+    "triton>=3.3" \
+    "einops" \
+    "datasets>=3.3.0" \
+    "transformers>=4.57.6" && \
+    python -m pip uninstall -y fla-core flash-linear-attention || true && \
+    python -m pip install --no-cache-dir git+https://github.com/fla-org/flash-linear-attention
+
+COPY . /app
+
+EXPOSE 7860 5001
+
+CMD ["python", "app-few_shot_mlflow.py"]
