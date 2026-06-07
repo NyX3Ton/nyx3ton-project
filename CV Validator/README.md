@@ -9,7 +9,7 @@ Odporucane pre RTX 4070 Super 12GB:
 ```env
 
 LLM_MODEL_ID=unsloth/Qwen3.5-4B
-FALLBACK_LLM_MODEL_ID=Qwen/Qwen3-4B-Thinking-2507
+FALLBACK_LLM_MODEL_ID=unsloth/DeepSeek-R1-0528-Qwen3-8B
 EMBED_MODEL_ID=sentence-transformers/paraphrase-multilingual-mpnet-base-v2
 LLM_LOAD_MODE=auto
 MAX_GPU_MEMORY=10.5GiB
