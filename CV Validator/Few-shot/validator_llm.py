@@ -20,8 +20,8 @@ def env_bool(name: str, default: bool = False) -> bool:
         return default
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}
 
-DEFAULT_LLM_MODEL_ID = os.getenv("LLM_MODEL_ID", "unsloth/Qwen3.5-4B")
-DEFAULT_FALLBACK_LLM_MODEL_ID = os.getenv("FALLBACK_LLM_MODEL_ID", "unsloth/DeepSeek-R1-Distill-Qwen-7B")
+DEFAULT_LLM_MODEL_ID = os.getenv("LLM_MODEL_ID", "unsloth/DeepSeek-R1-0528-Qwen3-8B")
+DEFAULT_FALLBACK_LLM_MODEL_ID = os.getenv("FALLBACK_LLM_MODEL_ID", "unsloth/Qwen3.5-4B")
 LLM_LOAD_MODE = os.getenv("LLM_LOAD_MODE", "fp16_gpu")
 MAX_GPU_MEMORY = os.getenv("MAX_GPU_MEMORY", "10.5GiB")
 MAX_INPUT_TOKENS = int(os.getenv("MAX_INPUT_TOKENS", "8192"))
