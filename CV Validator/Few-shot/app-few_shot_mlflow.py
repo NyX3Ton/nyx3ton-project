@@ -27,7 +27,7 @@ from bs4 import BeautifulSoup
 from sentence_transformers import SentenceTransformer
 from dotenv import load_dotenv
 from dictionary_fallback import (fallback_extract_requirements_from_text, build_hybrid_requirement_result)
-from typing import Any
+
 
 try:
     import mlflow as _mlflow
@@ -660,6 +660,11 @@ def log_validation_run_to_mlflow(
                                 "cv_file_ext": _safe_mlflow_param(file_ext(cv_file) if cv_file else ""),
                                 "log_input_artifacts": bool(log_input_artifacts),
                                 "run_hash": run_hash,
+                                "llm_model": _safe_mlflow_param(model_id),
+                                "llm_fallback_model": _safe_mlflow_param(fallback_model_id),
+                                "llm_aux_model": _safe_mlflow_param(aux_model_id or model_id),
+                                "embedding_model": _safe_mlflow_param(embed_model_id),
+                                "llm_load_mode": _safe_mlflow_param(load_mode),
                                 }
                             )
 
@@ -667,12 +672,16 @@ def log_validation_run_to_mlflow(
 
         mlflow.set_tags(
                         {
-                        "app": "few-shot-cv-validator",
-                        "task_type": "cv_job_matching",
-                        "prompt_mode": "few_shot_langchain",
+                            "app": "few-shot-cv-validator",
+                            "task_type": "cv_job_matching",
+                            "prompt_mode": "few_shot_langchain",
+
+                            "llm_model": _safe_mlflow_param(model_id),
+                            "llm_fallback_model": _safe_mlflow_param(fallback_model_id),
+                            "embedding_model": _safe_mlflow_param(embed_model_id),
+                            "llm_load_mode": _safe_mlflow_param(load_mode),
                         }
                         )
-
         mlflow.log_text(report_md, "outputs/report.md")
         mlflow.log_text(json_report, "outputs/report.json")
         mlflow.log_text(runtime_info, "outputs/runtime_info.txt")
@@ -744,41 +753,77 @@ def run_validation(
     runtime.append(f"Manual position: {manual_position_name or '-'}")
     runtime.append("Prompt mode: LangChain few-shot")
 
+    # ---------------------------------------------------------------------
+    # CV input
+    # ---------------------------------------------------------------------
     cv_text = load_document(cv_file)
     if len(cv_text) < 100:
         raise gr.Error("Z CV sa podarilo vytiahnut velmi malo textu. Skus iny format, idealne PDF/DOCX.")
+
     runtime.append(f"CV text: {len(cv_text):,} znakov")
 
-    job_requirement_schema_text, prompt_schema_source = load_job_requirement_schema_text(job_schema_xlsx_path or DEFAULT_JOB_SCHEMA_XLSX_PATH)
+    # ---------------------------------------------------------------------
+    # Prompt schema
+    # ---------------------------------------------------------------------
+    effective_schema_xlsx_path = job_schema_xlsx_path or DEFAULT_JOB_SCHEMA_XLSX_PATH
+
+    job_requirement_schema_text, prompt_schema_source = load_job_requirement_schema_text(effective_schema_xlsx_path)
     runtime.append(f"Prompt schema source: {prompt_schema_source}")
 
+    # ---------------------------------------------------------------------
+    # LLM load
+    # ---------------------------------------------------------------------
     _, _, model_info = load_llm(model_id, load_mode, fallback_model_id)
     runtime.append(model_info)
+    job_text = ""
+    job_data = {}
 
-    if manual_position_name and manual_position_name.strip():
+    manual_position_name_clean = (manual_position_name or "").strip()
+    job_url_clean = (job_url or "").strip()
+    job_text_manual_clean = job_text_manual or ""
+
+    if manual_position_name_clean:
+        job_text = (
+                        f"Manual position selected from schema XLSX: {manual_position_name_clean}\n"
+                        f"Schema XLSX path: {effective_schema_xlsx_path}"
+                    )
+
         job_data = load_manual_job_requirements_from_excel(
-                                                            position_query=manual_position_name,
-                                                            schema_xlsx_path=job_schema_xlsx_path or DEFAULT_JOB_SCHEMA_XLSX_PATH,
+                                                            position_query=manual_position_name_clean,
+                                                            schema_xlsx_path=effective_schema_xlsx_path,
                                                             max_requirements=max_requirements,
                                                             model_id=model_id,
                                                             load_mode=load_mode,
                                                             fallback_model_id=fallback_model_id,
                                                             aux_model_id=aux_model_id,
                                                             )
+
         runtime.append("Zdroj pozicie: manualny schema XLSX katalog")
+
     else:
-        job_text = ""
-        if job_text_manual and job_text_manual.strip():
-            job_text = "\n".join(normalize_space(x) for x in job_text_manual.splitlines() if normalize_space(x))
-            runtime.append("Inzerat: pouzity manualne vlozeny text")
-        elif job_url and job_url.strip():
-            job_text = scrape_url(job_url)
+        if job_text_manual_clean.strip():
+            job_text = "\n".join(
+                                    normalize_space(line)
+                                    for line in job_text_manual_clean.splitlines()
+                                    if normalize_space(line)
+                                )
+            runtime.append(f"Inzerat: pouzity manualne vlozeny text, {len(job_text):,} znakov")
+
+        elif job_url_clean:
+            job_text = scrape_url(job_url_clean)
             runtime.append(f"Inzerat: nacitany z URL, {len(job_text):,} znakov")
+
         else:
-            raise gr.Error("Zadaj URL inzeratu, vloz text inzeratu manualne, alebo vypln manualnu poziciu zo schema XLSX.")
+            raise gr.Error(
+                            "Zadaj URL inzeratu, vloz text inzeratu manualne, "
+                            "alebo vypln manualnu poziciu zo schema XLSX."
+                            )
 
         if len(job_text) < 100:
-            raise gr.Error("Z inzeratu sa podarilo ziskat velmi malo textu. Vloz text inzeratu manualne.")
+            raise gr.Error(
+                            "Z inzeratu sa podarilo ziskat velmi malo textu. "
+                            "Vloz text inzeratu manualne."
+                            )
 
         job_data = extract_job_requirements(
                                             job_text,
@@ -789,42 +834,57 @@ def run_validation(
                                             aux_model_id,
                                             max_requirements,
                                             )
+
+    # ---------------------------------------------------------------------
+    # Requirements fallback / validation
+    # ---------------------------------------------------------------------
     requirements = job_data.get("requirements", [])
+
     if not requirements:
         job_preview = (job_text or "").strip()
+        if manual_position_name_clean:
+            raise gr.Error(
+                            "Pre manualnu poziciu zo schema XLSX sa nenasli ziadne poziadavky. "
+                            "Skontroluj nazov pozicie alebo obsah schema XLSX suboru."
+                            )
 
         if len(job_preview) >= 100:
             requirements = [
                             {
-                            "id": "R1",
-                            "text": "General match against the provided job advertisement",
-                            "category": "other",
-                            "priority": "unknown",
-                            "weight": 1.0,
-                            "source": job_preview[:2000],
-                            }
+                                "id": "R1",
+                                "text": "General match against the provided job advertisement",
+                                "category": "other",
+                                "priority": "unknown",
+                                "weight": 1.0,
+                                "source": job_preview[:2000],
+                                }
                             ]
+
             job_data["requirements"] = requirements
             job_data["_source"] = "full_job_ad_general_fallback"
             job_data.setdefault("_meta", {})
+
             if isinstance(job_data["_meta"], dict):
-                job_data["_meta"].update({
-                    "llm_count": 0,
-                    "fallback_count": 0,
-                    "weak_llm": True,
-                    "merged_count": 1,
-                    "prompt_mode": "general_fallback",
-                })
+                job_data["_meta"].update(
+                                        {
+                                        "llm_count": 0,
+                                        "fallback_count": 0,
+                                        "weak_llm": True,
+                                        "merged_count": 1,
+                                        "prompt_mode": "general_fallback",
+                                        }
+                                        )
 
             print(
-                    "Warning: No structured requirements were extracted. "
-                    "Using full job advertisement as one general fallback requirement."
-                    )
+                "Warning: No structured requirements were extracted. "
+                "Using full job advertisement as one general fallback requirement."
+                )
         else:
             raise gr.Error(
                             "Inzerat je prazdny alebo prilis kratky. "
                             "Skontroluj, ci si vlozil spravny subor alebo cisty text inzeratu."
                             )
+
     runtime.append(f"Extrahovane poziadavky: {len(requirements)}")
     runtime.append(f"Zdroj poziadaviek: {job_data.get('_source', 'unknown')}")
 
@@ -836,31 +896,54 @@ def run_validation(
         runtime.append(f"Merged count: {meta.get('merged_count', 0)}")
         runtime.append(f"Prompt mode meta: {meta.get('prompt_mode', 'few_shot_langchain')}")
 
+    # ---------------------------------------------------------------------
+    # Candidate profile
+    # ---------------------------------------------------------------------
     candidate = {}
     if include_candidate_summary:
-        candidate = extract_candidate_summary(cv_text, model_id, load_mode, fallback_model_id)
+        candidate = extract_candidate_summary(cv_text,model_id,load_mode,fallback_model_id)
 
+    # ---------------------------------------------------------------------
+    # RAG index
+    # ---------------------------------------------------------------------
     chunks = chunk_text(cv_text, CHUNK_WORDS, CHUNK_OVERLAP)
     index, _ = build_faiss_index(chunks, embed_model_id)
     runtime.append(f"CV chunks: {len(chunks)}")
 
+    # ---------------------------------------------------------------------
+    # Evaluation
+    # ---------------------------------------------------------------------
     evals = []
+
     for req in requirements:
-        evidence = rag_search(req.get("text", ""), chunks, index, embed_model_id, int(top_k))
-        ev = evaluate_one_requirement(req, evidence, model_id, load_mode, fallback_model_id)
+        req_text = normalize_space(str(req.get("text", "") or ""))
+
+        if not req_text:
+            req_text = normalize_space(str(req.get("requirement", "") or ""))
+
+        if not req_text:
+            req_text = "General match against the provided job advertisement"
+            req["text"] = req_text
+
+        evidence = rag_search(req_text,chunks,index,embed_model_id,int(top_k))
+
+        ev = evaluate_one_requirement(req,evidence,model_id,load_mode,fallback_model_id)
         evals.append(ev)
+
+    overall = weighted_average(evals)
 
     final = {
                 "job": job_data,
                 "candidate_profile": candidate,
-                "overall_score": weighted_average(evals),
-                "verdict": verdict(weighted_average(evals)),
+                "overall_score": overall,
+                "verdict": verdict(overall),
                 "evaluations": evals,
                 "runtime": runtime,
             }
 
     md = render_markdown_report(job_data, candidate, evals)
     js = json.dumps(final, ensure_ascii=False, indent=2)
+
     return md, js, "\n".join(runtime)
 
 def gradio_run_wrapper(*args):
