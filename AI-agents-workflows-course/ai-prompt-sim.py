@@ -8,7 +8,7 @@
 #!python -m pip install --upgrade hf_xet nncf
 
 # 1. Imports
-import os, platform, traceback, torch, transformers, re, requests, time, json, hashlib, mlflow
+import os, platform, traceback, torch, transformers, re, requests, time, json, hashlib, uuid, mlflow
 import sys, socket, atexit, subprocess, webbrowser
 
 from pathlib import Path
@@ -27,7 +27,7 @@ from optimum.intel import OVModelForCausalLM
 # 2. Environment configurations
 
 #MODEL_NAME = os.getenv("LOCAL_MODEL_NAME", "Qwen/Qwen3-0.6B")
-MODEL_NAME = os.getenv("LOCAL_MODEL_NAME", "Qwen/Qwen3-4B-Thinking-2507")
+MODEL_NAME = os.getenv("LOCAL_MODEL_NAME", "Qwen/Qwen3-4B-Instruct-2507")
 
 HF_TOKEN = os.getenv("HF_TOKEN") or None
 
@@ -42,7 +42,7 @@ MAX_NEW_TOKENS = int(os.getenv("MAX_NEW_TOKENS", "320"))
 TEMPERATURE = float(os.getenv("TEMPERATURE", "0.7"))
 TOP_P = float(os.getenv("TOP_P", "0.9"))
 
-OFFLINE_MODE = os.getenv("LOCAL_FILES_ONLY", "1").strip().lower() in {"1", "true", "yes", "y"} # for first run set it to 0, to download seledcted model from HF
+OFFLINE_MODE = os.getenv("LOCAL_FILES_ONLY", "0").strip().lower() in {"1", "true", "yes", "y"} # for first run set it to 0, to download seledcted model from HF
 FORCE_HF_FALLBACK = os.getenv("FORCE_HF_FALLBACK", "0").strip().lower() in {"1", "true", "yes", "y"}
 
 cache_path = Path(HF_CACHE_DIR).expanduser().resolve()
@@ -150,24 +150,42 @@ def stop_mlflow_ui():
 
 atexit.register(stop_mlflow_ui)
 
-def setup_mlflow() -> None:
+def setup_mlflow() -> bool:
+    try:
+        MLFLOW_ROOT_DIR.mkdir(parents=True, exist_ok=True)
+        MLFLOW_ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
 
-    tracking_uri = os.getenv("MLFLOW_TRACKING_URI")
-    if not tracking_uri:
-        tracking_uri = f"sqlite:///{MLFLOW_DB_PATH.as_posix()}"
+        tracking_uri = os.getenv("MLFLOW_TRACKING_URI", "").strip()
+        if not tracking_uri:
+            tracking_uri = f"sqlite:///{MLFLOW_DB_PATH.as_posix()}"
 
-    mlflow.set_tracking_uri(tracking_uri)
-    existing_experiment = mlflow.get_experiment_by_name(MLFLOW_EXPERIMENT_NAME)
+        mlflow.set_tracking_uri(tracking_uri)
 
-    if existing_experiment is None:
-        mlflow.create_experiment(
-                                name=MLFLOW_EXPERIMENT_NAME,
-                                artifact_location=MLFLOW_ARTIFACTS_DIR.as_uri(),
-                                )
-    mlflow.set_experiment(MLFLOW_EXPERIMENT_NAME)
+        existing_experiment = mlflow.get_experiment_by_name(MLFLOW_EXPERIMENT_NAME)
 
-setup_mlflow()
-start_mlflow_ui(open_browser=OPEN_MLFLOW_UI_BROWSER)
+        if existing_experiment is None:
+            mlflow.create_experiment(
+                                    name=MLFLOW_EXPERIMENT_NAME,
+                                    artifact_location=MLFLOW_ARTIFACTS_DIR.as_uri(),
+                                    )
+
+        mlflow.set_experiment(MLFLOW_EXPERIMENT_NAME)
+
+        print("MLflow tracking initialized.")
+        print(f"MLflow experiment: {MLFLOW_EXPERIMENT_NAME}")
+        print(f"MLflow tracking URI: {tracking_uri}")
+        print(f"MLflow artifacts: {MLFLOW_ARTIFACTS_DIR}")
+
+        return True
+
+    except Exception as exc:
+        print("MLflow initialization failed. Experiment tracking is disabled.")
+        print(f"Reason: {type(exc).__name__}: {exc}")
+        return False
+
+MLFLOW_READY = setup_mlflow()
+if MLFLOW_READY:
+    start_mlflow_ui(open_browser=OPEN_MLFLOW_UI_BROWSER)
 
 print("Runtime:", platform.platform())
 print("Python backend libraries:")
@@ -368,11 +386,245 @@ def count_tokens(text: str) -> int:
     except Exception:
         return 0
 
+def short_text(value: Any, max_len: int = 500) -> str:
+    """Shorten long text values before saving them as MLflow params/tags."""
+    value = "" if value is None else str(value)
+    value = value.replace("\x00", "")
+    if len(value) <= max_len:
+        return value
+    return value[:max_len] + f"... [truncated, original_length={len(value)}]"
+
+
+def sha256_text(value: str, length: int = 16) -> str:
+    value = str(value or "")
+    return hashlib.sha256(value.encode("utf-8", errors="ignore")).hexdigest()[:length]
+
+
+def safe_log_params(params: dict, max_len: int = 500) -> None:
+    """Log MLflow params defensively. Large values are shortened."""
+    safe_params = {}
+    for key, value in params.items():
+        if value is None:
+            safe_params[key] = ""
+        elif isinstance(value, (str, int, float, bool)):
+            safe_params[key] = short_text(value, max_len=max_len)
+        else:
+            safe_params[key] = short_text(json.dumps(value, ensure_ascii=False, default=str), max_len=max_len)
+
+    if safe_params:
+        mlflow.log_params(safe_params)
+
+
+def safe_log_metrics(metrics: dict) -> None:
+    """Log only numeric, finite MLflow metrics."""
+    safe_metrics = {}
+    for key, value in metrics.items():
+        try:
+            if value is None:
+                continue
+            value = float(value)
+            if value != value or value in {float("inf"), float("-inf")}:
+                continue
+            safe_metrics[key] = value
+        except Exception:
+            continue
+
+    if safe_metrics:
+        mlflow.log_metrics(safe_metrics)
+
+
+def safe_log_text(text_value: str, artifact_file: str) -> None:
+    """Log text artifact without breaking the user flow if MLflow fails."""
+    try:
+        mlflow.log_text(str(text_value or ""), artifact_file)
+    except Exception as exc:
+        print(f"MLflow text artifact failed for {artifact_file}: {type(exc).__name__}: {exc}")
+
+
+def text_profile(text_value: str, prefix: str) -> dict:
+    """Return numeric profile for prompt/output text."""
+    text_value = str(text_value or "")
+    words = re.findall(r"\S+", text_value)
+    lines = text_value.splitlines()
+
+    return {
+        f"{prefix}_chars": len(text_value),
+        f"{prefix}_words": len(words),
+        f"{prefix}_lines": len(lines),
+        f"{prefix}_tokens": count_tokens(text_value),
+    }
+
+
+def collect_runtime_metadata() -> dict:
+    """Collect runtime/library/hardware metadata for MLflow artifacts."""
+    cuda_devices = []
+
+    try:
+        cuda_available = bool(torch.cuda.is_available())
+        cuda_device_count = int(torch.cuda.device_count()) if cuda_available else 0
+
+        for index in range(cuda_device_count):
+            props = torch.cuda.get_device_properties(index)
+            cuda_devices.append(
+                {
+                    "index": index,
+                    "name": props.name,
+                    "total_memory_gb": round(props.total_memory / (1024 ** 3), 3),
+                    "major": props.major,
+                    "minor": props.minor,
+                    "multi_processor_count": props.multi_processor_count,
+                }
+            )
+    except Exception as exc:
+        cuda_available = False
+        cuda_device_count = 0
+        cuda_devices.append({"error": f"{type(exc).__name__}: {exc}"})
+
+    try:
+        openvino_devices = ov.Core().available_devices
+    except Exception as exc:
+        openvino_devices = [f"OpenVINO device check failed: {type(exc).__name__}: {exc}"]
+
+    selected_env = {
+        key: os.getenv(key)
+        for key in [
+                    "LOCAL_MODEL_NAME",
+                    "OPENVINO_DEVICE",
+                    "LOCAL_FILES_ONLY",
+                    "FORCE_HF_FALLBACK",
+                    "MAX_INPUT_TOKENS",
+                    "MAX_NEW_TOKENS",
+                    "TEMPERATURE",
+                    "TOP_P",
+                    "HF_CACHE_DIR",
+                    "OV_MODELS_DIR",
+                    "OV_CACHE_DIR",
+                    "MLFLOW_EXPERIMENT_NAME",
+                    "MLFLOW_TRACKING_URI",
+                    "START_MLFLOW_UI",
+                    "GRADIO_SERVER_NAME",
+                    "GRADIO_SERVER_PORT",
+                    ]
+        if os.getenv(key) is not None
+                    }
+
+    return {
+            "timestamp_local": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "platform": platform.platform(),
+            "python_version": sys.version,
+            "library_versions": {
+                                "torch": getattr(torch, "__version__", "unknown"),
+                                "transformers": getattr(transformers, "__version__", "unknown"),
+                                "openvino": getattr(ov, "__version__", "unknown"),
+                                "gradio": getattr(gr, "__version__", "unknown"),
+                                "mlflow": getattr(mlflow, "__version__", "unknown"),
+                                },
+            "cuda": {
+                    "available": cuda_available,
+                    "torch_cuda_version": getattr(torch.version, "cuda", None),
+                    "device_count": cuda_device_count,
+                    "devices": cuda_devices,
+                    },
+        "openvino": {
+                    "selected_device": OPENVINO_DEVICE,
+                    "available_devices": openvino_devices,
+                    "ov_config": OV_CONFIG,
+                    },
+        "paths": {
+                    "script_dir": str(SCRIPT_DIR),
+                    "hf_cache": str(cache_path),
+                    "ov_model_path": str(ov_model_path),
+                    "ov_cache": str(ov_cache),
+                    "mlflow_root_dir": str(MLFLOW_ROOT_DIR),
+                    "mlflow_db_path": str(MLFLOW_DB_PATH),
+                    "mlflow_artifacts_dir": str(MLFLOW_ARTIFACTS_DIR),
+                    },
+        "selected_environment": selected_env,
+            }
+
+
+def log_prompt_error_to_mlflow(
+                                system_prompt: str,
+                                user_prompt: str,
+                                topic: str,
+                                final_prompt: str,
+                                few_shot_enabled: bool,
+                                few_shot_examples: str,
+                                web_scraping_enabled: bool,
+                                web_urls: str,
+                                max_new_tokens: int,
+                                temperature: float,
+                                top_p: float,
+                                error: Exception,
+                                traceback_text: str,
+                                ) -> str:
+    """Log failed generation attempts to MLflow as failed runs."""
+    request_id = str(uuid.uuid4())
+    prompt_hash = sha256_text(final_prompt, length=16)
+
+    with mlflow.start_run(run_name=f"failed_prompt_run_{prompt_hash}") as run:
+        mlflow.set_tags(
+            {
+                "app": "local-openvino-prompt-simulator",
+                "task_type": "prompt_generation",
+                "run_status": "failed",
+                "backend": str(BACKEND),
+                "model_name": short_text(MODEL_NAME, 200),
+                "request_id": request_id,
+                "error_type": type(error).__name__,
+            }
+        )
+
+        safe_log_params(
+                        {
+                        "model_name": MODEL_NAME,
+                        "backend": BACKEND,
+                        "openvino_device": OPENVINO_DEVICE if BACKEND == "openvino" else "hf_fallback",
+                        "max_input_tokens": MAX_INPUT_TOKENS,
+                        "max_new_tokens": int(max_new_tokens),
+                        "temperature": float(temperature),
+                        "top_p": float(top_p),
+                        "few_shot_enabled": bool(few_shot_enabled),
+                        "web_scraping_enabled": bool(web_scraping_enabled),
+                        "prompt_hash": prompt_hash,
+                        "request_id": request_id,
+                        "error_type": type(error).__name__,
+                        "error_message": str(error),
+                        }
+                        )
+
+        metrics = {}
+        metrics.update(text_profile(system_prompt, "system_prompt"))
+        metrics.update(text_profile(user_prompt, "user_prompt_template"))
+        metrics.update(text_profile(topic, "topic"))
+        metrics.update(text_profile(final_prompt, "final_prompt"))
+        safe_log_metrics(metrics)
+
+        safe_log_text(system_prompt, "prompts/system_prompt.txt")
+        safe_log_text(user_prompt, "prompts/user_prompt_template.txt")
+        safe_log_text(topic, "prompts/topic.txt")
+        safe_log_text(final_prompt, "prompts/final_prompt.txt")
+        safe_log_text(few_shot_examples, "prompts/few_shot_examples.txt")
+        safe_log_text(web_urls, "sources/web_urls.txt")
+        safe_log_text(str(error), "errors/error_message.txt")
+        safe_log_text(traceback_text, "errors/traceback.txt")
+        safe_log_text(
+                        json.dumps(collect_runtime_metadata(), indent=2, ensure_ascii=False, default=str),
+                        "metadata/runtime_metadata.json",
+                    )
+
+        return run.info.run_id
+
+
 def log_prompt_run_to_mlflow(
                             system_prompt: str,
                             user_prompt: str,
                             topic: str,
+                            base_prompt: str,
+                            web_context: str,
+                            prompt_after_web: str,
                             final_prompt: str,
+                            chat_input: str,
                             output: str,
                             few_shot_enabled: bool,
                             few_shot_examples: str,
@@ -383,78 +635,173 @@ def log_prompt_run_to_mlflow(
                             top_p: float,
                             generation_time_sec: float,
                             ) -> str:
+    request_id = str(uuid.uuid4())
+
+    system_hash = sha256_text(system_prompt)
+    user_prompt_hash = sha256_text(user_prompt)
+    topic_hash = sha256_text(topic)
+    base_prompt_hash = sha256_text(base_prompt)
+    web_context_hash = sha256_text(web_context)
+    final_prompt_hash = sha256_text(final_prompt)
+    chat_input_hash = sha256_text(chat_input)
+    output_hash = sha256_text(output)
+
     input_tokens = count_tokens(final_prompt)
+    chat_input_tokens = count_tokens(chat_input)
     output_tokens = count_tokens(output)
+    total_tokens = chat_input_tokens + output_tokens
 
-    prompt_hash = hashlib.sha256(final_prompt.encode("utf-8", errors="ignore")).hexdigest()[:12]
+    output_tokens_per_sec = output_tokens / generation_time_sec if generation_time_sec > 0 else 0
+    input_context_utilization_pct = (chat_input_tokens / MAX_INPUT_TOKENS) * 100 if MAX_INPUT_TOKENS else 0
 
-    run_name = f"prompt_run_{prompt_hash}"
+    urls = extract_urls_from_text(web_urls)
+    url_count = len(urls)
+    failed_scrape_count = str(web_context or "").count("Status: Failed to scrape")
+
+    run_name = f"prompt_run_{final_prompt_hash}"
 
     with mlflow.start_run(run_name=run_name) as run:
-        mlflow.log_params(
-                            {
-                                "model_name": MODEL_NAME,
-                                "backend": BACKEND,
-                                "openvino_device": OPENVINO_DEVICE if BACKEND == "openvino" else "hf_fallback",
-                                "max_input_tokens": MAX_INPUT_TOKENS,
-                                "max_new_tokens": int(max_new_tokens),
-                                "temperature": float(temperature),
-                                "top_p": float(top_p),
-                                "few_shot_enabled": bool(few_shot_enabled),
-                                "web_scraping_enabled": bool(web_scraping_enabled),
-                                "prompt_hash": prompt_hash,
-                            }
-                        )
-
-        mlflow.log_metrics(
-                            {
-                                "input_tokens": input_tokens,
-                                "output_tokens": output_tokens,
-                                "total_tokens": input_tokens + output_tokens,
-                                "generation_time_sec": float(generation_time_sec),
-                            }
-                            )
-
         mlflow.set_tags(
                         {
                             "app": "local-openvino-prompt-simulator",
                             "task_type": "prompt_generation",
-                        }
+                            "run_status": "success",
+                            "backend": str(BACKEND),
+                            "model_name": short_text(MODEL_NAME, 200),
+                            "request_id": request_id,
+                            "prompt_hash": final_prompt_hash,
+                            "output_hash": output_hash,
+                            "few_shot_enabled": str(bool(few_shot_enabled)),
+                            "web_scraping_enabled": str(bool(web_scraping_enabled)),
+                            }
+                            )
+
+        safe_log_params(
+                        {
+                            "request_id": request_id,
+                            "model_name": MODEL_NAME,
+                            "backend": BACKEND,
+                            "openvino_device": OPENVINO_DEVICE if BACKEND == "openvino" else "hf_fallback",
+                            "openvino_available_devices": ",".join(map(str, collect_runtime_metadata()["openvino"]["available_devices"])),
+                            "force_hf_fallback": FORCE_HF_FALLBACK,
+                            "offline_mode": OFFLINE_MODE,
+                            "max_input_tokens": MAX_INPUT_TOKENS,
+                            "max_new_tokens": int(max_new_tokens),
+                            "temperature": float(temperature),
+                            "top_p": float(top_p),
+                            "do_sample": float(temperature) > 0,
+                            "few_shot_enabled": bool(few_shot_enabled),
+                            "web_scraping_enabled": bool(web_scraping_enabled),
+                            "url_count": url_count,
+                            "failed_scrape_count": failed_scrape_count,
+                            "system_prompt_hash": system_hash,
+                            "user_prompt_template_hash": user_prompt_hash,
+                            "topic_hash": topic_hash,
+                            "base_prompt_hash": base_prompt_hash,
+                            "web_context_hash": web_context_hash,
+                            "final_prompt_hash": final_prompt_hash,
+                            "chat_input_hash": chat_input_hash,
+                            "output_hash": output_hash,
+                            "topic_preview": short_text(topic, 250),
+                            "system_prompt_preview": short_text(system_prompt, 250),
+                            "user_prompt_preview": short_text(user_prompt, 250),
+                            "output_preview": short_text(output, 300),
+                            "hf_cache": str(cache_path),
+                            "ov_model_path": str(ov_model_path),
+                            "ov_cache": str(ov_cache),
+                            "mlflow_experiment": MLFLOW_EXPERIMENT_NAME,
+                        },max_len=500,
                         )
 
-        mlflow.log_text(system_prompt or "", "prompts/system_prompt.txt")
-        mlflow.log_text(user_prompt or "", "prompts/user_prompt_template.txt")
-        mlflow.log_text(topic or "", "prompts/topic.txt")
-        mlflow.log_text(final_prompt or "", "prompts/final_prompt.txt")
-        mlflow.log_text(output or "", "outputs/model_output.txt")
-
-        if few_shot_examples:mlflow.log_text(few_shot_examples, "prompts/few_shot_examples.txt")
-
-        if web_urls:mlflow.log_text(web_urls, "sources/web_urls.txt")
-
-        metadata = {
-                    "model_name": MODEL_NAME,
-                    "backend": BACKEND,
-                    "openvino_device": OPENVINO_DEVICE,
-                    "max_input_tokens": MAX_INPUT_TOKENS,
-                    "max_new_tokens": int(max_new_tokens),
-                    "temperature": float(temperature),
-                    "top_p": float(top_p),
-                    "few_shot_enabled": bool(few_shot_enabled),
-                    "web_scraping_enabled": bool(web_scraping_enabled),
-                    "input_tokens": input_tokens,
-                    "output_tokens": output_tokens,
+        metrics = {
                     "generation_time_sec": float(generation_time_sec),
+                    "input_tokens": input_tokens,
+                    "chat_input_tokens": chat_input_tokens,
+                    "output_tokens": output_tokens,
+                    "total_tokens": total_tokens,
+                    "output_tokens_per_sec": output_tokens_per_sec,
+                    "input_context_utilization_pct": input_context_utilization_pct,
+                    "url_count": url_count,
+                    "failed_scrape_count": failed_scrape_count,
+                    "few_shot_example_chars": len(str(few_shot_examples or "")),
                     }
 
-        mlflow.log_text(
-                            json.dumps(metadata, indent=2, ensure_ascii=False),
-                            "metadata/run_metadata.json",
-                        )
+        metrics.update(text_profile(system_prompt, "system_prompt"))
+        metrics.update(text_profile(user_prompt, "user_prompt_template"))
+        metrics.update(text_profile(topic, "topic"))
+        metrics.update(text_profile(base_prompt, "base_prompt"))
+        metrics.update(text_profile(web_context, "web_context"))
+        metrics.update(text_profile(prompt_after_web, "prompt_after_web"))
+        metrics.update(text_profile(final_prompt, "final_prompt"))
+        metrics.update(text_profile(chat_input, "chat_input"))
+        metrics.update(text_profile(output, "output"))
+
+        safe_log_metrics(metrics)
+
+        # Full prompt/output artifacts.
+        safe_log_text(system_prompt, "prompts/system_prompt.txt")
+        safe_log_text(user_prompt, "prompts/user_prompt_template.txt")
+        safe_log_text(topic, "prompts/topic.txt")
+        safe_log_text(base_prompt, "prompts/base_prompt.txt")
+        safe_log_text(prompt_after_web, "prompts/prompt_after_web.txt")
+        safe_log_text(final_prompt, "prompts/final_prompt.txt")
+        safe_log_text(chat_input, "prompts/chat_input_actual_model_input.txt")
+        safe_log_text(output, "outputs/model_output.txt")
+
+        if few_shot_examples:
+            safe_log_text(few_shot_examples, "prompts/few_shot_examples.txt")
+
+        if web_urls:
+            safe_log_text(web_urls, "sources/web_urls.txt")
+
+        if web_context:
+            safe_log_text(web_context, "sources/web_context.txt")
+
+        generation_config = {
+                            "max_input_tokens": MAX_INPUT_TOKENS,
+                            "max_new_tokens": int(max_new_tokens),
+                            "temperature": float(temperature),
+                            "top_p": float(top_p),
+                            "do_sample": float(temperature) > 0,
+                            "pad_token_id": tokenizer.pad_token_id,
+                            "eos_token_id": tokenizer.eos_token_id,
+                            }
+
+        run_metadata = {
+                        "request_id": request_id,
+                        "mlflow_run_id": run.info.run_id,
+                        "model_name": MODEL_NAME,
+                        "backend": BACKEND,
+                        "openvino_device": OPENVINO_DEVICE,
+                        "generation_config": generation_config,
+                        "flags": {
+                                    "few_shot_enabled": bool(few_shot_enabled),
+                                    "web_scraping_enabled": bool(web_scraping_enabled),
+                                    "offline_mode": bool(OFFLINE_MODE),
+                                    "force_hf_fallback": bool(FORCE_HF_FALLBACK),
+                                },
+                        "hashes": {
+                                    "system_prompt": system_hash,
+                                    "user_prompt_template": user_prompt_hash,
+                                    "topic": topic_hash,
+                                    "base_prompt": base_prompt_hash,
+                                    "web_context": web_context_hash,
+                                    "final_prompt": final_prompt_hash,
+                                    "chat_input": chat_input_hash,
+                                    "output": output_hash,
+                                },
+                        "metrics": metrics,
+                        }
+
+        safe_log_text(json.dumps(run_metadata, indent=2, ensure_ascii=False, default=str),"metadata/run_metadata.json")
+        safe_log_text(json.dumps(generation_config, indent=2, ensure_ascii=False, default=str),"metadata/generation_config.json")
+        safe_log_text(json.dumps(collect_runtime_metadata(), indent=2, ensure_ascii=False, default=str),"metadata/runtime_metadata.json")
 
         return run.info.run_id
 
+
 # 5. Web Scrapper BeatifulSoup 4 loader
+
 
 def extract_urls_from_text(urls_text: str) -> list[str]:
     urls_text = str(urls_text or "").strip()
@@ -909,11 +1256,25 @@ def generate_from_ui(
                     temperature: float,
                     top_p: float,
                     ) -> str:
-    final_prompt = prepare_user_prompt(user_prompt, topic)
+    base_prompt = prepare_user_prompt(user_prompt, topic)
 
-    final_prompt = apply_web_context_to_prompt(final_prompt=final_prompt,web_scraping_enabled=web_scraping_enabled,urls_text=web_urls)
+    web_context = ""
+    prompt_after_web = base_prompt
 
-    final_prompt = apply_few_shot_prompting(final_prompt=final_prompt,few_shot_enabled=few_shot_enabled,few_shot_examples=few_shot_examples)
+    if web_scraping_enabled:
+        web_context = scrape_urls_to_context(web_urls)
+        if web_context.strip():
+            prompt_after_web = f"""Use the following scraped web context as supporting source material.
+Answer based on the web context when it is relevant. If the context is incomplete, say so clearly.
+
+<web_context>
+{web_context}
+</web_context>
+
+User task:
+{base_prompt}"""
+
+    final_prompt = apply_few_shot_prompting(final_prompt=prompt_after_web,few_shot_enabled=few_shot_enabled,few_shot_examples=few_shot_examples)
 
     if not final_prompt.strip():
         return "Add user prompt or main topic."
@@ -921,16 +1282,28 @@ def generate_from_ui(
     try:
         started_at = time.perf_counter()
 
-        output = run_local_llm(final_prompt,system_prompt=system_prompt,max_new_tokens=int(max_new_tokens),temperature=float(temperature),top_p=float(top_p))
+        output = run_local_llm(
+                                final_prompt,
+                                system_prompt=system_prompt,
+                                max_new_tokens=int(max_new_tokens),
+                                temperature=float(temperature),
+                                top_p=float(top_p),
+                                )
 
         generation_time_sec = time.perf_counter() - started_at
 
-        if mlflow_enabled:
+        if mlflow_enabled and MLFLOW_READY:
+            chat_input = build_chat_input(final_prompt, system_prompt=system_prompt)
+
             run_id = log_prompt_run_to_mlflow(
                                                 system_prompt=system_prompt,
                                                 user_prompt=user_prompt,
                                                 topic=topic,
+                                                base_prompt=base_prompt,
+                                                web_context=web_context,
+                                                prompt_after_web=prompt_after_web,
                                                 final_prompt=final_prompt,
+                                                chat_input=chat_input,
                                                 output=output,
                                                 few_shot_enabled=few_shot_enabled,
                                                 few_shot_examples=few_shot_examples,
@@ -940,14 +1313,60 @@ def generate_from_ui(
                                                 temperature=temperature,
                                                 top_p=top_p,
                                                 generation_time_sec=generation_time_sec,
-                                                )
+                                            )
 
-            return (f"{output}\n\n"f"---\n"f"MLflow run logged: {run_id}\n"f"Generation time: {generation_time_sec:.2f} sec")
+            return (
+                        f"{output}\n\n"
+                        f"---\n"
+                        f"MLflow run logged: {run_id}\n"
+                        f"Generation time: {generation_time_sec:.2f} sec\n"
+                        f"Input tokens: {count_tokens(chat_input)} | Output tokens: {count_tokens(output)}"
+                    )
+
+        if mlflow_enabled and not MLFLOW_READY:
+            return (
+                    f"{output}\n\n"
+                    f"---\n"
+                    f"MLflow logging was enabled, but MLflow is not ready. Output was not logged."
+                    )
 
         return output
 
     except Exception as exc:
+        trace = traceback.format_exc()
+
+        if mlflow_enabled and MLFLOW_READY:
+            try:
+                error_run_id = log_prompt_error_to_mlflow(
+                                                            system_prompt=system_prompt,
+                                                            user_prompt=user_prompt,
+                                                            topic=topic,
+                                                            final_prompt=final_prompt,
+                                                            few_shot_enabled=few_shot_enabled,
+                                                            few_shot_examples=few_shot_examples,
+                                                            web_scraping_enabled=web_scraping_enabled,
+                                                            web_urls=web_urls,
+                                                            max_new_tokens=max_new_tokens,
+                                                            temperature=temperature,
+                                                            top_p=top_p,
+                                                            error=exc,
+                                                            traceback_text=trace,
+                                                            )
+
+                return (
+                        f"Generation failed: {type(exc).__name__}: {exc}\n\n"
+                        f"---\n"
+                        f"MLflow failed run logged: {error_run_id}"
+                        )
+            except Exception as mlflow_exc:
+                return (
+                        f"Generation failed: {type(exc).__name__}: {exc}\n\n"
+                        f"Additionally, MLflow error logging failed: "
+                        f"{type(mlflow_exc).__name__}: {mlflow_exc}"
+                        )
+
         return f"Generation failed: {type(exc).__name__}: {exc}"
+
 
 def clear_output() -> str:
     return ""
@@ -1068,7 +1487,7 @@ with gr.Blocks(
                             """
                                 <p class="few-shot-note">
                                 Local MLflow UI can be found under URL:<br>
-                                <code>http://127.0.0.1:5000</code>.
+                                <code>http://127.0.0.1:5000</code> or the value configured by MLFLOW_UI_PORT.
                                 </p>
                             """
                             )
@@ -1138,6 +1557,7 @@ with gr.Blocks(
 
 demo.launch(
             server_name=os.getenv("GRADIO_SERVER_NAME", "127.0.0.1"),
+            server_port=int(os.getenv("GRADIO_SERVER_PORT", "7860")),
             share=False,
-            inbrowser=True,
+            inbrowser=os.getenv("GRADIO_INBROWSER", "1").strip().lower() in {"1", "true", "yes", "y"},
             )
