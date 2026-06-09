@@ -5,21 +5,26 @@ https://gitlab.com/nyx3ton-group/nyx3ton-project/-/blob/main/AI-agents-workflows
 
 ```
 
-- Architektura bezi na OpenVINO.
+- Architektura primarne bezi na OpenVINO (boal pridana detekcia pre CUDA).
 - Podporuje upravy MAX_INPUT_TOKENS, TOP_P a TEMPERATURE v Gradio UI
 - Podporuje Zero-shot, Few-Shot, User and System Prompt
 - Podporuje viacpolozkovy Web Scrapping cez BeautifulSoup (non-JavaScript Web URLs)
 - Architektura podporuje a je merana pomocou MLFlow
+- Poddporuje faiss-cpu ako primarny RAG
+- podpruje zapis do Markdown
 
 
 ```text
-Lokalne modely pre ktore bol skrpit testovany su:
+Lokalne modely pre ktore bol skript testovany su:
 
 Qwen/Qwen3-0.6B
 https://huggingface.co/Qwen/Qwen3-0.6B
 
 Qwen/Qwen3-4B-Instruct-2507
 https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507
+
+Sentence trasformer pre RAG:
+https://huggingface.co/sentence-transformers/all-MiniLM-L12-v2
 
 ```
 
