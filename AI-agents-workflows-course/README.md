@@ -4,7 +4,7 @@
 https://gitlab.com/nyx3ton-group/nyx3ton-project/-/blob/main/AI-agents-workflows-course/chapter-1-ai-workflows-openvino-gradio.ipynb
 
 ```
-
+- Upravene na beh v Docker-compose
 - Architektura primarne bezi na OpenVINO (boal pridana detekcia pre CUDA).
 - Podporuje upravy MAX_INPUT_TOKENS, TOP_P a TEMPERATURE v Gradio UI
 - Podporuje Zero-shot, Few-Shot, User and System Prompt
@@ -33,8 +33,25 @@ https://huggingface.co/sentence-transformers/all-MiniLM-L12-v2
 Povinne kniznice:
 
 ```text
+!python -m pip install --upgrade pip setuptools wheel
 !python -m pip install --upgrade torch --index-url https://download.pytorch.org/whl/cpu
-!python -m pip install --upgrade openvino optimum-intel transformers accelerate safetensors sentencepiece huggingface_hub requests python-dotenv gradio
+!python -m pip install --upgrade ipykernel jupyter
+!python -m pip install --upgrade mlflow
+!python -m pip install --upgrade openvino optimum-intel transformers accelerate safetensors sentencepiece huggingface_hub requests python-dotenv gradio bs4
+!python -m pip install --upgrade hf_xet nncf
+!python -m pip install --upgrade sentence-transformers faiss-cpu numpy python-docx PyMuPDF striprtf
+```
+Spustenie v dockeri:
+```text
+docker compose -f docker-compose.cpu.yml build --no-cache --progress=plain
+docker compose -f docker-compose.cpu.yml up --force-recreate
+```
+
+Premazanie v Dockeri
+```text
+docker compose -f docker-compose.cpu.yml down --remove-orphans
+docker rm -f ai-prompt-sim-rag-cpu 2>$null
+docker image rm ai-prompt-sim-rag:cpu 2>$null
 ```
 
 ## 1. Konfiguracia
