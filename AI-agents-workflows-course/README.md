@@ -1,7 +1,7 @@
 # AI prompt simulator 
 
 ```text
-https://gitlab.com/nyx3ton-group/nyx3ton-project/-/blob/main/AI-agents-workflows-course/chapter-1-ai-workflows-openvino-gradio.ipynb
+https://gitlab.com/nyx3ton-group/nyx3ton-project/-/blob/main/AI-agents-workflows-course/ai-prompt-sim.py
 
 ```
 - Upravene na beh v Docker-compose
