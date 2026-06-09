@@ -6,12 +6,15 @@
 #!python -m pip install --upgrade mlflow
 #!python -m pip install --upgrade openvino optimum-intel transformers accelerate safetensors sentencepiece huggingface_hub requests python-dotenv gradio bs4
 #!python -m pip install --upgrade hf_xet nncf
+#!python -m pip install --upgrade sentence-transformers faiss-cpu numpy python-docx PyMuPDF striprtf
 
 # 1. Imports
 import os, platform, traceback, torch, transformers, re, requests, time, json, hashlib, uuid, mlflow
 import sys, socket, atexit, subprocess, webbrowser
 
 from pathlib import Path
+from importlib import import_module
+from datetime import datetime
 SCRIPT_DIR = Path(__file__).resolve().parent
 
 from typing import Optional, Any, cast
@@ -52,6 +55,17 @@ ov_cache = Path(OV_CACHE_DIR).expanduser().resolve()
 cache_path.mkdir(parents=True, exist_ok=True)
 ov_root.mkdir(parents=True, exist_ok=True)
 ov_cache.mkdir(parents=True, exist_ok=True)
+
+# RAG + Markdown output configuration
+RAG_UPLOAD_DIR = Path(os.getenv("RAG_UPLOAD_DIR", str(SCRIPT_DIR / "rag_uploads"))).expanduser().resolve()
+RAG_EMBED_MODEL_NAME = os.getenv("RAG_EMBED_MODEL_NAME", "sentence-transformers/all-MiniLM-L12-v2")
+RAG_EMBED_DEVICE = os.getenv("RAG_EMBED_DEVICE", "cpu")
+RAG_MAX_CONTEXT_CHARS = int(os.getenv("RAG_MAX_CONTEXT_CHARS", "12000"))
+
+MARKDOWN_OUTPUT_DIR = Path(os.getenv("MARKDOWN_OUTPUT_DIR", str(SCRIPT_DIR / "markdown_outputs"))).expanduser().resolve()
+
+RAG_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+MARKDOWN_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ["HF_HUB_CACHE"] = str(cache_path)
@@ -256,7 +270,6 @@ def load_openvino_model():
     print("OpenVINO model is loaded and ready.")
     return ov_model
 
-
 def load_huggingface_fallback_model():
     print("\nLoading Hugging Face Transformers fallback model.")
     print("This keeps the notebook usable if OpenVINO export/load fails, but OpenVINO is still the preferred path.")
@@ -387,21 +400,19 @@ def count_tokens(text: str) -> int:
         return 0
 
 def short_text(value: Any, max_len: int = 500) -> str:
-    """Shorten long text values before saving them as MLflow params/tags."""
+#Shorten long values before saving them as MLflow params/tags.
     value = "" if value is None else str(value)
     value = value.replace("\x00", "")
     if len(value) <= max_len:
         return value
     return value[:max_len] + f"... [truncated, original_length={len(value)}]"
 
-
 def sha256_text(value: str, length: int = 16) -> str:
     value = str(value or "")
     return hashlib.sha256(value.encode("utf-8", errors="ignore")).hexdigest()[:length]
 
-
 def safe_log_params(params: dict, max_len: int = 500) -> None:
-    """Log MLflow params defensively. Large values are shortened."""
+#Log MLflow params defensively. Large values are shortened.
     safe_params = {}
     for key, value in params.items():
         if value is None:
@@ -414,9 +425,8 @@ def safe_log_params(params: dict, max_len: int = 500) -> None:
     if safe_params:
         mlflow.log_params(safe_params)
 
-
 def safe_log_metrics(metrics: dict) -> None:
-    """Log only numeric, finite MLflow metrics."""
+#Log only numeric, finite MLflow metrics."""
     safe_metrics = {}
     for key, value in metrics.items():
         try:
@@ -432,31 +442,28 @@ def safe_log_metrics(metrics: dict) -> None:
     if safe_metrics:
         mlflow.log_metrics(safe_metrics)
 
-
 def safe_log_text(text_value: str, artifact_file: str) -> None:
-    """Log text artifact without breaking the user flow if MLflow fails."""
+#Log text artifact without breaking the user flow if MLflow fails."""
     try:
         mlflow.log_text(str(text_value or ""), artifact_file)
     except Exception as exc:
         print(f"MLflow text artifact failed for {artifact_file}: {type(exc).__name__}: {exc}")
 
-
 def text_profile(text_value: str, prefix: str) -> dict:
-    """Return numeric profile for prompt/output text."""
+#Return numeric profile for prompt/output text."""
     text_value = str(text_value or "")
     words = re.findall(r"\S+", text_value)
     lines = text_value.splitlines()
 
     return {
-        f"{prefix}_chars": len(text_value),
-        f"{prefix}_words": len(words),
-        f"{prefix}_lines": len(lines),
-        f"{prefix}_tokens": count_tokens(text_value),
-    }
-
+            f"{prefix}_chars": len(text_value),
+            f"{prefix}_words": len(words),
+            f"{prefix}_lines": len(lines),
+            f"{prefix}_tokens": count_tokens(text_value),
+            }
 
 def collect_runtime_metadata() -> dict:
-    """Collect runtime/library/hardware metadata for MLflow artifacts."""
+#Collect runtime/library/hardware metadata for MLflow artifacts."""
     cuda_devices = []
 
     try:
@@ -466,15 +473,15 @@ def collect_runtime_metadata() -> dict:
         for index in range(cuda_device_count):
             props = torch.cuda.get_device_properties(index)
             cuda_devices.append(
-                {
-                    "index": index,
-                    "name": props.name,
-                    "total_memory_gb": round(props.total_memory / (1024 ** 3), 3),
-                    "major": props.major,
-                    "minor": props.minor,
-                    "multi_processor_count": props.multi_processor_count,
-                }
-            )
+                                {
+                                "index": index,
+                                "name": props.name,
+                                "total_memory_gb": round(props.total_memory / (1024 ** 3), 3),
+                                "major": props.major,
+                                "minor": props.minor,
+                                "multi_processor_count": props.multi_processor_count,
+                                }
+                                )
     except Exception as exc:
         cuda_available = False
         cuda_device_count = 0
@@ -499,6 +506,11 @@ def collect_runtime_metadata() -> dict:
                     "HF_CACHE_DIR",
                     "OV_MODELS_DIR",
                     "OV_CACHE_DIR",
+                    "RAG_UPLOAD_DIR",
+                    "RAG_EMBED_MODEL_NAME",
+                    "RAG_EMBED_DEVICE",
+                    "RAG_MAX_CONTEXT_CHARS",
+                    "MARKDOWN_OUTPUT_DIR",
                     "MLFLOW_EXPERIMENT_NAME",
                     "MLFLOW_TRACKING_URI",
                     "START_MLFLOW_UI",
@@ -506,7 +518,7 @@ def collect_runtime_metadata() -> dict:
                     "GRADIO_SERVER_PORT",
                     ]
         if os.getenv(key) is not None
-                    }
+                }
 
     return {
             "timestamp_local": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -525,23 +537,30 @@ def collect_runtime_metadata() -> dict:
                     "device_count": cuda_device_count,
                     "devices": cuda_devices,
                     },
-        "openvino": {
-                    "selected_device": OPENVINO_DEVICE,
-                    "available_devices": openvino_devices,
-                    "ov_config": OV_CONFIG,
+            "openvino": {
+                        "selected_device": OPENVINO_DEVICE,
+                        "available_devices": openvino_devices,
+                        "ov_config": OV_CONFIG,
+                        },
+            "rag": {
+                    "embed_model": RAG_EMBED_MODEL_NAME,
+                    "embed_device": RAG_EMBED_DEVICE,
+                    "upload_dir": str(RAG_UPLOAD_DIR),
+                    "max_context_chars": RAG_MAX_CONTEXT_CHARS,
                     },
-        "paths": {
+            "paths": {
                     "script_dir": str(SCRIPT_DIR),
                     "hf_cache": str(cache_path),
                     "ov_model_path": str(ov_model_path),
                     "ov_cache": str(ov_cache),
+                    "rag_upload_dir": str(RAG_UPLOAD_DIR),
+                    "markdown_output_dir": str(MARKDOWN_OUTPUT_DIR),
                     "mlflow_root_dir": str(MLFLOW_ROOT_DIR),
                     "mlflow_db_path": str(MLFLOW_DB_PATH),
                     "mlflow_artifacts_dir": str(MLFLOW_ARTIFACTS_DIR),
                     },
-        "selected_environment": selected_env,
+            "selected_environment": selected_env,
             }
-
 
 def log_prompt_error_to_mlflow(
                                 system_prompt: str,
@@ -552,28 +571,32 @@ def log_prompt_error_to_mlflow(
                                 few_shot_examples: str,
                                 web_scraping_enabled: bool,
                                 web_urls: str,
+                                rag_enabled: bool,
+                                rag_metadata: dict,
+                                markdown_force_enabled: bool,
+                                markdown_save_enabled: bool,
                                 max_new_tokens: int,
                                 temperature: float,
                                 top_p: float,
                                 error: Exception,
                                 traceback_text: str,
-                                ) -> str:
-    """Log failed generation attempts to MLflow as failed runs."""
+                            ) -> str:
+#Log failed generation attempts to MLflow as failed runs.
     request_id = str(uuid.uuid4())
     prompt_hash = sha256_text(final_prompt, length=16)
 
     with mlflow.start_run(run_name=f"failed_prompt_run_{prompt_hash}") as run:
         mlflow.set_tags(
-            {
-                "app": "local-openvino-prompt-simulator",
-                "task_type": "prompt_generation",
-                "run_status": "failed",
-                "backend": str(BACKEND),
-                "model_name": short_text(MODEL_NAME, 200),
-                "request_id": request_id,
-                "error_type": type(error).__name__,
-            }
-        )
+                        {
+                            "app": "local-openvino-prompt-simulator",
+                            "task_type": "prompt_generation",
+                            "run_status": "failed",
+                            "backend": str(BACKEND),
+                            "model_name": short_text(MODEL_NAME, 200),
+                            "request_id": request_id,
+                            "error_type": type(error).__name__,
+                        }
+                        )
 
         safe_log_params(
                         {
@@ -586,6 +609,9 @@ def log_prompt_error_to_mlflow(
                         "top_p": float(top_p),
                         "few_shot_enabled": bool(few_shot_enabled),
                         "web_scraping_enabled": bool(web_scraping_enabled),
+                        "rag_enabled": bool(rag_enabled),
+                        "markdown_force_enabled": bool(markdown_force_enabled),
+                        "markdown_save_enabled": bool(markdown_save_enabled),
                         "prompt_hash": prompt_hash,
                         "request_id": request_id,
                         "error_type": type(error).__name__,
@@ -598,6 +624,11 @@ def log_prompt_error_to_mlflow(
         metrics.update(text_profile(user_prompt, "user_prompt_template"))
         metrics.update(text_profile(topic, "topic"))
         metrics.update(text_profile(final_prompt, "final_prompt"))
+
+        for key, value in (rag_metadata or {}).items():
+            if isinstance(value, (int, float, bool)):
+                metrics[f"rag_{key}"] = value
+
         safe_log_metrics(metrics)
 
         safe_log_text(system_prompt, "prompts/system_prompt.txt")
@@ -606,15 +637,12 @@ def log_prompt_error_to_mlflow(
         safe_log_text(final_prompt, "prompts/final_prompt.txt")
         safe_log_text(few_shot_examples, "prompts/few_shot_examples.txt")
         safe_log_text(web_urls, "sources/web_urls.txt")
+        safe_log_text(json.dumps(rag_metadata or {}, indent=2, ensure_ascii=False, default=str), "rag/rag_metadata.json")
         safe_log_text(str(error), "errors/error_message.txt")
         safe_log_text(traceback_text, "errors/traceback.txt")
-        safe_log_text(
-                        json.dumps(collect_runtime_metadata(), indent=2, ensure_ascii=False, default=str),
-                        "metadata/runtime_metadata.json",
-                    )
+        safe_log_text(json.dumps(collect_runtime_metadata(), indent=2, ensure_ascii=False, default=str),"metadata/runtime_metadata.json")
 
         return run.info.run_id
-
 
 def log_prompt_run_to_mlflow(
                             system_prompt: str,
@@ -623,6 +651,14 @@ def log_prompt_run_to_mlflow(
                             base_prompt: str,
                             web_context: str,
                             prompt_after_web: str,
+                            rag_enabled: bool,
+                            rag_context: str,
+                            rag_metadata: dict,
+                            prompt_after_rag: str,
+                            markdown_force_enabled: bool,
+                            markdown_save_enabled: bool,
+                            markdown_file_path: str,
+                            prompt_after_markdown_instruction: str,
                             final_prompt: str,
                             chat_input: str,
                             output: str,
@@ -637,14 +673,19 @@ def log_prompt_run_to_mlflow(
                             ) -> str:
     request_id = str(uuid.uuid4())
 
-    system_hash = sha256_text(system_prompt)
-    user_prompt_hash = sha256_text(user_prompt)
-    topic_hash = sha256_text(topic)
-    base_prompt_hash = sha256_text(base_prompt)
-    web_context_hash = sha256_text(web_context)
-    final_prompt_hash = sha256_text(final_prompt)
-    chat_input_hash = sha256_text(chat_input)
-    output_hash = sha256_text(output)
+    hashes = {
+                "system_prompt": sha256_text(system_prompt),
+                "user_prompt_template": sha256_text(user_prompt),
+                "topic": sha256_text(topic),
+                "base_prompt": sha256_text(base_prompt),
+                "web_context": sha256_text(web_context),
+                "rag_context": sha256_text(rag_context),
+                "prompt_after_rag": sha256_text(prompt_after_rag),
+                "prompt_after_markdown_instruction": sha256_text(prompt_after_markdown_instruction),
+                "final_prompt": sha256_text(final_prompt),
+                "chat_input": sha256_text(chat_input),
+                "output": sha256_text(output),
+                }
 
     input_tokens = count_tokens(final_prompt)
     chat_input_tokens = count_tokens(chat_input)
@@ -658,23 +699,28 @@ def log_prompt_run_to_mlflow(
     url_count = len(urls)
     failed_scrape_count = str(web_context or "").count("Status: Failed to scrape")
 
-    run_name = f"prompt_run_{final_prompt_hash}"
+    run_name = f"prompt_run_{hashes['final_prompt']}"
 
     with mlflow.start_run(run_name=run_name) as run:
         mlflow.set_tags(
                         {
-                            "app": "local-openvino-prompt-simulator",
-                            "task_type": "prompt_generation",
-                            "run_status": "success",
-                            "backend": str(BACKEND),
-                            "model_name": short_text(MODEL_NAME, 200),
-                            "request_id": request_id,
-                            "prompt_hash": final_prompt_hash,
-                            "output_hash": output_hash,
-                            "few_shot_enabled": str(bool(few_shot_enabled)),
-                            "web_scraping_enabled": str(bool(web_scraping_enabled)),
-                            }
-                            )
+                        "app": "local-openvino-prompt-simulator",
+                        "task_type": "prompt_generation",
+                        "run_status": "success",
+                        "backend": str(BACKEND),
+                        "model_name": short_text(MODEL_NAME, 200),
+                        "request_id": request_id,
+                        "prompt_hash": hashes["final_prompt"],
+                        "output_hash": hashes["output"],
+                        "few_shot_enabled": str(bool(few_shot_enabled)),
+                        "web_scraping_enabled": str(bool(web_scraping_enabled)),
+                        "rag_enabled": str(bool(rag_enabled)),
+                        "markdown_force_enabled": str(bool(markdown_force_enabled)),
+                        "markdown_save_enabled": str(bool(markdown_save_enabled)),
+                        }
+                        )
+
+        runtime_metadata = collect_runtime_metadata()
 
         safe_log_params(
                         {
@@ -682,7 +728,7 @@ def log_prompt_run_to_mlflow(
                             "model_name": MODEL_NAME,
                             "backend": BACKEND,
                             "openvino_device": OPENVINO_DEVICE if BACKEND == "openvino" else "hf_fallback",
-                            "openvino_available_devices": ",".join(map(str, collect_runtime_metadata()["openvino"]["available_devices"])),
+                            "openvino_available_devices": ",".join(map(str, runtime_metadata["openvino"]["available_devices"])),
                             "force_hf_fallback": FORCE_HF_FALLBACK,
                             "offline_mode": OFFLINE_MODE,
                             "max_input_tokens": MAX_INPUT_TOKENS,
@@ -692,16 +738,17 @@ def log_prompt_run_to_mlflow(
                             "do_sample": float(temperature) > 0,
                             "few_shot_enabled": bool(few_shot_enabled),
                             "web_scraping_enabled": bool(web_scraping_enabled),
+                            "rag_enabled": bool(rag_enabled),
+                            "rag_embed_model": RAG_EMBED_MODEL_NAME,
+                            "rag_embed_device": RAG_EMBED_DEVICE,
+                            "rag_top_k": (rag_metadata or {}).get("top_k", ""),
+                            "rag_chunk_size": (rag_metadata or {}).get("chunk_size", ""),
+                            "rag_chunk_overlap": (rag_metadata or {}).get("chunk_overlap", ""),
+                            "markdown_force_enabled": bool(markdown_force_enabled),
+                            "markdown_save_enabled": bool(markdown_save_enabled),
+                            "markdown_file_path": markdown_file_path,
                             "url_count": url_count,
                             "failed_scrape_count": failed_scrape_count,
-                            "system_prompt_hash": system_hash,
-                            "user_prompt_template_hash": user_prompt_hash,
-                            "topic_hash": topic_hash,
-                            "base_prompt_hash": base_prompt_hash,
-                            "web_context_hash": web_context_hash,
-                            "final_prompt_hash": final_prompt_hash,
-                            "chat_input_hash": chat_input_hash,
-                            "output_hash": output_hash,
                             "topic_preview": short_text(topic, 250),
                             "system_prompt_preview": short_text(system_prompt, 250),
                             "user_prompt_preview": short_text(user_prompt, 250),
@@ -709,9 +756,12 @@ def log_prompt_run_to_mlflow(
                             "hf_cache": str(cache_path),
                             "ov_model_path": str(ov_model_path),
                             "ov_cache": str(ov_cache),
+                            "rag_upload_dir": str(RAG_UPLOAD_DIR),
+                            "markdown_output_dir": str(MARKDOWN_OUTPUT_DIR),
                             "mlflow_experiment": MLFLOW_EXPERIMENT_NAME,
-                        },max_len=500,
-                        )
+                            **{f"{key}_hash": value for key, value in hashes.items()},
+                            },max_len=500,
+                            )
 
         metrics = {
                     "generation_time_sec": float(generation_time_sec),
@@ -724,7 +774,14 @@ def log_prompt_run_to_mlflow(
                     "url_count": url_count,
                     "failed_scrape_count": failed_scrape_count,
                     "few_shot_example_chars": len(str(few_shot_examples or "")),
+                    "rag_context_tokens": count_tokens(rag_context),
+                    "rag_context_chars": len(str(rag_context or "")),
+                    "markdown_saved": 1 if markdown_file_path else 0,
                     }
+
+        for key, value in (rag_metadata or {}).items():
+            if isinstance(value, (int, float, bool)):
+                metrics[f"rag_{key}"] = value
 
         metrics.update(text_profile(system_prompt, "system_prompt"))
         metrics.update(text_profile(user_prompt, "user_prompt_template"))
@@ -732,6 +789,9 @@ def log_prompt_run_to_mlflow(
         metrics.update(text_profile(base_prompt, "base_prompt"))
         metrics.update(text_profile(web_context, "web_context"))
         metrics.update(text_profile(prompt_after_web, "prompt_after_web"))
+        metrics.update(text_profile(rag_context, "rag_context"))
+        metrics.update(text_profile(prompt_after_rag, "prompt_after_rag"))
+        metrics.update(text_profile(prompt_after_markdown_instruction, "prompt_after_markdown_instruction"))
         metrics.update(text_profile(final_prompt, "final_prompt"))
         metrics.update(text_profile(chat_input, "chat_input"))
         metrics.update(text_profile(output, "output"))
@@ -744,6 +804,8 @@ def log_prompt_run_to_mlflow(
         safe_log_text(topic, "prompts/topic.txt")
         safe_log_text(base_prompt, "prompts/base_prompt.txt")
         safe_log_text(prompt_after_web, "prompts/prompt_after_web.txt")
+        safe_log_text(prompt_after_rag, "prompts/prompt_after_rag.txt")
+        safe_log_text(prompt_after_markdown_instruction, "prompts/prompt_after_markdown_instruction.txt")
         safe_log_text(final_prompt, "prompts/final_prompt.txt")
         safe_log_text(chat_input, "prompts/chat_input_actual_model_input.txt")
         safe_log_text(output, "outputs/model_output.txt")
@@ -757,6 +819,20 @@ def log_prompt_run_to_mlflow(
         if web_context:
             safe_log_text(web_context, "sources/web_context.txt")
 
+        if rag_context:
+            safe_log_text(rag_context, "rag/rag_context.txt")
+
+        safe_log_text(json.dumps(rag_metadata or {}, indent=2, ensure_ascii=False, default=str),"rag/rag_metadata.json")
+
+        if markdown_file_path:
+            safe_log_text(markdown_file_path, "markdown/markdown_file_path.txt")
+            try:
+                md_path = Path(markdown_file_path)
+                if md_path.exists():
+                    mlflow.log_artifact(str(md_path), artifact_path="markdown")
+            except Exception as exc:
+                print(f"MLflow markdown artifact failed: {type(exc).__name__}: {exc}")
+
         generation_config = {
                             "max_input_tokens": MAX_INPUT_TOKENS,
                             "max_new_tokens": int(max_new_tokens),
@@ -768,41 +844,33 @@ def log_prompt_run_to_mlflow(
                             }
 
         run_metadata = {
-                        "request_id": request_id,
-                        "mlflow_run_id": run.info.run_id,
-                        "model_name": MODEL_NAME,
-                        "backend": BACKEND,
-                        "openvino_device": OPENVINO_DEVICE,
-                        "generation_config": generation_config,
-                        "flags": {
+                            "request_id": request_id,
+                            "mlflow_run_id": run.info.run_id,
+                            "model_name": MODEL_NAME,
+                            "backend": BACKEND,
+                            "openvino_device": OPENVINO_DEVICE,
+                            "generation_config": generation_config,
+                            "flags": {
                                     "few_shot_enabled": bool(few_shot_enabled),
                                     "web_scraping_enabled": bool(web_scraping_enabled),
+                                    "rag_enabled": bool(rag_enabled),
+                                    "markdown_force_enabled": bool(markdown_force_enabled),
+                                    "markdown_save_enabled": bool(markdown_save_enabled),
                                     "offline_mode": bool(OFFLINE_MODE),
                                     "force_hf_fallback": bool(FORCE_HF_FALLBACK),
-                                },
-                        "hashes": {
-                                    "system_prompt": system_hash,
-                                    "user_prompt_template": user_prompt_hash,
-                                    "topic": topic_hash,
-                                    "base_prompt": base_prompt_hash,
-                                    "web_context": web_context_hash,
-                                    "final_prompt": final_prompt_hash,
-                                    "chat_input": chat_input_hash,
-                                    "output": output_hash,
-                                },
-                        "metrics": metrics,
-                        }
-
+                                    },
+                            "rag_metadata": rag_metadata or {},
+                            "markdown_file_path": markdown_file_path,
+                            "hashes": hashes,
+                            "metrics": metrics,
+                            }
         safe_log_text(json.dumps(run_metadata, indent=2, ensure_ascii=False, default=str),"metadata/run_metadata.json")
         safe_log_text(json.dumps(generation_config, indent=2, ensure_ascii=False, default=str),"metadata/generation_config.json")
-        safe_log_text(json.dumps(collect_runtime_metadata(), indent=2, ensure_ascii=False, default=str),"metadata/runtime_metadata.json")
+        safe_log_text(json.dumps(runtime_metadata, indent=2, ensure_ascii=False, default=str),"metadata/runtime_metadata.json")
 
         return run.info.run_id
 
-
 # 5. Web Scrapper BeatifulSoup 4 loader
-
-
 def extract_urls_from_text(urls_text: str) -> list[str]:
     urls_text = str(urls_text or "").strip()
 
@@ -842,8 +910,7 @@ def scrape_single_url(url: str, timeout: int = 15, max_chars: int = 6000) -> dic
                                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                                 "AppleWebKit/537.36 (KHTML, like Gecko) "
                                 "Chrome/120.0 Safari/537.36"
-                                )
-                }
+                                )}
 
     try:
         response = requests.get(url, headers=headers, timeout=timeout)
@@ -865,10 +932,10 @@ def scrape_single_url(url: str, timeout: int = 15, max_chars: int = 6000) -> dic
         cleaned_text = clean_scraped_text(raw_text, max_chars=max_chars)
 
         return {
-                    "url": url,
-                    "title": title,
-                    "text": cleaned_text,
-                    "error": None,
+                "url": url,
+                "title": title,
+                "text": cleaned_text,
+                "error": None,
                 }
 
     except Exception as e:
@@ -932,6 +999,373 @@ Answer based on the web context when it is relevant. If the context is incomplet
 
 User task:
 {final_prompt}"""
+
+# 5b. RAG document context loader and retriever
+
+_RAG_EMBEDDER = None
+
+def get_file_path_from_gradio(file_item: Any) -> Optional[Path]:
+#Normalize Gradio file object/string into Path."""
+    if file_item is None:
+        return None
+
+    if isinstance(file_item, (str, Path)):
+        return Path(file_item)
+
+    # Gradio may return tempfile-like objects with .name
+    name = getattr(file_item, "name", None)
+    if name:
+        return Path(name)
+
+    return None
+
+def load_text_file(path: Path) -> str:
+    for encoding in ("utf-8", "utf-8-sig", "cp1250", "latin-1"):
+        try:
+            return path.read_text(encoding=encoding)
+        except UnicodeDecodeError:
+            continue
+    return path.read_text(encoding="utf-8", errors="ignore")
+
+def load_pdf_for_rag(path: Path) -> str:
+    try:
+        fitz = import_module("pymupdf")
+    except ModuleNotFoundError:
+        fitz = import_module("fitz")
+
+    pages = []
+    with fitz.open(str(path)) as doc:
+        for index, page in enumerate(doc, start=1):
+            text = page.get_text("text") or ""
+            if text.strip():
+                pages.append(f"[Page {index}]\n{text}")
+    return "\n\n".join(pages)
+
+def load_docx_for_rag(path: Path) -> str:
+    try:
+        docx_module = import_module("docx")
+    except ModuleNotFoundError as exc:
+        raise RuntimeError("DOCX support is missing. Install it with: pip install python-docx") from exc
+
+    document = docx_module.Document(str(path))
+    paragraphs = [p.text for p in document.paragraphs if p.text and p.text.strip()]
+    return "\n".join(paragraphs)
+
+def load_rtf_for_rag(path: Path) -> str:
+    try:
+        striprtf_module = import_module("striprtf.striprtf")
+    except ModuleNotFoundError as exc:
+        raise RuntimeError("RTF support is missing. Install it with: pip install striprtf") from exc
+
+    raw = load_text_file(path)
+    return striprtf_module.rtf_to_text(raw)
+
+def load_rag_document(path: Path) -> str:
+#Load supported RAG documents into text.
+    suffix = path.suffix.lower()
+
+    if suffix in {".txt", ".md", ".markdown", ".py", ".json", ".yaml", ".yml", ".csv", ".log"}:
+        return load_text_file(path)
+
+    if suffix == ".pdf":
+        return load_pdf_for_rag(path)
+
+    if suffix == ".docx":
+        return load_docx_for_rag(path)
+
+    if suffix == ".rtf":
+        return load_rtf_for_rag(path)
+
+    # Last-resort text loader
+    return load_text_file(path)
+
+def chunk_text(text: str, chunk_size: int = 900, overlap: int = 150) -> list[str]:
+#Simple character-based chunking with overlap.
+    text = re.sub(r"\s+", " ", str(text or "")).strip()
+
+    if not text:
+        return []
+
+    chunk_size = max(int(chunk_size), 200)
+    overlap = max(min(int(overlap), chunk_size - 1), 0)
+
+    chunks = []
+    start = 0
+
+    while start < len(text):
+        end = min(start + chunk_size, len(text))
+        chunk = text[start:end].strip()
+        if chunk:
+            chunks.append(chunk)
+
+        if end >= len(text):
+            break
+
+        start = end - overlap
+
+    return chunks
+
+
+def get_rag_embedder():
+#Lazy-load CPU sentence-transformers embedder."""
+    global _RAG_EMBEDDER
+
+    if _RAG_EMBEDDER is not None:
+        return _RAG_EMBEDDER
+
+    try:
+        sentence_transformers_module = import_module("sentence_transformers")
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "RAG dependencies are missing. Install them with: "
+            "pip install sentence-transformers faiss-cpu numpy"
+        ) from exc
+
+    print(f"Loading RAG embedding model: {RAG_EMBED_MODEL_NAME} on {RAG_EMBED_DEVICE}")
+    _RAG_EMBEDDER = sentence_transformers_module.SentenceTransformer(
+        RAG_EMBED_MODEL_NAME,
+        device=RAG_EMBED_DEVICE,
+    )
+    return _RAG_EMBEDDER
+
+def build_rag_context(
+                        query: str,
+                        rag_files: Any,
+                        top_k: int = 4,
+                        chunk_size: int = 900,
+                        chunk_overlap: int = 150,
+                        max_context_chars: int = RAG_MAX_CONTEXT_CHARS,
+                    ) -> tuple[str, dict]:
+#Build a temporary in-memory FAISS index from uploaded files and retrieve relevant chunks.
+    metadata = {
+                "enabled": True,
+                "embed_model": RAG_EMBED_MODEL_NAME,
+                "embed_device": RAG_EMBED_DEVICE,
+                "top_k": int(top_k),
+                "chunk_size": int(chunk_size),
+                "chunk_overlap": int(chunk_overlap),
+                "source_file_count": 0,
+                "loaded_file_count": 0,
+                "failed_file_count": 0,
+                "chunk_count": 0,
+                "retrieved_chunk_count": 0,
+                "files": [],
+                "errors": [],
+                }
+
+    if rag_files is None:
+        return "", metadata
+
+    if not isinstance(rag_files, list):
+        rag_files = [rag_files]
+
+    docs = []
+
+    for file_item in rag_files:
+        path = get_file_path_from_gradio(file_item)
+        if not path:
+            continue
+
+        metadata["source_file_count"] += 1
+
+        try:
+            text = load_rag_document(path)
+            text = str(text or "").strip()
+
+            file_record = {
+                "file_name": path.name,
+                "suffix": path.suffix.lower(),
+                "chars": len(text),
+                "tokens_estimate": count_tokens(text[:MAX_INPUT_TOKENS * 4]),
+            }
+
+            if not text:
+                file_record["status"] = "empty"
+                metadata["files"].append(file_record)
+                continue
+
+            docs.append((path.name, text))
+            file_record["status"] = "loaded"
+            metadata["loaded_file_count"] += 1
+            metadata["files"].append(file_record)
+
+        except Exception as exc:
+            metadata["failed_file_count"] += 1
+            metadata["errors"].append(
+                {
+                    "file_name": path.name,
+                    "error_type": type(exc).__name__,
+                    "error": str(exc),
+                }
+            )
+
+    chunks = []
+    chunk_sources = []
+
+    for file_name, doc_text in docs:
+        for chunk in chunk_text(doc_text, chunk_size=chunk_size, overlap=chunk_overlap):
+            chunks.append(chunk)
+            chunk_sources.append(file_name)
+
+    metadata["chunk_count"] = len(chunks)
+
+    if not chunks:
+        return "", metadata
+
+    try:
+        faiss = import_module("faiss")
+        np = import_module("numpy")
+    except ModuleNotFoundError as exc:
+        raise RuntimeError("RAG dependency is missing. Install it with: pip install faiss-cpu numpy") from exc
+
+    embedder = get_rag_embedder()
+
+    embeddings = embedder.encode(
+                                chunks,
+                                normalize_embeddings=True,
+                                show_progress_bar=False,
+                                )
+    embeddings = np.asarray(embeddings, dtype="float32")
+
+    index = faiss.IndexFlatIP(embeddings.shape[1])
+    index.add(embeddings)
+
+    query_embedding = embedder.encode(
+                                        [str(query or "")],
+                                        normalize_embeddings=True,
+                                        show_progress_bar=False,
+                                    )
+    query_embedding = np.asarray(query_embedding, dtype="float32")
+
+    top_k = max(1, min(int(top_k), len(chunks)))
+    scores, ids = index.search(query_embedding, top_k)
+
+    selected_blocks = []
+
+    for rank, chunk_id in enumerate(ids[0], start=1):
+        if chunk_id < 0:
+            continue
+
+        score = float(scores[0][rank - 1])
+        source_name = chunk_sources[int(chunk_id)]
+        chunk_text_value = chunks[int(chunk_id)]
+
+        selected_blocks.append(
+            f"""[RAG chunk {rank}]
+Source: {source_name}
+Similarity score: {score:.4f}
+
+{chunk_text_value}"""
+        )
+
+    rag_context = "\n\n---\n\n".join(selected_blocks)
+
+    if len(rag_context) > int(max_context_chars):
+        rag_context = rag_context[: int(max_context_chars)] + "\n\n[RAG context truncated due to character limit.]"
+
+    metadata["retrieved_chunk_count"] = len(selected_blocks)
+    metadata["rag_context_chars"] = len(rag_context)
+    metadata["rag_context_tokens"] = count_tokens(rag_context)
+
+    return rag_context, metadata
+
+def apply_rag_context_to_prompt(final_prompt: str, rag_context: str) -> str:
+    final_prompt = str(final_prompt or "").strip()
+    rag_context = str(rag_context or "").strip()
+
+    if not rag_context:
+        return final_prompt
+
+    return f"""Use the following retrieved document context as source material.
+If the answer is not supported by the retrieved context, say that the information is missing.
+
+<rag_context>
+{rag_context}
+</rag_context>
+
+User task:
+{final_prompt}"""
+
+# 5c. Markdown output / memory writer
+def safe_markdown_filename(filename: str) -> str:
+    filename = str(filename or "").strip()
+
+    if not filename:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"llm_output_{timestamp}.md"
+
+    filename = re.sub(r"[^a-zA-Z0-9._-]+", "_", filename)
+
+    if not filename.lower().endswith(".md"):
+        filename += ".md"
+
+    return filename
+
+
+def apply_markdown_output_instruction(final_prompt: str, markdown_force_enabled: bool) -> str:
+    final_prompt = str(final_prompt or "").strip()
+
+    if not markdown_force_enabled:
+        return final_prompt
+
+    return f"""Return the answer as valid Markdown.
+
+Rules:
+- Use clear headings and short sections.
+- Use bullet points when useful.
+- Do not wrap the entire answer in a code block.
+- Keep the content directly reusable in a .md file.
+
+Task:
+{final_prompt}"""
+
+
+def save_output_to_markdown(
+                            output: str,
+                            filename: str,
+                            system_prompt: str = "",
+                            final_prompt: str = "",
+                            include_prompt: bool = True,
+                            metadata: Optional[dict] = None,
+                            ) -> str:
+    safe_name = safe_markdown_filename(filename)
+    path = MARKDOWN_OUTPUT_DIR / safe_name
+
+    metadata = metadata or {}
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    if include_prompt:
+        content = f"""# LLM Markdown Output
+
+Generated at: {timestamp}
+
+## Metadata
+
+```json
+{json.dumps(metadata, indent=2, ensure_ascii=False, default=str)}
+```
+
+## System Prompt
+
+```text
+{system_prompt or ""}
+```
+
+## Final Prompt
+
+```text
+{final_prompt or ""}
+```
+
+## Model Output
+
+{output or ""}
+"""
+    else:
+        content = str(output or "")
+
+    path.write_text(content, encoding="utf-8")
+    return str(path)
 
 if "run_local_llm" not in globals():
     raise RuntimeError("Run model initialization cell first.")
@@ -1138,7 +1572,9 @@ APP_CSS = r"""
                 }
 
                 #settings-panel,
-                #few-shot-panel {
+                #few-shot-panel,
+                #rag-panel,
+                #markdown-panel {
                     border: 1px solid var(--border) !important;
                     border-radius: 20px !important;
                     background: rgba(15, 23, 42, 0.54) !important;
@@ -1193,6 +1629,17 @@ APP_CSS = r"""
                     line-height: 1.45;
                 }
 
+
+                #rag-files,
+                #markdown-toggle,
+                #markdown-force-toggle,
+                #markdown-include-prompt-toggle {
+                    border: 1px solid rgba(148, 163, 184, 0.18) !important;
+                    border-radius: 16px !important;
+                    padding: 8px 10px !important;
+                    background: rgba(2, 6, 23, 0.34) !important;
+                }
+
                 .footer-note {
                     margin-top: 14px;
                     color: var(--muted);
@@ -1206,7 +1653,6 @@ APP_CSS = r"""
                 }
                 """
 # 7. Gradio frontend and prepwork for run
-
 def prepare_user_prompt(user_prompt: str, topic: str) -> str:
     user_prompt = str(user_prompt or "").strip()
     topic = str(topic or "").strip()
@@ -1251,6 +1697,15 @@ def generate_from_ui(
                     few_shot_examples: str,
                     web_scraping_enabled: bool,
                     web_urls: str,
+                    rag_enabled: bool,
+                    rag_files: Any,
+                    rag_top_k: int,
+                    rag_chunk_size: int,
+                    rag_chunk_overlap: int,
+                    markdown_force_enabled: bool,
+                    markdown_save_enabled: bool,
+                    markdown_filename: str,
+                    markdown_include_prompt: bool,
                     mlflow_enabled: bool,
                     max_new_tokens: int,
                     temperature: float,
@@ -1274,10 +1729,28 @@ Answer based on the web context when it is relevant. If the context is incomplet
 User task:
 {base_prompt}"""
 
-    final_prompt = apply_few_shot_prompting(final_prompt=prompt_after_web,few_shot_enabled=few_shot_enabled,few_shot_examples=few_shot_examples)
+    rag_context = ""
+    rag_metadata = {"enabled": bool(rag_enabled)}
+    prompt_after_rag = prompt_after_web
+
+    if rag_enabled:
+        rag_context, rag_metadata = build_rag_context(
+                                                        query=prompt_after_web,
+                                                        rag_files=rag_files,
+                                                        top_k=int(rag_top_k),
+                                                        chunk_size=int(rag_chunk_size),
+                                                        chunk_overlap=int(rag_chunk_overlap),
+                                                        max_context_chars=RAG_MAX_CONTEXT_CHARS,
+                                                    )
+        prompt_after_rag = apply_rag_context_to_prompt(prompt_after_web, rag_context)
+
+    prompt_after_markdown_instruction = apply_markdown_output_instruction(final_prompt=prompt_after_rag,markdown_force_enabled=markdown_force_enabled)
+    final_prompt = apply_few_shot_prompting(final_prompt=prompt_after_markdown_instruction,few_shot_enabled=few_shot_enabled,few_shot_examples=few_shot_examples)
 
     if not final_prompt.strip():
         return "Add user prompt or main topic."
+
+    markdown_file_path = ""
 
     try:
         started_at = time.perf_counter()
@@ -1291,10 +1764,33 @@ User task:
                                 )
 
         generation_time_sec = time.perf_counter() - started_at
+        chat_input = build_chat_input(final_prompt, system_prompt=system_prompt)
+
+        if markdown_save_enabled:
+            markdown_metadata = {
+                                "model_name": MODEL_NAME,
+                                "backend": BACKEND,
+                                "openvino_device": OPENVINO_DEVICE,
+                                "few_shot_enabled": bool(few_shot_enabled),
+                                "web_scraping_enabled": bool(web_scraping_enabled),
+                                "rag_enabled": bool(rag_enabled),
+                                "markdown_force_enabled": bool(markdown_force_enabled),
+                                "generation_time_sec": generation_time_sec,
+                                "chat_input_tokens": count_tokens(chat_input),
+                                "output_tokens": count_tokens(output),
+                                "rag_metadata": rag_metadata,
+                                }
+
+            markdown_file_path = save_output_to_markdown(
+                                                        output=output,
+                                                        filename=markdown_filename,
+                                                        system_prompt=system_prompt,
+                                                        final_prompt=final_prompt,
+                                                        include_prompt=markdown_include_prompt,
+                                                        metadata=markdown_metadata,
+                                                        )
 
         if mlflow_enabled and MLFLOW_READY:
-            chat_input = build_chat_input(final_prompt, system_prompt=system_prompt)
-
             run_id = log_prompt_run_to_mlflow(
                                                 system_prompt=system_prompt,
                                                 user_prompt=user_prompt,
@@ -1302,6 +1798,14 @@ User task:
                                                 base_prompt=base_prompt,
                                                 web_context=web_context,
                                                 prompt_after_web=prompt_after_web,
+                                                rag_enabled=rag_enabled,
+                                                rag_context=rag_context,
+                                                rag_metadata=rag_metadata,
+                                                prompt_after_rag=prompt_after_rag,
+                                                markdown_force_enabled=markdown_force_enabled,
+                                                markdown_save_enabled=markdown_save_enabled,
+                                                markdown_file_path=markdown_file_path,
+                                                prompt_after_markdown_instruction=prompt_after_markdown_instruction,
                                                 final_prompt=final_prompt,
                                                 chat_input=chat_input,
                                                 output=output,
@@ -1313,22 +1817,34 @@ User task:
                                                 temperature=temperature,
                                                 top_p=top_p,
                                                 generation_time_sec=generation_time_sec,
-                                            )
+                                                )
 
-            return (
-                        f"{output}\n\n"
-                        f"---\n"
-                        f"MLflow run logged: {run_id}\n"
-                        f"Generation time: {generation_time_sec:.2f} sec\n"
-                        f"Input tokens: {count_tokens(chat_input)} | Output tokens: {count_tokens(output)}"
-                    )
+            footer = (
+                f"\n\n---\n"
+                f"MLflow run logged: {run_id}\n"
+                f"Generation time: {generation_time_sec:.2f} sec\n"
+                f"Input tokens: {count_tokens(chat_input)} | Output tokens: {count_tokens(output)}"
+            )
+
+            if rag_enabled:
+                footer += (
+                    f"\nRAG chunks: {rag_metadata.get('retrieved_chunk_count', 0)} / "
+                    f"{rag_metadata.get('chunk_count', 0)}"
+                )
+
+            if markdown_file_path:
+                footer += f"\nMarkdown saved to: {markdown_file_path}"
+
+            return f"{output}{footer}"
 
         if mlflow_enabled and not MLFLOW_READY:
-            return (
-                    f"{output}\n\n"
-                    f"---\n"
-                    f"MLflow logging was enabled, but MLflow is not ready. Output was not logged."
-                    )
+            output += (
+                "\n\n---\n"
+                "MLflow logging was enabled, but MLflow is not ready. Output was not logged."
+            )
+
+        if markdown_file_path:
+            output += f"\n\n---\nMarkdown saved to: {markdown_file_path}"
 
         return output
 
@@ -1346,6 +1862,10 @@ User task:
                                                             few_shot_examples=few_shot_examples,
                                                             web_scraping_enabled=web_scraping_enabled,
                                                             web_urls=web_urls,
+                                                            rag_enabled=rag_enabled,
+                                                            rag_metadata=rag_metadata,
+                                                            markdown_force_enabled=markdown_force_enabled,
+                                                            markdown_save_enabled=markdown_save_enabled,
                                                             max_new_tokens=max_new_tokens,
                                                             temperature=temperature,
                                                             top_p=top_p,
@@ -1354,19 +1874,18 @@ User task:
                                                             )
 
                 return (
-                        f"Generation failed: {type(exc).__name__}: {exc}\n\n"
-                        f"---\n"
-                        f"MLflow failed run logged: {error_run_id}"
-                        )
+                    f"Generation failed: {type(exc).__name__}: {exc}\n\n"
+                    f"---\n"
+                    f"MLflow failed run logged: {error_run_id}"
+                )
             except Exception as mlflow_exc:
                 return (
-                        f"Generation failed: {type(exc).__name__}: {exc}\n\n"
-                        f"Additionally, MLflow error logging failed: "
-                        f"{type(mlflow_exc).__name__}: {mlflow_exc}"
-                        )
+                    f"Generation failed: {type(exc).__name__}: {exc}\n\n"
+                    f"Additionally, MLflow error logging failed: "
+                    f"{type(mlflow_exc).__name__}: {mlflow_exc}"
+                )
 
         return f"Generation failed: {type(exc).__name__}: {exc}"
-
 
 def clear_output() -> str:
     return ""
@@ -1470,6 +1989,89 @@ with gr.Blocks(
                                                 elem_id="web-urls",
                                             )
 
+                with gr.Accordion("RAG document context", open=False, elem_id="rag-panel"):
+                    gr.HTML(
+                            """
+                                <p class="few-shot-note">
+                                Optional local RAG context. Upload .txt, .md, .pdf, .docx or .rtf files.
+                                The app builds a temporary CPU FAISS index and retrieves the most relevant chunks for the current prompt.
+                                </p>
+                            """
+                            )
+
+                    rag_enabled_box = gr.Checkbox(
+                                                    label="Enable RAG document context",
+                                                    value=False,
+                                                    elem_id="rag-toggle",
+                                                    )
+
+                    rag_files_box = gr.File(
+                                            label="RAG source files",
+                                            file_count="multiple",
+                                            type="filepath",
+                                            elem_id="rag-files",
+                                            )
+
+                    rag_top_k_slider = gr.Slider(
+                                                minimum=1,
+                                                maximum=10,
+                                                value=4,
+                                                step=1,
+                                                label="RAG Top-K - number of retrieved chunks",
+                                                )
+
+                    rag_chunk_size_slider = gr.Slider(
+                                                    minimum=300,
+                                                    maximum=2500,
+                                                    value=900,
+                                                    step=100,
+                                                    label="RAG chunk size - larger = broader context",
+                                                    )
+
+                    rag_chunk_overlap_slider = gr.Slider(
+                                                        minimum=0,
+                                                        maximum=500,
+                                                        value=150,
+                                                        step=50,
+                                                        label="RAG chunk overlap - helps preserve context continuity",
+                                                        )
+
+                with gr.Accordion("Markdown output / memory", open=False, elem_id="markdown-panel"):
+                    gr.HTML(
+                            """
+                                <p class="few-shot-note">
+                                Optional Markdown mode. The model can be instructed to answer in Markdown and the generated output can be saved
+                                as a reusable .md file.
+                                </p>
+                            """
+                            )
+
+                    markdown_force_enabled_box = gr.Checkbox(
+                                                            label="Force Markdown-formatted answer",
+                                                            value=False,
+                                                            elem_id="markdown-force-toggle",
+                                                            )
+
+                    markdown_save_enabled_box = gr.Checkbox(
+                                                            label="Save output to .md file",
+                                                            value=False,
+                                                            elem_id="markdown-toggle",
+                                                            )
+
+                    markdown_filename_box = gr.Textbox(
+                                                        label="Markdown filename",
+                                                        value="llm_output.md",
+                                                        lines=1,
+                                                        placeholder="example: project_memory.md",
+                                                        elem_id="markdown-filename",
+                                                        )
+
+                    markdown_include_prompt_box = gr.Checkbox(
+                                                            label="Include prompt and metadata in saved .md",
+                                                            value=True,
+                                                            elem_id="markdown-include-prompt-toggle",
+                                                            )
+
                 with gr.Accordion("Experiment tracking", open=False, elem_id="mlflow-panel"):
                     gr.HTML(
                             """
@@ -1545,6 +2147,15 @@ with gr.Blocks(
                                         few_shot_examples_box,
                                         web_scraping_enabled_box,
                                         web_urls_box,
+                                        rag_enabled_box,
+                                        rag_files_box,
+                                        rag_top_k_slider,
+                                        rag_chunk_size_slider,
+                                        rag_chunk_overlap_slider,
+                                        markdown_force_enabled_box,
+                                        markdown_save_enabled_box,
+                                        markdown_filename_box,
+                                        markdown_include_prompt_box,
                                         mlflow_enabled_box,
                                         max_new_tokens_slider,
                                         temperature_slider,
