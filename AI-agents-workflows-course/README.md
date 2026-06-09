@@ -10,8 +10,9 @@ https://gitlab.com/nyx3ton-group/nyx3ton-project/-/blob/main/AI-agents-workflows
 - Podporuje Zero-shot, Few-Shot, User and System Prompt
 - Podporuje viacpolozkovy Web Scrapping cez BeautifulSoup (non-JavaScript Web URLs)
 - Architektura podporuje a je merana pomocou MLFlow
-- Poddporuje faiss-cpu ako primarny RAG
-- podpruje zapis do Markdown
+- Poddporuje faiss-cpu ako primarny RAG (podpora pre .txt, .md, .pdf, .docx, .rtf)
+- RAG podporuje konfiguraciu pre Chunk size, Top-K a Chunk-overlap
+- podporuje zapis do Markdown (aj s metadatami)
 
 
 ```text
