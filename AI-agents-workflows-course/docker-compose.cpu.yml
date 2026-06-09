@@ -22,6 +22,9 @@ services:
     environment:
       APP_SCRIPT: "ai-prompt-sim.py"
 
+      # CPU smoke-test option:
+      # LOCAL_MODEL_NAME: "Qwen/Qwen3-0.6B"
+
       # Larger default model:
       LOCAL_MODEL_NAME: "Qwen/Qwen3-4B-Instruct-2507"
 
@@ -48,6 +51,7 @@ services:
       START_MLFLOW_UI: "1"
       OPEN_MLFLOW_UI_BROWSER: "0"
       MLFLOW_UI_HOST: "0.0.0.0"
+      # Internal container port. Do not set this to 5002.
       MLFLOW_UI_PORT: "5001"
       MLFLOW_ROOT_DIR: "/app/mlflow_runs"
       MLFLOW_EXPERIMENT_NAME: "local-prompt-simulator-docker-cpu"
@@ -57,6 +61,9 @@ services:
       GRADIO_INBROWSER: "0"
 
       TOKENIZERS_PARALLELISM: "false"
+
+      PUBLIC_GRADIO_URL: "http://localhost:7860/"
+      PUBLIC_MLFLOW_URL: "http://127.0.0.1:5002/"
 
       # HF_TOKEN: "hf_xxx"
 

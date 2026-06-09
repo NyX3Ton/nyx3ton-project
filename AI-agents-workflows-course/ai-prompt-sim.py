@@ -104,6 +104,9 @@ MLFLOW_UI_PORT = int(os.getenv("MLFLOW_UI_PORT", "5000"))
 
 MLFLOW_UI_PROCESS = None
 
+PUBLIC_GRADIO_URL = os.getenv("PUBLIC_GRADIO_URL", "http://localhost:7860/")
+PUBLIC_MLFLOW_URL = os.getenv("PUBLIC_MLFLOW_URL", "http://127.0.0.1:5002/")
+
 def is_port_open(host: str, port: int) -> bool:
     try:
         with socket.create_connection((host, port), timeout=1):
