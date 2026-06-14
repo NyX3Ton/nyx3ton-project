@@ -15,7 +15,8 @@ services:
     environment:
       # Main model. Change this to the exact public / private HF model id you want.
       # If the repo is gated/private, set HF_TOKEN below or in .env.
-      LLM_MODEL_ID: "unsloth/Qwen3.5-9B"
+      #LLM_MODEL_ID: "unsloth/Qwen3.5-9B"
+      LLM_MODEL_ID: "google/gemma-4-E4B"
       FALLBACK_LLM_MODEL_ID: "unsloth/Qwen3.5-4B"
       AUX_LLM_MODEL_ID: "Qwen/Qwen3-4B-Thinking-2507"
       LLM_LOAD_MODE: "auto"

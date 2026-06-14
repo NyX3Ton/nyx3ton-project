@@ -1109,4 +1109,8 @@ def build_ui():
 
 if __name__ == "__main__":
     demo = build_ui()
-    demo.launch(server_name="127.0.0.1", server_port=7860, inbrowser=True)
+    demo.launch(
+                server_name="127.0.0.1", 
+                #server_port=7860, 
+                inbrowser=True
+                )

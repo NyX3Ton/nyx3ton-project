@@ -61,7 +61,9 @@ Thumbs.db
 *.txt
 *.html
 *.xml
-
+*.sqlite3
+*.sqlite
+*.db
 # =====================
 # Project-specific
 # =====================
@@ -75,9 +77,33 @@ Keyword tokenizer/RAG_store/
 *.blob
 *.jinja
 *.lock
+*.bin
+*.onnx
+*.pt
+*.pth
+*.gguf
 
 # =====================
 # Secrets
 # =====================
 *.key
 *.token
+
+# AI / ML generated cache
+**/hf_cache/
+**/ov_cache/
+**/ov_models/
+**/RAG_store/
+
+# MLflow / generated outputs
+mlflow_runs/
+mlruns/
+artifacts/
+outputs/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.ipynb_checkpoints/

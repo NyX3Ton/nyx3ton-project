@@ -31,6 +31,7 @@ from optimum.intel import OVModelForCausalLM
 
 #MODEL_NAME = os.getenv("LOCAL_MODEL_NAME", "Qwen/Qwen3-0.6B")
 MODEL_NAME = os.getenv("LOCAL_MODEL_NAME", "Qwen/Qwen3-4B-Instruct-2507")
+#MODEL_NAME = os.getenv("LOCAL_MODEL_NAME", "google/gemma-4-E4B")
 
 HF_TOKEN = os.getenv("HF_TOKEN") or None
 
@@ -45,7 +46,7 @@ MAX_NEW_TOKENS = int(os.getenv("MAX_NEW_TOKENS", "320"))
 TEMPERATURE = float(os.getenv("TEMPERATURE", "0.7"))
 TOP_P = float(os.getenv("TOP_P", "0.9"))
 
-OFFLINE_MODE = os.getenv("LOCAL_FILES_ONLY", "1").strip().lower() in {"1", "true", "yes", "y"} # for first run set it to 0, to download seledcted model from HF
+OFFLINE_MODE = os.getenv("LOCAL_FILES_ONLY", "0").strip().lower() in {"1", "true", "yes", "y"} # for first run set it to 0, to download seledcted model from HF
 FORCE_HF_FALLBACK = os.getenv("FORCE_HF_FALLBACK", "0").strip().lower() in {"1", "true", "yes", "y"}
 
 cache_path = Path(HF_CACHE_DIR).expanduser().resolve()
@@ -292,9 +293,9 @@ def load_huggingface_fallback_model():
     # If CUDA exists, device_map='auto' lets Transformers place the model automatically.
     if torch.cuda.is_available():
         hf_kwargs["device_map"] = "auto"
-        hf_kwargs["torch_dtype"] = "auto"
+        hf_kwargs["dtype"] = "auto"
     else:
-        hf_kwargs["torch_dtype"] = "auto"
+        hf_kwargs["dtype"] = "auto"
 
     hf_model: Any = AutoModelForCausalLM.from_pretrained(MODEL_NAME, **hf_kwargs)
 

@@ -84,3 +84,36 @@ Keyword tokenizer/RAG_store/
 # =====================
 *.key
 *.token
+
+# AI / ML generated cache
+**/hf_cache/
+**/ov_cache/
+**/ov_models/
+**/RAG_store/
+
+# HuggingFace / OpenVINO / model files
+*.blob
+*.bin
+*.safetensors
+*.onnx
+*.pt
+*.pth
+*.gguf
+
+# Vector DB / generated databases
+*.sqlite3
+*.sqlite
+*.db
+
+# MLflow / generated outputs
+mlflow_runs/
+mlruns/
+artifacts/
+outputs/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.ipynb_checkpoints/
