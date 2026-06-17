@@ -41,11 +41,7 @@ OPTUNA_STORAGE = f"sqlite:///{(CACHE_DIR / 'optuna_studies.sqlite3').as_posix()}
 GENRES = ["Action", "Comedy", "Drama", "Sci-Fi", "Fantasy", "Romance", "Documentary"]
 MOODS = ["Relax", "Funny", "Emotional", "Adrenaline", "Mind-bending"]
 
-IMAGE_PRODUCT_CATEGORIES = [
-    "Tech gadget", "Gaming accessory", "Fitness product", "Travel gear",
-    "Food product", "Fashion item", "Home appliance", "Book",
-    "Musical instrument", "Sports equipment", "Office equipment", "Beauty product",
-]
+IMAGE_PRODUCT_CATEGORIES = ["Tech gadget", "Gaming accessory", "Fitness product", "Travel gear","Food product", "Fashion item", "Home appliance", "Book","Musical instrument", "Sports equipment", "Office equipment", "Beauty product"]
 
 OPTUNA_TRIALS_XGB = int(os.getenv("OPTUNA_TRIALS_XGB", "12"))
 OPTUNA_TRIALS_MLP = int(os.getenv("OPTUNA_TRIALS_MLP", "8"))
@@ -56,27 +52,24 @@ CLIP_DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 CLIP_MODEL = None
 CLIP_PROCESSOR = None
 
-# Movie recommender (content-based over the enriched IMDb CSV)
 MOVIE_CSV_NAMES = ["IMDb_Genres_real_enriched.csv", "IMDb_Genres_real_enriched.xlsx"]
 
-# User preference slider -> precomputed per-movie preference column in the CSV
 PREF_COL = {
-    "action": "preference_action_score",
-    "comedy": "preference_comedy_score",
-    "drama": "preference_drama_score",
-    "scifi": "preference_sci_fi_score",
-    "romance": "preference_romance_score",
-    "documentary": "preference_documentary_score",
-}
-# Mood dropdown -> precomputed per-movie mood column in the CSV
+            "action": "preference_action_score",
+            "comedy": "preference_comedy_score",
+            "drama": "preference_drama_score",
+            "scifi": "preference_sci_fi_score",
+            "romance": "preference_romance_score",
+            "documentary": "preference_documentary_score",
+            }
 MOOD_COL = {
-    "Relax": "mood_relax",
-    "Funny": "mood_funny",
-    "Emotional": "mood_emotional",
-    "Adrenaline": "mood_adrenaline",
-    "Mind-bending": "mood_mind_bending",
-}
-# Weights of the final recommendation score (sum = 1.0)
+            "Relax": "mood_relax",
+            "Funny": "mood_funny",
+            "Emotional": "mood_emotional",
+            "Adrenaline": "mood_adrenaline",
+            "Mind-bending": "mood_mind_bending",
+            }
+
 SCORE_WEIGHTS = {"pref": 0.40, "mood": 0.20, "genre": 0.15, "rating": 0.15, "length": 0.10}
 
 CUSTOM_CSS = """
@@ -149,13 +142,13 @@ def softmax_numpy(values: np.ndarray) -> np.ndarray:
 
 def get_or_create_study(study_name: str, direction: str = "maximize") -> optuna.Study:
     return optuna.create_study(
-        study_name=study_name,
-        storage=OPTUNA_STORAGE,
-        direction=direction,
-        load_if_exists=True,
-        sampler=optuna.samplers.TPESampler(seed=SEED),
-        pruner=optuna.pruners.MedianPruner(n_warmup_steps=5),
-    )
+                                study_name=study_name,
+                                storage=OPTUNA_STORAGE,
+                                direction=direction,
+                                load_if_exists=True,
+                                sampler=optuna.samplers.TPESampler(seed=SEED),
+                                pruner=optuna.pruners.MedianPruner(n_warmup_steps=5),
+                            )
 
 def ensure_study_trials(study: optuna.Study, objective, required_trials: int, timeout_sec: int | None = None) -> None:
     if required_trials <= 0:
@@ -205,9 +198,13 @@ def load_movie_catalog() -> dict:
 def recommend_movies(action, comedy, drama, scifi, romance, documentary, genre, min_rating, max_age, length, mood, top_n: int = 8):
     df = MOVIE["df"]
     weights = {
-        "action": action, "comedy": comedy, "drama": drama,
-        "scifi": scifi, "romance": romance, "documentary": documentary,
-    }
+                "action": action, 
+                "comedy": comedy, 
+                "drama": drama,
+                "scifi": scifi, 
+                "romance": romance, 
+                "documentary": documentary,
+            }
     wsum = sum(weights.values()) or 1.0
 
     pref = sum(w * df[PREF_COL[k]] for k, w in weights.items()) / wsum
@@ -216,16 +213,9 @@ def recommend_movies(action, comedy, drama, scifi, romance, documentary, genre, 
     rating_part = (df["imdb_rating_10"] / 10.0).clip(0, 1)
     length_part = (1 - (df["runtime_minutes"] - float(length)).abs() / 120.0).clip(0, 1)
 
-    score = (
-        SCORE_WEIGHTS["pref"] * pref
-        + SCORE_WEIGHTS["mood"] * mood_part
-        + SCORE_WEIGHTS["genre"] * genre_boost
-        + SCORE_WEIGHTS["rating"] * rating_part
-        + SCORE_WEIGHTS["length"] * length_part
-    )
+    score = (SCORE_WEIGHTS["pref"] * pref + SCORE_WEIGHTS["mood"] * mood_part + SCORE_WEIGHTS["genre"] * genre_boost + SCORE_WEIGHTS["rating"] * rating_part + SCORE_WEIGHTS["length"] * length_part)
     scored = df.assign(_match=score)
 
-    # Progressive filter relaxation so we always return something useful.
     current_year = datetime.date.today().year
     min_year = current_year - float(max_age)
     notes = []
@@ -248,28 +238,28 @@ def recommend_movies(action, comedy, drama, scifi, romance, documentary, genre, 
     result = result.sort_values(["_match", "imdb_rating_10", "popularity_score"], ascending=False).head(top_n)
 
     table = pd.DataFrame({
-        "Title": result["movie_title"],
-        "Year": result["release_year"].astype(int),
-        "Genres": result["all_genres"],
-        "IMDb": result["imdb_rating_10"].round(1),
-        "Runtime (min)": result["runtime_minutes"].astype(int),
-        "Director": result["director_clean"],
-        "Match %": (result["_match"] * 100).round(1),
-    }).reset_index(drop=True)
+                            "Title": result["movie_title"],
+                            "Year": result["release_year"].astype(int),
+                            "Genres": result["all_genres"],
+                            "IMDb": result["imdb_rating_10"].round(1),
+                            "Runtime (min)": result["runtime_minutes"].astype(int),
+                            "Director": result["director_clean"],
+                            "Match %": (result["_match"] * 100).round(1),
+                            }).reset_index(drop=True)
 
     top = result.iloc[0]
     explanation = top["recommendation_explanation_base"] or "good overall match for your preferences"
     summary = (
-        f"Top pick: {top['movie_title']} ({int(top['release_year'])})\n"
-        f"Match score: {top['_match'] * 100:.1f} %\n\n"
-        f"Genres: {top['all_genres']}\n"
-        f"IMDb rating: {top['imdb_rating_10']:.1f}/10   |   Runtime: {int(top['runtime_minutes'])} min\n"
-        f"Director: {top['director_clean']}\n"
-        f"Cast: {top['lead_actor']}\n\n"
-        f"{top['overview_clean']}\n\n"
-        f"Why recommended: {explanation}.\n"
-        f"Source: {MOVIE['source']} ({MOVIE['rows']} movies)"
-    )
+                f"Top pick: {top['movie_title']} ({int(top['release_year'])})\n"
+                f"Match score: {top['_match'] * 100:.1f} %\n\n"
+                f"Genres: {top['all_genres']}\n"
+                f"IMDb rating: {top['imdb_rating_10']:.1f}/10   |   Runtime: {int(top['runtime_minutes'])} min\n"
+                f"Director: {top['director_clean']}\n"
+                f"Cast: {top['lead_actor']}\n\n"
+                f"{top['overview_clean']}\n\n"
+                f"Why recommended: {explanation}.\n"
+                f"Source: {MOVIE['source']} ({MOVIE['rows']} movies)"
+                )
     if notes:
         summary += "\n\nNote: " + " ".join(notes)
 
@@ -279,23 +269,23 @@ def recommend_movies(action, comedy, drama, scifi, romance, documentary, genre, 
 # Genre classifier (XGBoost vs Torch MLP)
 # ============================================================
 class MultiMLP(nn.Module):
-    def __init__(self, n_features: int, n_classes: int, hidden_1: int = 128, hidden_2: int = 64, dropout: float = 0.10):
+    def __init__(self, n_features: int, n_classes: int, hidden_1: int = 256, hidden_2: int = 128, dropout: float = 0.10):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(n_features, hidden_1), nn.ReLU(), nn.Dropout(dropout),
-            nn.Linear(hidden_1, hidden_2), nn.ReLU(), nn.Dropout(dropout),
-            nn.Linear(hidden_2, n_classes),
-        )
+                                nn.Linear(n_features, hidden_1), nn.ReLU(), nn.Dropout(dropout),
+                                nn.Linear(hidden_1, hidden_2), nn.ReLU(), nn.Dropout(dropout),
+                                nn.Linear(hidden_2, n_classes),
+                                )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.net(x)
 
 def load_genre_dataframe() -> tuple[pd.DataFrame, str]:
     genre_path = find_existing_input([
-        "movie_genre_full.csv", "movie_genre_full.xlsx",
-        "movie_genre_sample.csv", "movie_genre_sample.xlsx",
-        "train_data.txt", "train_data_solution.txt",
-    ])
+                                        "movie_genre_full.csv", "movie_genre_full.xlsx",
+                                        "movie_genre_sample.csv", "movie_genre_sample.xlsx",
+                                        "train_data.txt", "train_data_solution.txt",
+                                        ])
 
     if genre_path is None:
         if generate_movie_genre is None:
@@ -342,10 +332,7 @@ def train_multi_mlp(X, y, optuna_trials: int = OPTUNA_TRIALS_MLP, study_name: st
     def run_training(model, X_fit, y_fit, lr, weight_decay, batch_size, epochs, trial=None, X_eval=None, y_eval=None):
         optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
         loss_fn = nn.CrossEntropyLoss()
-        loader = DataLoader(
-            TensorDataset(torch.tensor(X_fit, dtype=torch.float32), torch.tensor(y_fit, dtype=torch.long)),
-            batch_size=batch_size, shuffle=True,
-        )
+        loader = DataLoader(TensorDataset(torch.tensor(X_fit, dtype=torch.float32), torch.tensor(y_fit, dtype=torch.long)),batch_size=batch_size, shuffle=True)
         model.train()
         for epoch in range(epochs):
             for xb, yb in loader:
@@ -364,25 +351,25 @@ def train_multi_mlp(X, y, optuna_trials: int = OPTUNA_TRIALS_MLP, study_name: st
         return model
 
     if optuna_trials <= 0:
-        best = {"hidden_1": 128, "hidden_2": 64, "dropout": 0.10, "lr": 0.006,
+        best = {"hidden_1": 256, "hidden_2": 128, "dropout": 0.10, "lr": 0.005,
                 "weight_decay": 1e-4, "batch_size": 64, "epochs": 45}
     else:
         def objective(trial: optuna.Trial) -> float:
             torch.manual_seed(SEED)
             model = MultiMLP(
-                X.shape[1], n_classes,
-                trial.suggest_int("hidden_1", 32, 192, step=32),
-                trial.suggest_int("hidden_2", 16, 96, step=16),
-                trial.suggest_float("dropout", 0.0, 0.40),
-            )
+                                X.shape[1], n_classes,
+                                trial.suggest_int("hidden_1", 32, 192, step=32),
+                                trial.suggest_int("hidden_2", 16, 96, step=16),
+                                trial.suggest_float("dropout", 0.0, 0.40),
+                            )
             model = run_training(
-                model, X_train, y_train,
-                trial.suggest_float("lr", 1e-4, 3e-2, log=True),
-                trial.suggest_float("weight_decay", 1e-7, 1e-2, log=True),
-                int(trial.suggest_categorical("batch_size", [32, 64, 128])),
-                trial.suggest_int("epochs", 12, 65),
-                trial, X_val, y_val,
-            )
+                                model, X_train, y_train,
+                                trial.suggest_float("lr", 1e-4, 3e-2, log=True),
+                                trial.suggest_float("weight_decay", 1e-7, 1e-2, log=True),
+                                int(trial.suggest_categorical("batch_size", [32, 64, 128])),
+                                trial.suggest_int("epochs", 15, 100),
+                                trial, X_val, y_val,
+                                )
             with torch.no_grad():
                 pred = torch.argmax(model(torch.tensor(X_val, dtype=torch.float32)), dim=1).numpy()
             return float(f1_score(y_val, pred, average="macro"))
@@ -393,8 +380,7 @@ def train_multi_mlp(X, y, optuna_trials: int = OPTUNA_TRIALS_MLP, study_name: st
 
     torch.manual_seed(SEED)
     final_model = MultiMLP(X.shape[1], n_classes, int(best["hidden_1"]), int(best["hidden_2"]), float(best["dropout"]))
-    final_model = run_training(final_model, X, y, float(best["lr"]), float(best["weight_decay"]),
-                               int(best["batch_size"]), int(best["epochs"]))
+    final_model = run_training(final_model, X, y, float(best["lr"]), float(best["weight_decay"]),int(best["batch_size"]), int(best["epochs"]))
     return final_model, time.perf_counter() - start_total, best
 
 
@@ -413,24 +399,31 @@ def train_genre_bundle(optuna_trials_xgb: int = OPTUNA_TRIALS_XGB, optuna_trials
     study_prefix = safe_name(f"genre_classifier_{source}_{X_train.shape[1]}features")
 
     if optuna_trials_xgb <= 0:
-        best_xgb_params = {"n_estimators": 160, "max_depth": 5, "learning_rate": 0.05, "subsample": 0.9,
-                           "colsample_bytree": 0.9, "min_child_weight": 1.0, "gamma": 0.0,
-                           "reg_alpha": 1e-8, "reg_lambda": 1.0}
+        best_xgb_params = {"n_estimators": 160, 
+                            "max_depth": 5, 
+                            "learning_rate": 0.005, 
+                            "subsample": 0.9,
+                            "colsample_bytree": 0.9, 
+                            "min_child_weight": 1.0, 
+                            "gamma": 0.0,
+                            "reg_alpha": 1e-8, 
+                            "reg_lambda": 1.0
+                            }
         xgb_time = 0.0
     else:
         def xgb_objective(trial: optuna.Trial) -> float:
             params = {
-                "n_estimators": trial.suggest_int("n_estimators", 80, 260, step=20),
-                "max_depth": trial.suggest_int("max_depth", 3, 10),
-                "learning_rate": trial.suggest_float("learning_rate", 0.001, 0.1, log=True),
-                "subsample": trial.suggest_float("subsample", 0.65, 1.0),
-                "colsample_bytree": trial.suggest_float("colsample_bytree", 0.65, 1.0),
-                "min_child_weight": trial.suggest_float("min_child_weight", 1.0, 10.0),
-                "gamma": trial.suggest_float("gamma", 0.0, 4.0),
-                "reg_alpha": trial.suggest_float("reg_alpha", 1e-8, 1.0, log=True),
-                "reg_lambda": trial.suggest_float("reg_lambda", 1e-4, 10.0, log=True),
-                "eval_metric": "mlogloss", "random_state": SEED, "n_jobs": 8, "tree_method": "hist",
-            }
+                        "n_estimators": trial.suggest_int("n_estimators", 100, 900, step=100),
+                        "max_depth": trial.suggest_int("max_depth", 4, 10),
+                        "learning_rate": trial.suggest_float("learning_rate", 0.001, 0.1, log=True),
+                        "subsample": trial.suggest_float("subsample", 0.65, 1.0),
+                        "colsample_bytree": trial.suggest_float("colsample_bytree", 0.65, 1.0),
+                        "min_child_weight": trial.suggest_float("min_child_weight", 1.0, 10.0),
+                        "gamma": trial.suggest_float("gamma", 0.0, 4.0),
+                        "reg_alpha": trial.suggest_float("reg_alpha", 1e-8, 1.0, log=True),
+                        "reg_lambda": trial.suggest_float("reg_lambda", 1e-4, 10.0, log=True),
+                        "eval_metric": "mlogloss", "random_state": SEED, "n_jobs": 8, "tree_method": "hist",
+                        }
             model = XGBClassifier(**params)
             model.fit(X_xgb_train, y_xgb_train)
             return float(f1_score(y_xgb_val, model.predict(X_xgb_val), average="macro"))
@@ -441,8 +434,7 @@ def train_genre_bundle(optuna_trials_xgb: int = OPTUNA_TRIALS_XGB, optuna_trials
         best_xgb_params = dict(xgb_study.best_params)
         xgb_time = time.perf_counter() - start_xgb
 
-    final_xgb_params = {**best_xgb_params, "eval_metric": "mlogloss", "random_state": SEED,
-                        "n_jobs": 8, "tree_method": "hist"}
+    final_xgb_params = {**best_xgb_params, "eval_metric": "mlogloss", "random_state": SEED,"n_jobs": 8, "tree_method": "hist"}
     start_final_xgb = time.perf_counter()
     xgb = XGBClassifier(**final_xgb_params)
     xgb.fit(X_train, y_train)
@@ -450,28 +442,25 @@ def train_genre_bundle(optuna_trials_xgb: int = OPTUNA_TRIALS_XGB, optuna_trials
 
     X_train_dense = to_dense_float32(X_train)
     X_test_dense = to_dense_float32(X_test)
-    mlp, mlp_time, best_mlp_params = train_multi_mlp(X_train_dense, y_train,
-                                                     optuna_trials=optuna_trials_mlp,
-                                                     study_name=f"{study_prefix}_torch_mlp")
+    mlp, mlp_time, best_mlp_params = train_multi_mlp(X_train_dense, y_train,optuna_trials=optuna_trials_mlp,study_name=f"{study_prefix}_torch_mlp")
     xgb_pred = xgb.predict(X_test)
     with torch.no_grad():
         mlp_pred = np.argmax(torch.softmax(mlp(torch.tensor(X_test_dense, dtype=torch.float32)), dim=1).numpy(), axis=1)
 
     metrics = pd.DataFrame([
-        {"Task": "Genre classifier", "Model": "XGBoost",
-         "Accuracy": round(float(accuracy_score(y_test, xgb_pred)), 4),
-         "Macro F1": round(float(f1_score(y_test, xgb_pred, average="macro")), 4),
-         "Train sec incl. Optuna": round(float(xgb_time), 3), "Source": source,
-         "Best params": json.dumps(best_xgb_params, ensure_ascii=False)},
-        {"Task": "Genre classifier", "Model": "Torch MLP",
-         "Accuracy": round(float(accuracy_score(y_test, mlp_pred)), 4),
-         "Macro F1": round(float(f1_score(y_test, mlp_pred, average="macro")), 4),
-         "Train sec incl. Optuna": round(float(mlp_time), 3), "Source": source,
-         "Best params": json.dumps(best_mlp_params, ensure_ascii=False)},
-    ])
+                            {"Task": "Genre classifier", "Model": "XGBoost",
+                                "Accuracy": round(float(accuracy_score(y_test, xgb_pred)), 4),
+                                "Macro F1": round(float(f1_score(y_test, xgb_pred, average="macro")), 4),
+                                "Train sec incl. Optuna": round(float(xgb_time), 3), "Source": source,
+                                "Best params": json.dumps(best_xgb_params, ensure_ascii=False)},
+                            {"Task": "Genre classifier", "Model": "Torch MLP",
+                                "Accuracy": round(float(accuracy_score(y_test, mlp_pred)), 4),
+                                "Macro F1": round(float(f1_score(y_test, mlp_pred, average="macro")), 4),
+                                "Train sec incl. Optuna": round(float(mlp_time), 3), "Source": source,
+                                "Best params": json.dumps(best_mlp_params, ensure_ascii=False)},
+                            ])
 
-    return {"xgb": xgb, "mlp": mlp, "vectorizer": vectorizer, "labels": labels,
-            "metrics": metrics, "source": source, "rows": len(df)}
+    return {"xgb": xgb, "mlp": mlp, "vectorizer": vectorizer, "labels": labels,"metrics": metrics, "source": source, "rows": len(df)}
 
 
 def predict_genre(description):
@@ -482,21 +471,20 @@ def predict_genre(description):
         mlp_probs = torch.softmax(GENRE_MODEL["mlp"](torch.tensor(X_dense, dtype=torch.float32)), dim=1).numpy()[0]
     labels = GENRE_MODEL["labels"]
     table = pd.DataFrame({
-        "Genre": labels,
-        "XGBoost probability": np.round(xgb_probs, 4),
-        "Torch MLP probability": np.round(mlp_probs, 4),
-        "Difference": np.round(np.abs(xgb_probs - mlp_probs), 4),
-    }).sort_values("XGBoost probability", ascending=False)
+                            "Genre": labels,
+                            "XGBoost probability": np.round(xgb_probs, 4),
+                            "Torch MLP probability": np.round(mlp_probs, 4),
+                            "Difference": np.round(np.abs(xgb_probs - mlp_probs), 4),
+                        }).sort_values("XGBoost probability", ascending=False)
     xgb_label = labels[int(np.argmax(xgb_probs))]
     mlp_label = labels[int(np.argmax(mlp_probs))]
     summary = (
-        f"XGBoost predicts: {xgb_label} ({np.max(xgb_probs) * 100:.1f} %)\n"
-        f"Torch MLP predicts: {mlp_label} ({np.max(mlp_probs) * 100:.1f} %)\n\n"
-    )
+                f"XGBoost predicts: {xgb_label} ({np.max(xgb_probs) * 100:.1f} %)\n"
+                f"Torch MLP predicts: {mlp_label} ({np.max(mlp_probs) * 100:.1f} %)\n\n"
+                )
     summary += ("Models agree. This is an example of a consistent signal." if xgb_label == mlp_label
                 else "Models disagree. Different algorithms can read different signals in the same text.")
     return summary, table, GENRE_MODEL["metrics"]
-
 
 # ============================================================
 # CLIP image relevance
@@ -513,7 +501,6 @@ def get_clip_model():
         CLIP_MODEL.eval()
     return CLIP_MODEL, CLIP_PROCESSOR
 
-
 def clip_image_text_scores(image: Any, texts: list[str]) -> np.ndarray:
     model, processor = get_clip_model()
     inputs = processor(text=texts, images=image, return_tensors="pt", padding=True)
@@ -521,7 +508,6 @@ def clip_image_text_scores(image: Any, texts: list[str]) -> np.ndarray:
     with torch.no_grad():
         logits = model(**inputs).logits_per_image[0].detach().cpu().numpy()
     return softmax_numpy(logits)
-
 
 def evaluate_product_image(image, selected_category: str, customer_preference: str):
     if image is None:
@@ -543,12 +529,12 @@ def evaluate_product_image(image, selected_category: str, customer_preference: s
 
         selected_category_score = float(category_scores[IMAGE_PRODUCT_CATEGORIES.index(selected_category)])
         preference_prompts = [
-            f"a product photo that matches this customer preference: {customer_preference}",
-            f"a product photo that partially matches this customer preference: {customer_preference}",
-            f"a product photo that does not match this customer preference: {customer_preference}",
-            f"a product photo from the selected category: {selected_category}",
-            f"a product photo from a different category than: {selected_category}",
-        ]
+                                f"a product photo that matches this customer preference: {customer_preference}",
+                                f"a product photo that partially matches this customer preference: {customer_preference}",
+                                f"a product photo that does not match this customer preference: {customer_preference}",
+                                f"a product photo from the selected category: {selected_category}",
+                                f"a product photo from a different category than: {selected_category}",
+                            ]
         preference_scores = clip_image_text_scores(image, preference_prompts)
         match_score, partial_score, mismatch_score, sel_cat_prompt, diff_cat_prompt = (float(s) for s in preference_scores)
 
@@ -556,44 +542,41 @@ def evaluate_product_image(image, selected_category: str, customer_preference: s
         decision = "Good fit" if combined_score >= 0.65 else "Partial fit" if combined_score >= 0.45 else "Weak fit"
 
         summary = (
-            f"Selected category: {selected_category}\n"
-            f"Customer preference: {customer_preference}\n\n"
-            f"Selected category match: {selected_category_score * 100:.1f} %\n"
-            f"Customer preference match: {match_score * 100:.1f} %\n"
-            f"Partial match signal: {partial_score * 100:.1f} %\n"
-            f"Mismatch signal: {mismatch_score * 100:.1f} %\n\n"
-            f"Combined relevance score: {combined_score * 100:.1f} %\n"
-            f"Decision: {decision}\n\n"
-            "Audience interpretation:\n"
-            "The model compares the uploaded image with text descriptions. It does not know the product name "
-            "directly. It estimates whether the visual content looks similar to the selected category and preference."
-        )
+                    f"Selected category: {selected_category}\n"
+                    f"Customer preference: {customer_preference}\n\n"
+                    f"Selected category match: {selected_category_score * 100:.1f} %\n"
+                    f"Customer preference match: {match_score * 100:.1f} %\n"
+                    f"Partial match signal: {partial_score * 100:.1f} %\n"
+                    f"Mismatch signal: {mismatch_score * 100:.1f} %\n\n"
+                    f"Combined relevance score: {combined_score * 100:.1f} %\n"
+                    f"Decision: {decision}\n\n"
+                    "Audience interpretation:\n"
+                    "The model compares the uploaded image with text descriptions. It does not know the product name "
+                    "directly. It estimates whether the visual content looks similar to the selected category and preference."
+                    )
 
         prompt_table = pd.DataFrame({
-            "Check": ["Matches customer preference", "Partially matches customer preference",
-                      "Does not match customer preference", "Looks like selected category",
-                      "Looks like different category"],
-            "Score": [round(match_score, 4), round(partial_score, 4), round(mismatch_score, 4),
-                      round(sel_cat_prompt, 4), round(diff_cat_prompt, 4)],
-            "Type": ["Preference check", "Preference check", "Preference check",
-                     "Category check", "Category check"],
-        })
+                                    "Check": ["Matches customer preference", "Partially matches customer preference",
+                                                "Does not match customer preference", "Looks like selected category",
+                                                "Looks like different category"],
+                                    "Score": [round(match_score, 4), round(partial_score, 4), round(mismatch_score, 4),round(sel_cat_prompt, 4), round(diff_cat_prompt, 4)],
+                                    "Type": ["Preference check", "Preference check", "Preference check","Category check", "Category check"],
+                                    })
         prompt_table["Score %"] = (prompt_table["Score"] * 100).round(1).astype(str) + " %"
         result_table = pd.concat(
-            [prompt_table[["Type", "Check", "Score", "Score %"]], category_table[["Type", "Check", "Score", "Score %"]]],
-            ignore_index=True,
-        )
+                                [prompt_table[["Type", "Check", "Score", "Score %"]], category_table[["Type", "Check", "Score", "Score %"]]],
+                                ignore_index=True,
+                                )
         return summary, result_table
 
     except Exception as exc:
         message = (
-            "The image relevance model could not be loaded or evaluated.\n\n"
-            f"Error: {exc}\n\n"
-            "Most common fix: pip install transformers pillow\n"
-            "If you are offline, run it once with internet access so the model is cached locally."
-        )
+                    "The image relevance model could not be loaded or evaluated.\n\n"
+                    f"Error: {exc}\n\n"
+                    "Most common fix: pip install transformers pillow\n"
+                    "If you are offline, run it once with internet access so the model is cached locally."
+                    )
         return message, pd.DataFrame()
-
 
 # ============================================================
 # Startup: load catalog + train genre model
@@ -606,7 +589,6 @@ print("Product image relevance uses CLIP zero-shot model. No startup training re
 
 print("Training/loading Genre model")
 GENRE_MODEL = train_genre_bundle(optuna_trials_xgb=OPTUNA_TRIALS_XGB, optuna_trials_mlp=OPTUNA_TRIALS_MLP)
-
 
 # ============================================================
 # Dashboard
@@ -652,33 +634,28 @@ Application to show ML behavior on real-life examples:
 
 </div>
 """
-
-
 def get_all_metrics() -> pd.DataFrame:
     clip_row = pd.DataFrame([{
-        "Task": "Product image relevance", "Model": f"CLIP zero-shot ({CLIP_MODEL_ID})",
-        "Accuracy": np.nan, "F1": np.nan, "Macro F1": np.nan, "Train sec incl. Optuna": 0.0,
-        "Source": "Uploaded image + customer preference text",
-        "Best params": "No training. Zero-shot image-text similarity.",
-    }])
+                            "Task": "Product image relevance", "Model": f"CLIP zero-shot ({CLIP_MODEL_ID})",
+                            "Accuracy": np.nan, "F1": np.nan, "Macro F1": np.nan, "Train sec incl. Optuna": 0.0,
+                            "Source": "Uploaded image + customer preference text",
+                            "Best params": "No training. Zero-shot image-text similarity.",
+                            }])
     return pd.concat([clip_row, GENRE_MODEL["metrics"]], ignore_index=True)
-
 
 def get_training_sources() -> pd.DataFrame:
     return pd.DataFrame([
-        {"Dataset": "Movie recommender", "Source": MOVIE["source"], "Rows": MOVIE["rows"],
-         "Purpose": "Content-based movie recommendations from the IMDb catalog"},
-        {"Dataset": "Product image relevance", "Source": f"Uploaded image + {CLIP_MODEL_ID}",
-         "Rows": "N/A", "Purpose": "Image-category and customer preference matching"},
-        {"Dataset": "Genre classifier", "Source": GENRE_MODEL["source"], "Rows": GENRE_MODEL["rows"],
-         "Purpose": "Genre prediction from description"},
-    ])
-
+                        {"Dataset": "Movie recommender", "Source": MOVIE["source"], "Rows": MOVIE["rows"],
+                        "Purpose": "Content-based movie recommendations from the IMDb catalog"},
+                        {"Dataset": "Product image relevance", "Source": f"Uploaded image + {CLIP_MODEL_ID}",
+                        "Rows": "N/A", "Purpose": "Image-category and customer preference matching"},
+                        {"Dataset": "Genre classifier", "Source": GENRE_MODEL["source"], "Rows": GENRE_MODEL["rows"],
+                        "Purpose": "Genre prediction from description"},
+                        ])
 
 # ============================================================
 # Gradio UI
 # ============================================================
-
 with gr.Blocks(title="ML Demo - Recommender + XGBoost vs Torch MLP + CLIP") as demo:
     gr.Markdown(build_dashboard_markdown())
 
@@ -713,36 +690,29 @@ with gr.Blocks(title="ML Demo - Recommender + XGBoost vs Torch MLP + CLIP") as d
             movie_out = gr.Textbox(label="Top recommendation", lines=12, elem_classes=["prediction-box"])
             movie_table = gr.Dataframe(label="Recommended movies", interactive=False, elem_classes=["dataframe-table"])
             movie_btn.click(
-                recommend_movies,
-                [action, comedy, drama, scifi, romance, documentary, genre, rating, age, length, mood, top_n],
-                [movie_out, movie_table],
-            )
+                            recommend_movies,
+                            [action, comedy, drama, scifi, romance, documentary, genre, rating, age, length, mood, top_n],
+                            [movie_out, movie_table],
+                            )
 
         with gr.Tab("2. Product image relevance"):
             gr.Markdown(
-                "## Product image relevance\n\n"
-                "Upload a product image, choose the expected category and describe the customer preference.\n\n"
-                "This tab uses a CLIP image-text model, easy to present to non-technical users because the "
-                "audience can directly see the product image and the resulting match score."
-            )
+                            "## Product image relevance\n\n"
+                            "Upload a product image, choose the expected category and describe the customer preference.\n\n"
+                            "This tab uses a CLIP image-text model, easy to present to non-technical users because the "
+                            "audience can directly see the product image and the resulting match score."
+                        )
             with gr.Row():
                 with gr.Column(scale=1):
                     product_image = gr.Image(label="Upload product image", type="pil", sources=["upload"], image_mode="RGB")
                     selected_product_category = gr.Dropdown(IMAGE_PRODUCT_CATEGORIES, value="Tech gadget", label="Expected product category")
                     customer_preference = gr.Textbox(
-                        label="Customer preference", lines=4,
-                        value="black wireless headphones suitable for office calls and travel",
-                        placeholder="Example: lightweight running shoes for gym training",
-                    )
+                        label="Customer preference", lines=4,value="black wireless headphones suitable for office calls and travel",placeholder="Example: lightweight running shoes for gym training",)
                     product_image_btn = gr.Button("Evaluate image relevance", variant="primary")
                 with gr.Column(scale=1):
                     product_image_out = gr.Textbox(label="Image relevance result", lines=14, elem_classes=["prediction-box"])
                     product_image_scores = gr.Dataframe(label="Model scores", interactive=False, elem_classes=["dataframe-table"])
-            product_image_btn.click(
-                evaluate_product_image,
-                [product_image, selected_product_category, customer_preference],
-                [product_image_out, product_image_scores],
-            )
+            product_image_btn.click(evaluate_product_image,[product_image, selected_product_category, customer_preference],[product_image_out, product_image_scores])
 
         with gr.Tab("3. Genre classifier"):
             gr.Markdown("## Genre classification\n\nThe model receives a movie description and predicts the most likely genre.")
@@ -752,7 +722,6 @@ with gr.Blocks(title="ML Demo - Recommender + XGBoost vs Torch MLP + CLIP") as d
             genre_probs = gr.Dataframe(label="Class probabilities", interactive=False)
             genre_metrics = gr.Dataframe(label="Genre classifier metrics", interactive=False)
             genre_btn.click(predict_genre, [description], [genre_out, genre_probs, genre_metrics])
-
 
 if __name__ == "__main__":
     demo.launch(server_name="127.0.0.1", inbrowser=True, share=False, css=CUSTOM_CSS)
