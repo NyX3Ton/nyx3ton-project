@@ -18,7 +18,6 @@ try:
     from generate_inputs import generate_movie_genre, generate_movie_recommendation
 except ImportError:
     from generate_inputs import generate_movie_genre, generate_movie_recommendation
-
 # ============================================================
 # Global config
 # ============================================================
