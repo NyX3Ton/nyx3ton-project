@@ -1,31 +1,36 @@
 from __future__ import annotations
 
-import ast, json, os, re, time, optuna, torch, datetime
+import json, os, re, time, optuna, torch, datetime
 from pathlib import Path
 from typing import Any
 import gradio as gr
 import numpy as np
 import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
+from sklearn.metrics import accuracy_score, f1_score
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 from xgboost import XGBClassifier
 
 try:
-    from generate_inputs import generate_movie_genre, generate_movie_recommendation
+    from generate_inputs import generate_movie_genre
 except ImportError:
-    from generate_inputs import generate_movie_genre, generate_movie_recommendation
+    from generate_inputs import generate_movie_genre
 
 # ============================================================
 # Global config
 # ============================================================
-
 SEED = 42
 np.random.seed(SEED)
 torch.manual_seed(SEED)
+try:
+    torch.set_num_threads(max(1, os.cpu_count() or 1))
+    torch.set_num_interop_threads(1)
+except RuntimeError:
+    # Thread pools may already be initialized in some environments.
+    pass
+
 optuna.logging.set_verbosity(optuna.logging.WARNING)
 
 os.environ.setdefault("NO_PROXY", "localhost,127.0.0.1,::1")
@@ -43,14 +48,18 @@ MOODS = ["Relax", "Funny", "Emotional", "Adrenaline", "Mind-bending"]
 
 IMAGE_PRODUCT_CATEGORIES = ["Tech gadget", "Gaming accessory", "Fitness product", "Travel gear","Food product", "Fashion item", "Home appliance", "Book","Musical instrument", "Sports equipment", "Office equipment", "Beauty product"]
 
-OPTUNA_TRIALS_XGB = int(os.getenv("OPTUNA_TRIALS_XGB", "12"))
-OPTUNA_TRIALS_MLP = int(os.getenv("OPTUNA_TRIALS_MLP", "8"))
+OPTUNA_TRIALS_XGB = int(os.getenv("OPTUNA_TRIALS_XGB", "15"))
+OPTUNA_TRIALS_MLP = int(os.getenv("OPTUNA_TRIALS_MLP", "15"))
 MAX_GENRE_ROWS = int(os.getenv("MAX_GENRE_ROWS", "20000"))
 
 CLIP_MODEL_ID = os.getenv("CLIP_MODEL_ID", "openai/clip-vit-base-patch32")
-CLIP_DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+OPENVINO_DEVICE = os.getenv("OPENVINO_DEVICE", "CPU")
+
+CLIP_DEVICE = None
+CLIP_BACKEND = None
 CLIP_MODEL = None
 CLIP_PROCESSOR = None
+CLIP_TEXT_INPUT_CACHE: dict[tuple[str, ...], dict[str, torch.Tensor]] = {}
 
 MOVIE_CSV_NAMES = ["IMDb_Genres_real_enriched.csv", "IMDb_Genres_real_enriched.xlsx"]
 
@@ -75,25 +84,23 @@ SCORE_WEIGHTS = {"pref": 0.40, "mood": 0.20, "genre": 0.15, "rating": 0.15, "len
 CUSTOM_CSS = """
 .gradio-container { max-width: 1550px !important; }
 .hero-card {
-    padding: 24px; border-radius: 20px;
-    background: linear-gradient(135deg, rgba(25, 80, 170, 0.16), rgba(120, 60, 180, 0.14));
-    border: 1px solid rgba(120, 120, 120, 0.20); margin-bottom: 16px;
-}
+            padding: 24px; border-radius: 20px;
+            background: linear-gradient(135deg, rgba(25, 80, 170, 0.16), rgba(120, 60, 180, 0.14));
+            border: 1px solid rgba(120, 120, 120, 0.20); margin-bottom: 16px;
+            }
 .metric-grid { display: grid; grid-template-columns: repeat(4, minmax(180px, 1fr)); gap: 12px; }
 .metric-card {
-    padding: 15px 18px; border-radius: 16px; background: rgba(120, 120, 120, 0.09);
-    border: 1px solid rgba(120, 120, 120, 0.16); min-height: 100px;
-}
+                padding: 15px 18px; border-radius: 16px; background: rgba(120, 120, 120, 0.09);
+                border: 1px solid rgba(120, 120, 120, 0.16); min-height: 100px;
+                }
 .metric-card h3 { margin-top: 0; margin-bottom: 6px; font-size: 1.45rem; }
 .small-note { opacity: 0.82; font-size: 0.92rem; }
 .prediction-box textarea { font-size: 1.04rem !important; line-height: 1.45 !important; }
 .dataframe-table { font-size: 0.92rem; }
 """
-
 # ============================================================
 # Small helpers
 # ============================================================
-
 def safe_name(value: str) -> str:
     value = re.sub(r"[^a-z0-9]+", "_", value.lower().strip())
     return value.strip("_") or "study"
@@ -126,20 +133,18 @@ def read_table_file(path: Path, **kwargs) -> pd.DataFrame:
 
 def split_data(X, y):
     try:
-        return train_test_split(X, y, test_size=0.20, stratify=y, random_state=SEED)
+        return train_test_split(X, y, test_size= 0.2, stratify=y, random_state=SEED)
     except ValueError:
-        return train_test_split(X, y, test_size=0.20, random_state=SEED)
+        return train_test_split(X, y, test_size= 0.2, random_state=SEED)
 
 def softmax_numpy(values: np.ndarray) -> np.ndarray:
     values = np.asarray(values, dtype=np.float32)
     values = values - np.max(values)
     exp_values = np.exp(values)
     return exp_values / np.sum(exp_values)
-
 # ============================================================
 # Persistent Optuna helpers (used by the genre classifier)
 # ============================================================
-
 def get_or_create_study(study_name: str, direction: str = "maximize") -> optuna.Study:
     return optuna.create_study(
                                 study_name=study_name,
@@ -160,26 +165,23 @@ def ensure_study_trials(study: optuna.Study, objective, required_trials: int, ti
     missing = required_trials - existing
     print(f"Optuna study '{study.study_name}' running {missing} new trials ({existing}/{required_trials}).")
     study.optimize(objective, n_trials=missing, timeout=timeout_sec, show_progress_bar=False)
-
 # ============================================================
 # Movie recommender (content-based, no training)
 # ============================================================
-
 def load_movie_catalog() -> dict:
-    """Load the enriched IMDb CSV and pre-compute the numeric columns used for scoring."""
     path = find_existing_input(MOVIE_CSV_NAMES)
     if path is None:
         raise FileNotFoundError(
-            "Movie catalog not found. Place 'IMDb_Genres_real_enriched.csv' next to app.py "
-            f"or in the Inputs folder ({INPUTS_DIR})."
-        )
+                                "Movie catalog not found. Place 'IMDb_Genres_real_enriched.csv' next to app.py "
+                                f"or in the Inputs folder ({INPUTS_DIR})."
+                                )
 
     df = read_table_file(path)
 
     numeric_cols = [
-        "imdb_rating_10", "runtime_minutes", "release_year", "popularity_score",
-        *PREF_COL.values(), *MOOD_COL.values(),
-    ]
+                    "imdb_rating_10", "runtime_minutes", "release_year", "popularity_score",
+                    *PREF_COL.values(), *MOOD_COL.values(),
+                    ]
     for col in numeric_cols:
         if col not in df.columns:
             df[col] = 0.0
@@ -194,7 +196,6 @@ def load_movie_catalog() -> dict:
     df["_genres_lc"] = df["all_genres"].str.lower()
     return {"df": df.reset_index(drop=True), "source": path.name, "rows": len(df)}
 
-
 def recommend_movies(action, comedy, drama, scifi, romance, documentary, genre, min_rating, max_age, length, mood, top_n: int = 8):
     df = MOVIE["df"]
     weights = {
@@ -204,7 +205,7 @@ def recommend_movies(action, comedy, drama, scifi, romance, documentary, genre, 
                 "scifi": scifi, 
                 "romance": romance, 
                 "documentary": documentary,
-            }
+                }
     wsum = sum(weights.values()) or 1.0
 
     pref = sum(w * df[PREF_COL[k]] for k, w in weights.items()) / wsum
@@ -220,7 +221,7 @@ def recommend_movies(action, comedy, drama, scifi, romance, documentary, genre, 
     min_year = current_year - float(max_age)
     notes = []
     for stage in range(3):
-        keep = scored["_match"] > -1  # all
+        keep = scored["_match"] > -1
         if stage < 2:
             keep &= scored["imdb_rating_10"] >= float(min_rating)
         if stage < 1:
@@ -264,7 +265,6 @@ def recommend_movies(action, comedy, drama, scifi, romance, documentary, genre, 
         summary += "\n\nNote: " + " ".join(notes)
 
     return summary, table
-
 # ============================================================
 # Genre classifier (XGBoost vs Torch MLP)
 # ============================================================
@@ -320,7 +320,6 @@ def load_genre_dataframe() -> tuple[pd.DataFrame, str]:
     if len(result) > MAX_GENRE_ROWS:
         result = result.sample(n=MAX_GENRE_ROWS, random_state=SEED)
     return result, genre_path.name
-
 
 def train_multi_mlp(X, y, optuna_trials: int = OPTUNA_TRIALS_MLP, study_name: str = "multi_mlp") -> tuple[nn.Module, float, dict]:
     start_total = time.perf_counter()
@@ -382,7 +381,6 @@ def train_multi_mlp(X, y, optuna_trials: int = OPTUNA_TRIALS_MLP, study_name: st
     final_model = MultiMLP(X.shape[1], n_classes, int(best["hidden_1"]), int(best["hidden_2"]), float(best["dropout"]))
     final_model = run_training(final_model, X, y, float(best["lr"]), float(best["weight_decay"]),int(best["batch_size"]), int(best["epochs"]))
     return final_model, time.perf_counter() - start_total, best
-
 
 def train_genre_bundle(optuna_trials_xgb: int = OPTUNA_TRIALS_XGB, optuna_trials_mlp: int = OPTUNA_TRIALS_MLP) -> dict:
     df, source = load_genre_dataframe()
@@ -462,7 +460,6 @@ def train_genre_bundle(optuna_trials_xgb: int = OPTUNA_TRIALS_XGB, optuna_trials
 
     return {"xgb": xgb, "mlp": mlp, "vectorizer": vectorizer, "labels": labels,"metrics": metrics, "source": source, "rows": len(df)}
 
-
 def predict_genre(description):
     X = GENRE_MODEL["vectorizer"].transform([description or ""])
     X_dense = to_dense_float32(X)
@@ -485,31 +482,130 @@ def predict_genre(description):
     summary += ("Models agree. This is an example of a consistent signal." if xgb_label == mlp_label
                 else "Models disagree. Different algorithms can read different signals in the same text.")
     return summary, table, GENRE_MODEL["metrics"]
-
 # ============================================================
 # CLIP image relevance
 # ============================================================
+def load_clip_processor():
+    from transformers import CLIPProcessor
+
+    try:
+        return CLIPProcessor.from_pretrained(CLIP_MODEL_ID,use_fast=False)
+    except TypeError:
+        return CLIPProcessor.from_pretrained(CLIP_MODEL_ID)
 
 def get_clip_model():
-    global CLIP_MODEL, CLIP_PROCESSOR
-    if CLIP_MODEL is None or CLIP_PROCESSOR is None:
-        from transformers import CLIPModel, CLIPProcessor
-        print(f"Loading CLIP model: {CLIP_MODEL_ID} on {CLIP_DEVICE}")
-        CLIP_PROCESSOR = CLIPProcessor.from_pretrained(CLIP_MODEL_ID)
+    global CLIP_MODEL, CLIP_PROCESSOR, CLIP_DEVICE, CLIP_BACKEND
+
+    if CLIP_MODEL is not None and CLIP_PROCESSOR is not None:
+        return CLIP_MODEL, CLIP_PROCESSOR, CLIP_DEVICE, CLIP_BACKEND
+
+    CLIP_PROCESSOR = load_clip_processor()
+
+    if torch.cuda.is_available():
+        from transformers import CLIPModel
+
+        CLIP_DEVICE = "cuda"
+        CLIP_BACKEND = "Torch CUDA"
+
+        print(f"Loading CLIP model: {CLIP_MODEL_ID} on CUDA")
         CLIP_MODEL = CLIPModel.from_pretrained(CLIP_MODEL_ID)
         CLIP_MODEL.to(CLIP_DEVICE)
         CLIP_MODEL.eval()
-    return CLIP_MODEL, CLIP_PROCESSOR
+
+        return CLIP_MODEL, CLIP_PROCESSOR, CLIP_DEVICE, CLIP_BACKEND
+
+    try:
+        from optimum.intel.openvino import OVModelForZeroShotImageClassification
+
+        CLIP_DEVICE = "openvino"
+        CLIP_BACKEND = f"OpenVINO {OPENVINO_DEVICE}"
+
+        print(f"Loading CLIP model: {CLIP_MODEL_ID} with {CLIP_BACKEND}")
+        CLIP_MODEL = OVModelForZeroShotImageClassification.from_pretrained(CLIP_MODEL_ID,export=True)
+
+        return CLIP_MODEL, CLIP_PROCESSOR, CLIP_DEVICE, CLIP_BACKEND
+
+    except Exception as exc:
+        print(f"OpenVINO CLIP fallback failed. Using Torch CPU instead. Reason: {exc}")
+
+    from transformers import CLIPModel
+
+    CLIP_DEVICE = "cpu"
+    CLIP_BACKEND = "Torch CPU"
+
+    print(f"Loading CLIP model: {CLIP_MODEL_ID} on CPU")
+    CLIP_MODEL = CLIPModel.from_pretrained(CLIP_MODEL_ID)
+    CLIP_MODEL.to(CLIP_DEVICE)
+    CLIP_MODEL.eval()
+
+    return CLIP_MODEL, CLIP_PROCESSOR, CLIP_DEVICE, CLIP_BACKEND
+
+def get_cached_clip_text_inputs(texts: list[str], device: str) -> dict[str, torch.Tensor]:
+    _, processor, _, _ = get_clip_model()
+    key = tuple(texts)
+
+    if key not in CLIP_TEXT_INPUT_CACHE:
+        text_inputs = processor(
+                                text=list(texts),
+                                return_tensors="pt",
+                                padding=True,
+                                truncation=True,
+                                )
+
+        CLIP_TEXT_INPUT_CACHE[key] = {
+                                    name: value.detach().cpu()
+                                    for name, value in text_inputs.items()
+                                    }
+
+    cached = CLIP_TEXT_INPUT_CACHE[key]
+
+    if device in {"cuda", "cpu"}:
+        return {
+                name: value.to(device)
+                for name, value in cached.items()
+                }
+
+    return cached
+
+def get_clip_image_inputs(image: Any, device: str) -> dict[str, torch.Tensor]:
+    _, processor, _, _ = get_clip_model()
+
+    image_inputs = processor(
+                            images=image,
+                            return_tensors="pt",
+                            )
+
+    if device in {"cuda", "cpu"}:
+        return {
+                name: value.to(device)
+                for name, value in image_inputs.items()
+                }
+
+    return image_inputs
 
 def clip_image_text_scores(image: Any, texts: list[str]) -> np.ndarray:
-    model, processor = get_clip_model()
-    inputs = processor(text=texts, images=image, return_tensors="pt", padding=True)
-    inputs = {key: value.to(CLIP_DEVICE) for key, value in inputs.items()}
-    with torch.no_grad():
-        logits = model(**inputs).logits_per_image[0].detach().cpu().numpy()
+    model, _, device, _ = get_clip_model()
+
+    text_inputs = get_cached_clip_text_inputs(texts, device)
+    image_inputs = get_clip_image_inputs(image, device)
+    inputs = {**text_inputs, **image_inputs}
+
+    if device in {"cuda", "cpu"}:
+        with torch.inference_mode():
+            logits = model(**inputs).logits_per_image[0].detach().cpu().numpy()
+    else:
+        output = model(**inputs)
+        logits = output.logits_per_image[0]
+
+        if hasattr(logits, "detach"):
+            logits = logits.detach().cpu().numpy()
+        else:
+            logits = np.asarray(logits)
+
     return softmax_numpy(logits)
 
 def evaluate_product_image(image, selected_category: str, customer_preference: str):
+    _, _, _, clip_backend = get_clip_model()
     if image is None:
         return "Please upload a JPG, JPEG or PNG product image first.", pd.DataFrame()
     if not customer_preference or not customer_preference.strip():
@@ -538,10 +634,13 @@ def evaluate_product_image(image, selected_category: str, customer_preference: s
         preference_scores = clip_image_text_scores(image, preference_prompts)
         match_score, partial_score, mismatch_score, sel_cat_prompt, diff_cat_prompt = (float(s) for s in preference_scores)
 
-        combined_score = 0.45 * selected_category_score + 0.45 * match_score + 0.10 * sel_cat_prompt
-        decision = "Good fit" if combined_score >= 0.65 else "Partial fit" if combined_score >= 0.45 else "Weak fit"
+        combined_score = (0.75 * match_score + 0.15 * selected_category_score + 0.10 * sel_cat_prompt - 0.20 * mismatch_score)
+        combined_score = float(np.clip(combined_score, 0.0, 1.0))
+        
+        decision = "Good fit" if combined_score >= 0.51 else "Partial fit" if combined_score >= 0.33 else "Weak fit"
 
         summary = (
+                    f"CLIP backend: {clip_backend}\n\n"
                     f"Selected category: {selected_category}\n"
                     f"Customer preference: {customer_preference}\n\n"
                     f"Selected category match: {selected_category_score * 100:.1f} %\n"
@@ -581,7 +680,6 @@ def evaluate_product_image(image, selected_category: str, customer_preference: s
 # ============================================================
 # Startup: load catalog + train genre model
 # ============================================================
-
 print("Loading movie catalog (content-based recommender, no training)")
 MOVIE = load_movie_catalog()
 
@@ -593,7 +691,6 @@ GENRE_MODEL = train_genre_bundle(optuna_trials_xgb=OPTUNA_TRIALS_XGB, optuna_tri
 # ============================================================
 # Dashboard
 # ============================================================
-
 def build_dashboard_markdown() -> str:
     total_rows = MOVIE["rows"] + GENRE_MODEL["rows"]
     return f"""
@@ -652,7 +749,6 @@ def get_training_sources() -> pd.DataFrame:
                         {"Dataset": "Genre classifier", "Source": GENRE_MODEL["source"], "Rows": GENRE_MODEL["rows"],
                         "Purpose": "Genre prediction from description"},
                         ])
-
 # ============================================================
 # Gradio UI
 # ============================================================
@@ -667,10 +763,10 @@ with gr.Blocks(title="ML Demo - Recommender + XGBoost vs Torch MLP + CLIP") as d
 
         with gr.Tab("1. Movie recommender"):
             gr.Markdown(
-                "## Movie recommendation\n\n"
-                "Set your taste, mood and constraints. The app scores every movie in "
-                f"`{MOVIE['source']}` ({MOVIE['rows']} titles) and returns the best matches."
-            )
+                        "## Movie recommendation\n\n"
+                        "Set your taste, mood and constraints. The app scores every movie in "
+                        f"`{MOVIE['source']}` ({MOVIE['rows']} titles) and returns the best matches."
+                        )
             with gr.Row():
                 with gr.Column():
                     action = gr.Slider(0, 1, value=0.7, step=0.1, label="Likes action")
@@ -697,10 +793,10 @@ with gr.Blocks(title="ML Demo - Recommender + XGBoost vs Torch MLP + CLIP") as d
 
         with gr.Tab("2. Product image relevance"):
             gr.Markdown(
-                            "## Product image relevance\n\n"
-                            "Upload a product image, choose the expected category and describe the customer preference.\n\n"
-                            "This tab uses a CLIP image-text model, easy to present to non-technical users because the "
-                            "audience can directly see the product image and the resulting match score."
+                        "## Product image relevance\n\n"
+                        "Upload a product image, choose the expected category and describe the customer preference.\n\n"
+                        "This tab uses a CLIP image-text model, easy to present to non-technical users because the "
+                        "audience can directly see the product image and the resulting match score."
                         )
             with gr.Row():
                 with gr.Column(scale=1):
