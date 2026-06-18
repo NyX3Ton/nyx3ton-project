@@ -14,7 +14,7 @@ from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 from xgboost import XGBClassifier
 # ============================================================
-# Global config
+# 1. Global config
 # ============================================================
 SEED = 42
 np.random.seed(SEED)
@@ -23,7 +23,6 @@ try:
     torch.set_num_threads(max(1, os.cpu_count() or 1))
     torch.set_num_interop_threads(1)
 except RuntimeError:
-    # Thread pools may already be initialized in some environments.
     pass
 
 # Auto-detect GPU; fall back to CPU if CUDA is unavailable.
@@ -48,14 +47,15 @@ MOODS = ["Relax", "Funny", "Emotional", "Adrenaline", "Mind-bending"]
 
 IMAGE_PRODUCT_CATEGORIES = ["Tech gadget", "Gaming accessory", "Fitness product", "Travel gear","Food product", "Fashion item", "Home appliance", "Book","Musical instrument", "Sports equipment", "Office equipment", "Beauty product"]
 
-OPTUNA_TRIALS_XGB = int(os.getenv("OPTUNA_TRIALS_XGB", "8"))
-OPTUNA_TRIALS_MLP = int(os.getenv("OPTUNA_TRIALS_MLP", "8"))
+OPTUNA_TRIALS_XGB = int(os.getenv("OPTUNA_TRIALS_XGB", "0"))
+OPTUNA_TRIALS_MLP = int(os.getenv("OPTUNA_TRIALS_MLP", "0"))
 #MAX_GENRE_ROWS = int(os.getenv("MAX_GENRE_ROWS", "20000"))
 
 # Playlist creator (Spotify) settings
 SPOTIFY_CSV_NAMES = ["spotify_data.csv", "spotify_1million_tracks.csv", "spotify_tracks.csv"]
 #SPOTIFY_AUDIO_FEATURES = ["danceability", "energy", "loudness", "speechiness", "acousticness","instrumentalness", "liveness", "valence", "tempo"]
 SPOTIFY_AUDIO_FEATURES = ["danceability", "energy", "speechiness", "acousticness", "instrumentalness", "liveness", "valence", "tempo"]
+
 # Extra (non-audio) signal the models can use; sliders/taste-match still use SPOTIFY_AUDIO_FEATURES only.
 SPOTIFY_EXTRA_FEATURES = ["popularity", "year", "duration_ms", "time_signature"]
 SPOTIFY_MODEL_FEATURES = SPOTIFY_AUDIO_FEATURES + SPOTIFY_EXTRA_FEATURES
@@ -110,7 +110,7 @@ CUSTOM_CSS = """
 .dataframe-table { font-size: 0.92rem; }
 """
 # ============================================================
-# Small helpers
+# 2. Small helpers
 # ============================================================
 def safe_name(value: str) -> str:
     value = re.sub(r"[^a-z0-9]+", "_", value.lower().strip())
@@ -144,9 +144,9 @@ def read_table_file(path: Path, **kwargs) -> pd.DataFrame:
 
 def split_data(X, y):
     try:
-        return train_test_split(X, y, test_size= 0.25, stratify=y, random_state=SEED)
+        return train_test_split(X, y, test_size= 0.2, stratify=y, random_state=SEED)
     except ValueError:
-        return train_test_split(X, y, test_size= 0.25, random_state=SEED)
+        return train_test_split(X, y, test_size= 0.2, random_state=SEED)
 
 def softmax_numpy(values: np.ndarray) -> np.ndarray:
     values = np.asarray(values, dtype=np.float32)
@@ -154,7 +154,7 @@ def softmax_numpy(values: np.ndarray) -> np.ndarray:
     exp_values = np.exp(values)
     return exp_values / np.sum(exp_values)
 # ============================================================
-# Persistent Optuna helpers (used by the genre classifier)
+# 3. Persistent Optuna helpers (used by the genre classifier)
 # ============================================================
 def get_or_create_study(study_name: str, direction: str = "maximize") -> optuna.Study:
     return optuna.create_study(
@@ -177,7 +177,7 @@ def ensure_study_trials(study: optuna.Study, objective, required_trials: int, ti
     print(f"Optuna study '{study.study_name}' running {missing} new trials ({existing}/{required_trials}).")
     study.optimize(objective, n_trials=missing, timeout=timeout_sec, show_progress_bar=False)
 # ============================================================
-# Movie recommender (content-based, no training)
+# 4. Movie recommender (content-based, no training)
 # ============================================================
 def load_movie_catalog() -> dict:
     path = find_existing_input(MOVIE_CSV_NAMES)
@@ -277,7 +277,7 @@ def recommend_movies(action, comedy, drama, scifi, romance, documentary, genre, 
 
     return summary, table
 # ============================================================
-# Genre classifier (XGBoost vs Torch MLP)
+# 5. Genre classifier (XGBoost vs Torch MLP)
 # ============================================================
 class MultiMLP(nn.Module):
     def __init__(self, n_features: int, n_classes: int, hidden_1: int = 256, hidden_2: int = 128, dropout: float = 0.20):
@@ -313,6 +313,12 @@ def load_spotify_dataframe() -> tuple[pd.DataFrame, str]:
     df["genre"] = df["genre"].astype(str)
     df["artist_name"] = df["artist_name"].fillna("").astype(str)
     df["track_name"] = df["track_name"].fillna("").astype(str)
+
+    dedupe_key = "track_id" if "track_id" in df.columns else ["artist_name", "track_name"]
+    before = len(df)
+    df = df.drop_duplicates(subset=dedupe_key, keep="first").copy()
+    if len(df) < before:
+        print(f"Removed {before - len(df)} duplicate track(s); kept first occurrence (its genre).")
 
     top_genres = df["genre"].value_counts().head(TOP_GENRES_N).index.tolist()
     df = df[df["genre"].isin(top_genres)].copy()
@@ -366,8 +372,7 @@ def train_multi_mlp(X, y, optuna_trials: int = OPTUNA_TRIALS_MLP, study_name: st
         return model
 
     if optuna_trials <= 0:
-        best = {"hidden_1": 320, "hidden_2": 256, "dropout": 0.02, "lr": 0.002,
-                "weight_decay": 0.000015, "batch_size": 256, "epochs": 220}
+        best = {"hidden_1": 320, "hidden_2": 256, "dropout": 0.026, "lr": 0.002, "weight_decay": 0.000015, "batch_size": 256, "epochs": 220}
     else:
         def objective(trial: optuna.Trial) -> float:
             torch.manual_seed(SEED)
@@ -404,24 +409,25 @@ def train_playlist_bundle(optuna_trials_xgb: int = OPTUNA_TRIALS_XGB, optuna_tri
     label_to_id = {label: idx for idx, label in enumerate(labels)}
     y = df["genre"].map(label_to_id).to_numpy()
 
-    scaler = StandardScaler()
-    X = scaler.fit_transform(df[SPOTIFY_MODEL_FEATURES].to_numpy(dtype=np.float32)).astype(np.float32)
-
-    X_train, X_test, y_train, y_test = split_data(X, y)
+    X_raw = df[SPOTIFY_MODEL_FEATURES].to_numpy(dtype=np.float32)
+    X_raw_train, X_raw_test, y_train, y_test = split_data(X_raw, y)
+    scaler = StandardScaler().fit(X_raw_train)
+    X_train = scaler.transform(X_raw_train).astype(np.float32)
+    X_test = scaler.transform(X_raw_test).astype(np.float32)
     X_xgb_train, X_xgb_val, y_xgb_train, y_xgb_val = split_data(X_train, y_train)
-    study_prefix = safe_name(f"playlist_{source}_{X.shape[1]}feat_{len(labels)}genres")
+    study_prefix = safe_name(f"playlist_{source}_{X_train.shape[1]}feat_{len(labels)}genres")
 
     if optuna_trials_xgb <= 0:
-        best_xgb_params = {"n_estimators": 600, "max_depth": 8, "learning_rate": 0.05,
-                            "subsample": 0.8, "colsample_bytree": 0.56, "min_child_weight": 2.4,
+        best_xgb_params = {"n_estimators": 600, "max_depth": 12, "learning_rate": 0.03,
+                            "subsample": 0.8, "colsample_bytree": 0.58, "min_child_weight": 2.4,
                             "gamma": 0.1, "reg_alpha": 0.54, "reg_lambda": 0.02}
         xgb_time = 0.0
     else:
         def xgb_objective(trial: optuna.Trial) -> float:
             params = {
-                        "n_estimators": trial.suggest_int("n_estimators", 300, 1200, step=100),
-                        "max_depth": trial.suggest_int("max_depth", 5, 8),
-                        "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.1, log=True),
+                        "n_estimators": trial.suggest_int("n_estimators", 600, 1200, step=100),
+                        "max_depth": trial.suggest_int("max_depth", 8, 15),
+                        "learning_rate": trial.suggest_float("learning_rate", 0.001, 0.1, log=True),
                         "subsample": trial.suggest_float("subsample", 0.5, 1.0),
                         "colsample_bytree": trial.suggest_float("colsample_bytree", 0.5, 1.0),
                         "min_child_weight": trial.suggest_float("min_child_weight", 1.0, 10.0),
@@ -429,7 +435,7 @@ def train_playlist_bundle(optuna_trials_xgb: int = OPTUNA_TRIALS_XGB, optuna_tri
                         "reg_alpha": trial.suggest_float("reg_alpha", 0.01, 1.0, log=True),
                         "reg_lambda": trial.suggest_float("reg_lambda", 0.00005, 1, log=True),
                         "eval_metric": "mlogloss",
-                        "early_stopping_rounds": 50,
+                        "early_stopping_rounds": 25,
                         "random_state": SEED, 
                         "n_jobs": 8, 
                         "device": XGB_DEVICE,
@@ -452,9 +458,13 @@ def train_playlist_bundle(optuna_trials_xgb: int = OPTUNA_TRIALS_XGB, optuna_tri
 
     mlp, mlp_time, best_mlp_params = train_multi_mlp(X_train, y_train, optuna_trials=optuna_trials_mlp, study_name=f"{study_prefix}_torch_mlp")
 
-    xgb_pred = xgb.predict(X_test)
+    xgb_proba = xgb.predict_proba(X_test)
+    xgb_pred = np.argmax(xgb_proba, axis=1)
     with torch.no_grad():
-        mlp_pred = np.argmax(torch.softmax(mlp(torch.tensor(np.asarray(X_test, dtype=np.float32)).to(DEVICE)), dim=1).cpu().numpy(), axis=1)
+        mlp_proba = torch.softmax(mlp(torch.tensor(np.asarray(X_test, dtype=np.float32)).to(DEVICE)), dim=1).cpu().numpy()
+    mlp_pred = np.argmax(mlp_proba, axis=1)
+    ens_proba = 0.5 * (xgb_proba + mlp_proba)
+    ens_pred = np.argmax(ens_proba, axis=1)
 
     metrics = pd.DataFrame([
                             {"Task": "Playlist creator", "Model": "XGBoost",
@@ -467,6 +477,11 @@ def train_playlist_bundle(optuna_trials_xgb: int = OPTUNA_TRIALS_XGB, optuna_tri
                                 "Macro F1": round(float(f1_score(y_test, mlp_pred, average="macro")), 4),
                                 "Train sec incl. Optuna": round(float(mlp_time), 3), "Source": source,
                                 "Best params": json.dumps(best_mlp_params, ensure_ascii=False)},
+                            {"Task": "Playlist creator", "Model": "Ensemble (soft vote)",
+                                "Accuracy": round(float(accuracy_score(y_test, ens_pred)), 4),
+                                "Macro F1": round(float(f1_score(y_test, ens_pred, average="macro")), 4),
+                                "Train sec incl. Optuna": round(float(xgb_time + mlp_time), 3), "Source": source,
+                                "Best params": "Average of XGBoost and Torch MLP probabilities (0.5 / 0.5)"},
                             ])
 
     catalog = df.sample(n=min(len(df), PLAYLIST_CANDIDATES), random_state=SEED).reset_index(drop=True)
@@ -549,7 +564,7 @@ def create_playlist(target_genre, energy, danceability, valence, acousticness, t
         summary += "\n\nNote: " + " ".join(notes)
     return summary, xgb_table, mlp_table, PLAYLIST_MODEL["metrics"]
 # ============================================================
-# CLIP image relevance
+# 6. CLIP image relevance
 # ============================================================
 def load_clip_processor():
     from transformers import CLIPProcessor
@@ -739,7 +754,7 @@ def evaluate_product_image(image, selected_category: str, customer_preference: s
         return message, pd.DataFrame()
 
 # ============================================================
-# Startup: load catalog + train genre model
+# 7. Startup: load catalog + train genre model
 # ============================================================
 print("Loading movie catalog (content-based recommender, no training)")
 MOVIE = load_movie_catalog()
@@ -750,7 +765,7 @@ print("Training/loading Playlist models (XGBoost vs Torch MLP)")
 PLAYLIST_MODEL = train_playlist_bundle(optuna_trials_xgb=OPTUNA_TRIALS_XGB, optuna_trials_mlp=OPTUNA_TRIALS_MLP)
 
 # ============================================================
-# Dashboard
+# 8. Dashboard
 # ============================================================
 def build_dashboard_markdown() -> str:
     total_rows = MOVIE["rows"] + PLAYLIST_MODEL["rows"]
@@ -811,7 +826,7 @@ def get_training_sources() -> pd.DataFrame:
                         "Purpose": "Build a playlist from audio features (XGBoost vs Torch MLP)"},
                         ])
 # ============================================================
-# Gradio UI
+# 9. Gradio UI
 # ============================================================
 with gr.Blocks(title="ML Demo - Recommender + XGBoost vs Torch MLP + CLIP") as demo:
     gr.Markdown(build_dashboard_markdown())
