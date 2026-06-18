@@ -56,12 +56,9 @@ OPTUNA_TRIALS_MLP = int(os.getenv("OPTUNA_TRIALS_MLP", "8"))
 SPOTIFY_CSV_NAMES = ["spotify_data.csv", "spotify_1million_tracks.csv", "spotify_tracks.csv"]
 #SPOTIFY_AUDIO_FEATURES = ["danceability", "energy", "loudness", "speechiness", "acousticness","instrumentalness", "liveness", "valence", "tempo"]
 SPOTIFY_AUDIO_FEATURES = ["danceability", "energy", "speechiness", "acousticness", "instrumentalness", "liveness", "valence", "tempo"]
-# Extra (non-audio) signal the models can use; sliders/taste-match still use SPOTIFY_AUDIO_FEATURES only.
-SPOTIFY_EXTRA_FEATURES = ["popularity", "year", "duration_ms", "time_signature"]
-SPOTIFY_MODEL_FEATURES = SPOTIFY_AUDIO_FEATURES + SPOTIFY_EXTRA_FEATURES
 TOP_GENRES_N = int(os.getenv("TOP_GENRES_N", "14"))
 MAX_SPOTIFY_ROWS = int(os.getenv("MAX_SPOTIFY_ROWS", "1048000"))
-PLAYLIST_CANDIDATES = int(os.getenv("PLAYLIST_CANDIDATES", "10000"))
+PLAYLIST_CANDIDATES = int(os.getenv("PLAYLIST_CANDIDATES", "262000"))
 
 CLIP_MODEL_ID = os.getenv("CLIP_MODEL_ID", "openai/clip-vit-base-patch32")
 OPENVINO_DEVICE = os.getenv("OPENVINO_DEVICE", "CPU")
@@ -299,17 +296,19 @@ def load_spotify_dataframe() -> tuple[pd.DataFrame, str]:
                                 f"or in the Inputs folder ({INPUTS_DIR})."
                                 )
     df = read_table_file(path, low_memory=False)
-    needed = ["artist_name", "track_name", "genre", *SPOTIFY_MODEL_FEATURES]
+    needed = ["artist_name", "track_name", "genre", *SPOTIFY_AUDIO_FEATURES]
     missing = [c for c in needed if c not in df.columns]
     if missing:
         raise ValueError(f"Spotify file {path.name} is missing columns: {missing}")
 
-    for col in SPOTIFY_MODEL_FEATURES:
-        if col not in df.columns:
-            df[col] = 0.0
+    for col in SPOTIFY_AUDIO_FEATURES:
         df[col] = pd.to_numeric(df[col], errors="coerce")
+    for col in ("popularity", "year"):
+        if col not in df.columns:
+            df[col] = 0
+        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
 
-    df = df.dropna(subset=["genre", *SPOTIFY_MODEL_FEATURES]).copy()
+    df = df.dropna(subset=["genre", *SPOTIFY_AUDIO_FEATURES]).copy()
     df["genre"] = df["genre"].astype(str)
     df["artist_name"] = df["artist_name"].fillna("").astype(str)
     df["track_name"] = df["track_name"].fillna("").astype(str)
@@ -366,8 +365,8 @@ def train_multi_mlp(X, y, optuna_trials: int = OPTUNA_TRIALS_MLP, study_name: st
         return model
 
     if optuna_trials <= 0:
-        best = {"hidden_1": 320, "hidden_2": 256, "dropout": 0.02, "lr": 0.002,
-                "weight_decay": 0.000015, "batch_size": 256, "epochs": 220}
+        best = {"hidden_1": 256, "hidden_2": 128, "dropout": 0.1, "lr": 0.005,
+                "weight_decay": 1e-4, "batch_size": 256, "epochs": 200}
     else:
         def objective(trial: optuna.Trial) -> float:
             torch.manual_seed(SEED)
@@ -405,16 +404,16 @@ def train_playlist_bundle(optuna_trials_xgb: int = OPTUNA_TRIALS_XGB, optuna_tri
     y = df["genre"].map(label_to_id).to_numpy()
 
     scaler = StandardScaler()
-    X = scaler.fit_transform(df[SPOTIFY_MODEL_FEATURES].to_numpy(dtype=np.float32)).astype(np.float32)
+    X = scaler.fit_transform(df[SPOTIFY_AUDIO_FEATURES].to_numpy(dtype=np.float32)).astype(np.float32)
 
     X_train, X_test, y_train, y_test = split_data(X, y)
     X_xgb_train, X_xgb_val, y_xgb_train, y_xgb_val = split_data(X_train, y_train)
     study_prefix = safe_name(f"playlist_{source}_{X.shape[1]}feat_{len(labels)}genres")
 
     if optuna_trials_xgb <= 0:
-        best_xgb_params = {"n_estimators": 600, "max_depth": 8, "learning_rate": 0.05,
-                            "subsample": 0.8, "colsample_bytree": 0.56, "min_child_weight": 2.4,
-                            "gamma": 0.1, "reg_alpha": 0.54, "reg_lambda": 0.02}
+        best_xgb_params = {"n_estimators": 400, "max_depth": 6, "learning_rate": 0.007,
+                            "subsample": 0.9, "colsample_bytree": 0.76, "min_child_weight": 5.5,
+                            "gamma": 0.4, "reg_alpha": 0.137, "reg_lambda": 0.0267}
         xgb_time = 0.0
     else:
         def xgb_objective(trial: optuna.Trial) -> float:
@@ -470,7 +469,7 @@ def train_playlist_bundle(optuna_trials_xgb: int = OPTUNA_TRIALS_XGB, optuna_tri
                             ])
 
     catalog = df.sample(n=min(len(df), PLAYLIST_CANDIDATES), random_state=SEED).reset_index(drop=True)
-    catalog_scaled = scaler.transform(catalog[SPOTIFY_MODEL_FEATURES].to_numpy(dtype=np.float32)).astype(np.float32)
+    catalog_scaled = scaler.transform(catalog[SPOTIFY_AUDIO_FEATURES].to_numpy(dtype=np.float32)).astype(np.float32)
 
     return {"xgb": xgb, "mlp": mlp, "scaler": scaler, "labels": labels, "label_to_id": label_to_id,
             "catalog": catalog, "catalog_scaled": catalog_scaled, "metrics": metrics,
@@ -904,4 +903,4 @@ with gr.Blocks(title="ML Demo - Recommender + XGBoost vs Torch MLP + CLIP") as d
                         )
 
 if __name__ == "__main__":
-    demo.launch(server_name="127.0.0.1", inbrowser=True, share=False, css=CUSTOM_CSS)
+    demo.launch(server_name="127.0.0.1", inbrowser=True, share=False, css=CUSTOM_CSS
