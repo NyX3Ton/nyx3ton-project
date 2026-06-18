@@ -361,15 +361,15 @@ def train_multi_mlp(X, y, optuna_trials: int = OPTUNA_TRIALS_MLP, study_name: st
             torch.manual_seed(SEED)
             model = MultiMLP(
                                 X.shape[1], n_classes,
-                                trial.suggest_int("hidden_1", 64, 256, step=64),
-                                trial.suggest_int("hidden_2", 32, 128, step=32),
+                                trial.suggest_int("hidden_1", 128, 2048, step=128),
+                                trial.suggest_int("hidden_2", 64, 1024, step=64),
                                 trial.suggest_float("dropout", 0.0, 0.2),
                             )
             model = run_training(
                                 model, X_train, y_train,
                                 trial.suggest_float("lr", 0.005, 0.1, log=True),
                                 trial.suggest_float("weight_decay", 0.01, 1, log=True),
-                                int(trial.suggest_categorical("batch_size", [32, 64, 128, 256])),
+                                int(trial.suggest_categorical("batch_size", [32, 64, 128, 256, 512, 1024])),
                                 trial.suggest_int("epochs", 50, 300),
                                 trial, X_val, y_val,
                                 )
