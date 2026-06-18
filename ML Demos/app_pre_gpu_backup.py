@@ -13,6 +13,12 @@ from sklearn.preprocessing import StandardScaler
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 from xgboost import XGBClassifier
+
+try:
+    from generate_inputs import generate_movie_genre
+except ImportError:
+    from generate_inputs import generate_movie_genre
+
 # ============================================================
 # Global config
 # ============================================================
@@ -25,11 +31,6 @@ try:
 except RuntimeError:
     # Thread pools may already be initialized in some environments.
     pass
-
-# Auto-detect GPU; fall back to CPU if CUDA is unavailable.
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-XGB_DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-print(f"Using device: {DEVICE} (XGBoost device: {XGB_DEVICE})")
 
 optuna.logging.set_verbosity(optuna.logging.WARNING)
 
@@ -48,8 +49,8 @@ MOODS = ["Relax", "Funny", "Emotional", "Adrenaline", "Mind-bending"]
 
 IMAGE_PRODUCT_CATEGORIES = ["Tech gadget", "Gaming accessory", "Fitness product", "Travel gear","Food product", "Fashion item", "Home appliance", "Book","Musical instrument", "Sports equipment", "Office equipment", "Beauty product"]
 
-OPTUNA_TRIALS_XGB = int(os.getenv("OPTUNA_TRIALS_XGB", "20"))
-OPTUNA_TRIALS_MLP = int(os.getenv("OPTUNA_TRIALS_MLP", "20"))
+OPTUNA_TRIALS_XGB = int(os.getenv("OPTUNA_TRIALS_XGB", "15"))
+OPTUNA_TRIALS_MLP = int(os.getenv("OPTUNA_TRIALS_MLP", "15"))
 #MAX_GENRE_ROWS = int(os.getenv("MAX_GENRE_ROWS", "20000"))
 
 # Playlist creator (Spotify) settings
@@ -57,8 +58,8 @@ SPOTIFY_CSV_NAMES = ["spotify_data.csv", "spotify_1million_tracks.csv", "spotify
 #SPOTIFY_AUDIO_FEATURES = ["danceability", "energy", "loudness", "speechiness", "acousticness","instrumentalness", "liveness", "valence", "tempo"]
 SPOTIFY_AUDIO_FEATURES = ["danceability", "energy", "speechiness", "acousticness", "instrumentalness", "liveness", "valence", "tempo"]
 TOP_GENRES_N = int(os.getenv("TOP_GENRES_N", "14"))
-MAX_SPOTIFY_ROWS = int(os.getenv("MAX_SPOTIFY_ROWS", "1048000"))
-PLAYLIST_CANDIDATES = int(os.getenv("PLAYLIST_CANDIDATES", "262000"))
+MAX_SPOTIFY_ROWS = int(os.getenv("MAX_SPOTIFY_ROWS", "24000"))
+PLAYLIST_CANDIDATES = int(os.getenv("PLAYLIST_CANDIDATES", "6000"))
 
 CLIP_MODEL_ID = os.getenv("CLIP_MODEL_ID", "openai/clip-vit-base-patch32")
 OPENVINO_DEVICE = os.getenv("OPENVINO_DEVICE", "CPU")
@@ -331,21 +332,19 @@ def train_multi_mlp(X, y, optuna_trials: int = OPTUNA_TRIALS_MLP, study_name: st
     X_train, X_val, y_train, y_val = split_data(X, y)
 
     def run_training(model, X_fit, y_fit, lr, weight_decay, batch_size, epochs, trial=None, X_eval=None, y_eval=None):
-        model = model.to(DEVICE)
         optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
         loss_fn = nn.CrossEntropyLoss()
         loader = DataLoader(TensorDataset(torch.tensor(X_fit, dtype=torch.float32), torch.tensor(y_fit, dtype=torch.long)),batch_size=batch_size, shuffle=True)
         model.train()
         for epoch in range(epochs):
             for xb, yb in loader:
-                xb, yb = xb.to(DEVICE), yb.to(DEVICE)
                 optimizer.zero_grad()
                 loss_fn(model(xb), yb).backward()
                 optimizer.step()
             if trial is not None and X_eval is not None:
                 model.eval()
                 with torch.no_grad():
-                    pred = torch.argmax(model(torch.tensor(X_eval, dtype=torch.float32).to(DEVICE)), dim=1).cpu().numpy()
+                    pred = torch.argmax(model(torch.tensor(X_eval, dtype=torch.float32)), dim=1).numpy()
                 trial.report(float(f1_score(y_eval, pred, average="macro")), step=epoch)
                 if trial.should_prune():
                     raise optuna.TrialPruned()
@@ -374,7 +373,7 @@ def train_multi_mlp(X, y, optuna_trials: int = OPTUNA_TRIALS_MLP, study_name: st
                                 trial, X_val, y_val,
                                 )
             with torch.no_grad():
-                pred = torch.argmax(model(torch.tensor(X_val, dtype=torch.float32).to(DEVICE)), dim=1).cpu().numpy()
+                pred = torch.argmax(model(torch.tensor(X_val, dtype=torch.float32)), dim=1).numpy()
             return float(f1_score(y_val, pred, average="macro"))
 
         study = get_or_create_study(study_name=study_name)
@@ -419,7 +418,7 @@ def train_playlist_bundle(optuna_trials_xgb: int = OPTUNA_TRIALS_XGB, optuna_tri
                         "eval_metric": "mlogloss", 
                         "random_state": SEED, 
                         "n_jobs": 8, 
-                        "device": XGB_DEVICE,
+                        "device": "cuda",
                         }
             model = XGBClassifier(**params)
             model.fit(X_xgb_train, y_xgb_train)
@@ -431,7 +430,7 @@ def train_playlist_bundle(optuna_trials_xgb: int = OPTUNA_TRIALS_XGB, optuna_tri
         best_xgb_params = dict(xgb_study.best_params)
         xgb_time = time.perf_counter() - start_xgb
 
-    final_xgb_params = {**best_xgb_params, "eval_metric": "mlogloss", "random_state": SEED, "n_jobs": 8, "device": XGB_DEVICE}
+    final_xgb_params = {**best_xgb_params, "eval_metric": "mlogloss", "random_state": SEED, "n_jobs": 8, "device": "cuda"}
     start_final_xgb = time.perf_counter()
     xgb = XGBClassifier(**final_xgb_params)
     xgb.fit(X_train, y_train)
@@ -441,7 +440,7 @@ def train_playlist_bundle(optuna_trials_xgb: int = OPTUNA_TRIALS_XGB, optuna_tri
 
     xgb_pred = xgb.predict(X_test)
     with torch.no_grad():
-        mlp_pred = np.argmax(torch.softmax(mlp(torch.tensor(np.asarray(X_test, dtype=np.float32)).to(DEVICE)), dim=1).cpu().numpy(), axis=1)
+        mlp_pred = np.argmax(torch.softmax(mlp(torch.tensor(np.asarray(X_test, dtype=np.float32))), dim=1).numpy(), axis=1)
 
     metrics = pd.DataFrame([
                             {"Task": "Playlist creator", "Model": "XGBoost",
@@ -479,7 +478,7 @@ def create_playlist(target_genre, energy, danceability, valence, acousticness, t
     feats = scaled[idx]
     xgb_p = PLAYLIST_MODEL["xgb"].predict_proba(feats)[:, target_id]
     with torch.no_grad():
-        mlp_all = torch.softmax(PLAYLIST_MODEL["mlp"](torch.tensor(feats, dtype=torch.float32).to(DEVICE)), dim=1).cpu().numpy()
+        mlp_all = torch.softmax(PLAYLIST_MODEL["mlp"](torch.tensor(feats, dtype=torch.float32)), dim=1).numpy()
     mlp_p = mlp_all[:, target_id]
 
     sub = catalog.iloc[idx]
@@ -891,4 +890,4 @@ with gr.Blocks(title="ML Demo - Recommender + XGBoost vs Torch MLP + CLIP") as d
                         )
 
 if __name__ == "__main__":
-    demo.launch(server_name="127.0.0.1", inbrowser=True, share=False, css=CUSTOM_CSS)
+    demo.launch(server_name="127.0.0.1", inbrowser=True, share=False, css=CUSTOM_CSS)    
