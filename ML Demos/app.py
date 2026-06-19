@@ -13,6 +13,7 @@ from sklearn.preprocessing import StandardScaler
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 from xgboost import XGBClassifier
+
 # ============================================================
 # 1. Global config
 # ============================================================
@@ -49,6 +50,22 @@ IMAGE_PRODUCT_CATEGORIES = ["Tech gadget", "Gaming accessory", "Fitness product"
 
 OPTUNA_TRIALS_XGB = int(os.getenv("OPTUNA_TRIALS_XGB", "0"))
 OPTUNA_TRIALS_MLP = int(os.getenv("OPTUNA_TRIALS_MLP", "0"))
+OPTUNA_TRIALS_TABM = int(os.getenv("OPTUNA_TRIALS_TABM", "0"))
+
+# Enable/disable each model family at startup (disabled models are not trained and not shown).
+ENABLE_XGBOOST = os.getenv("ENABLE_XGBOOST", "1") == "1"
+ENABLE_MLP = os.getenv("ENABLE_MLP", "1") == "1"
+ENABLE_TABM = os.getenv("ENABLE_TABM", "1") == "1"
+TABM_K = int(os.getenv("TABM_K", "16"))  # number of TabM ensemble submodels
+
+try:
+    from tabm import TabM
+    _TABM_AVAILABLE = True
+except Exception:
+    _TABM_AVAILABLE = False
+    if ENABLE_TABM:
+        print("tabm package not installed; TabM disabled. Install with: pip install tabm")
+    ENABLE_TABM = False
 #MAX_GENRE_ROWS = int(os.getenv("MAX_GENRE_ROWS", "20000"))
 
 # Playlist creator (Spotify) settings
@@ -59,6 +76,7 @@ SPOTIFY_AUDIO_FEATURES = ["danceability", "energy", "speechiness", "acousticness
 # Extra (non-audio) signal the models can use; sliders/taste-match still use SPOTIFY_AUDIO_FEATURES only.
 SPOTIFY_EXTRA_FEATURES = ["popularity", "year", "duration_ms", "time_signature"]
 SPOTIFY_MODEL_FEATURES = SPOTIFY_AUDIO_FEATURES + SPOTIFY_EXTRA_FEATURES
+
 TOP_GENRES_N = int(os.getenv("TOP_GENRES_N", "14"))
 MAX_SPOTIFY_ROWS = int(os.getenv("MAX_SPOTIFY_ROWS", "1048000"))
 PLAYLIST_CANDIDATES = int(os.getenv("PLAYLIST_CANDIDATES", "10000"))
@@ -91,6 +109,9 @@ MOOD_COL = {
             }
 
 SCORE_WEIGHTS = {"pref": 0.40, "mood": 0.20, "genre": 0.15, "rating": 0.15, "length": 0.10}
+
+MOVIE_TRAIN_CSV = ["movie_recommendation_full.csv", "movie_recommendation_sample.csv"]
+MOVIE_NUM_FEATURES = ["user_action", "user_comedy", "user_drama", "user_scifi", "user_romance","user_documentary", "movie_rating", "movie_age_years", "movie_length_min"]
 
 CUSTOM_CSS = """
 .gradio-container { max-width: 1550px !important; }
@@ -153,6 +174,7 @@ def softmax_numpy(values: np.ndarray) -> np.ndarray:
     values = values - np.max(values)
     exp_values = np.exp(values)
     return exp_values / np.sum(exp_values)
+
 # ============================================================
 # 3. Persistent Optuna helpers (used by the genre classifier)
 # ============================================================
@@ -176,6 +198,7 @@ def ensure_study_trials(study: optuna.Study, objective, required_trials: int, ti
     missing = required_trials - existing
     print(f"Optuna study '{study.study_name}' running {missing} new trials ({existing}/{required_trials}).")
     study.optimize(objective, n_trials=missing, timeout=timeout_sec, show_progress_bar=False)
+    
 # ============================================================
 # 4. Movie recommender (content-based, no training)
 # ============================================================
@@ -208,74 +231,70 @@ def load_movie_catalog() -> dict:
     return {"df": df.reset_index(drop=True), "source": path.name, "rows": len(df)}
 
 def recommend_movies(action, comedy, drama, scifi, romance, documentary, genre, min_rating, max_age, length, mood, top_n: int = 8):
-    df = MOVIE["df"]
-    weights = {
-                "action": action, 
-                "comedy": comedy, 
-                "drama": drama,
-                "scifi": scifi, 
-                "romance": romance, 
-                "documentary": documentary,
-                }
-    wsum = sum(weights.values()) or 1.0
+    top_n = int(top_n)
+    cand = MOVIE_MODEL["candidates"]
+    proba_fns = MOVIE_MODEL["proba_fns"]
 
-    pref = sum(w * df[PREF_COL[k]] for k, w in weights.items()) / wsum
-    mood_part = df[MOOD_COL.get(mood, "mood_relax")]
-    genre_boost = df["_genres_lc"].str.contains(re.escape(genre.lower()), regex=True).astype(float)
-    rating_part = (df["imdb_rating_10"] / 10.0).clip(0, 1)
-    length_part = (1 - (df["runtime_minutes"] - float(length)).abs() / 120.0).clip(0, 1)
-
-    score = (SCORE_WEIGHTS["pref"] * pref + SCORE_WEIGHTS["mood"] * mood_part + SCORE_WEIGHTS["genre"] * genre_boost + SCORE_WEIGHTS["rating"] * rating_part + SCORE_WEIGHTS["length"] * length_part)
-    scored = df.assign(_match=score)
-
-    current_year = datetime.date.today().year
-    min_year = current_year - float(max_age)
     notes = []
-    for stage in range(3):
-        keep = scored["_match"] > -1
-        if stage < 2:
-            keep &= scored["imdb_rating_10"] >= float(min_rating)
-        if stage < 1:
-            keep &= scored["release_year"] >= min_year
-        result = scored[keep]
-        if not result.empty:
-            if stage == 1:
-                notes.append(f"No title within the last {int(max_age)} years matched, so the age filter was relaxed.")
-            if stage == 2:
-                notes.append(f"No title with rating >= {min_rating} matched, so the rating filter was relaxed.")
-            break
-    else:
-        result = scored
+    work = cand
+    if genre:
+        gsel = work[work["movie_genre"] == genre]
+        if len(gsel) >= top_n:
+            work = gsel
+        else:
+            notes.append(f"Few '{genre}' titles in the catalog, so the genre filter was relaxed.")
+    filtered = work[(work["movie_rating"] >= float(min_rating)) & (work["movie_age_years"] <= float(max_age))]
+    if len(filtered) < top_n:
+        notes.append("Rating/age filters relaxed to find enough titles.")
+        filtered = work
+    cand_f = filtered.reset_index(drop=True)
 
-    result = result.sort_values(["_match", "imdb_rating_10", "popularity_score"], ascending=False).head(top_n)
+    inf = pd.DataFrame({
+                        "user_action": float(action), "user_comedy": float(comedy), "user_drama": float(drama),
+                        "user_scifi": float(scifi), "user_romance": float(romance), "user_documentary": float(documentary),
+                        "movie_rating": cand_f["movie_rating"].to_numpy(),
+                        "movie_age_years": cand_f["movie_age_years"].to_numpy(),
+                        "movie_length_min": cand_f["movie_length_min"].to_numpy(),
+                        "movie_genre": cand_f["movie_genre"].to_numpy(),
+                        "mood": str(mood),
+                        })
+    X = movie_feature_matrix(inf, MOVIE_MODEL["scaler"])
+    length_part = np.clip(1.0 - np.abs(cand_f["movie_length_min"].to_numpy() - float(length)) / 120.0, 0.0, 1.0)
 
-    table = pd.DataFrame({
-                            "Title": result["movie_title"],
-                            "Year": result["release_year"].astype(int),
-                            "Genres": result["all_genres"],
-                            "IMDb": result["imdb_rating_10"].round(1),
-                            "Runtime (min)": result["runtime_minutes"].astype(int),
-                            "Director": result["director_clean"],
-                            "Match %": (result["_match"] * 100).round(1),
+    def build(p):
+        p = np.asarray(p, dtype=np.float64)
+        score = 0.85 * p + 0.15 * length_part
+        order = np.argsort(score)[::-1][:top_n]
+        c = cand_f.iloc[order]
+        table = pd.DataFrame({
+                            "Title": c["movie_title"].to_numpy(),
+                            "Year": c["release_year"].astype(int).to_numpy(),
+                            "Genre": c["movie_genre"].to_numpy(),
+                            "IMDb": np.round(c["imdb_rating_10"].to_numpy(), 1),
+                            "Runtime (min)": c["runtime_minutes"].astype(int).to_numpy(),
+                            "Director": c["director_clean"].to_numpy(),
+                            "P(recommend) %": np.round(p[order] * 100, 1),
+                            "Match %": np.round(score[order] * 100, 1),
                             }).reset_index(drop=True)
+        conf = float(np.mean(p[order])) if len(order) else 0.0
+        return table, conf
 
-    top = result.iloc[0]
-    explanation = top["recommendation_explanation_base"] or "good overall match for your preferences"
-    summary = (
-                f"Top pick: {top['movie_title']} ({int(top['release_year'])})\n"
-                f"Match score: {top['_match'] * 100:.1f} %\n\n"
-                f"Genres: {top['all_genres']}\n"
-                f"IMDb rating: {top['imdb_rating_10']:.1f}/10   |   Runtime: {int(top['runtime_minutes'])} min\n"
-                f"Director: {top['director_clean']}\n"
-                f"Cast: {top['lead_actor']}\n\n"
-                f"{top['overview_clean']}\n\n"
-                f"Why recommended: {explanation}.\n"
-                f"Source: {MOVIE['source']} ({MOVIE['rows']} movies)"
-                )
+    model_order = ["XGBoost", "Torch MLP", "TabM"]
+    empty = pd.DataFrame()
+    results = {n: (build(proba_fns[n](X)[:, 1]) if n in proba_fns else (empty, 0.0)) for n in model_order}
+
+    enabled = [n for n in model_order if n in proba_fns]
+    lines = [f"Preferred genre: {genre}   |   Mood: {mood}", f"Recommendations per model: {top_n}", ""]
+    for n in enabled:
+        lines.append(f"{n} mean P(recommend) for its picks: {results[n][1] * 100:.1f} %")
+    if not enabled:
+        lines.append("No models are enabled. Set ENABLE_XGBOOST / ENABLE_MLP / ENABLE_TABM.")
+    lines += ["", f"Scored {len(cand_f):,} candidate titles from {MOVIE['source']}."]
+    summary = "\n".join(lines)
     if notes:
         summary += "\n\nNote: " + " ".join(notes)
+    return summary, results["XGBoost"][0], results["Torch MLP"][0], results["TabM"][0], MOVIE_MODEL["metrics"]
 
-    return summary, table
 # ============================================================
 # 5. Genre classifier (XGBoost vs Torch MLP)
 # ============================================================
@@ -403,7 +422,91 @@ def train_multi_mlp(X, y, optuna_trials: int = OPTUNA_TRIALS_MLP, study_name: st
     final_model = run_training(final_model, X_train, y_train, float(best["lr"]), float(best["weight_decay"]), int(best["batch_size"]), int(best["epochs"]), X_eval=X_val, y_eval=y_val)
     return final_model, time.perf_counter() - start_total, best
 
-def train_playlist_bundle(optuna_trials_xgb: int = OPTUNA_TRIALS_XGB, optuna_trials_mlp: int = OPTUNA_TRIALS_MLP) -> dict:
+def train_tabm(X, y, optuna_trials: int = OPTUNA_TRIALS_TABM, study_name: str = "tabm") -> tuple[object, float, dict]:
+    start_total = time.perf_counter()
+    X = np.asarray(X, dtype=np.float32)
+    y = np.asarray(y, dtype=np.int64)
+    n_classes = int(np.max(y)) + 1
+    n_features = X.shape[1]
+    X_train, X_val, y_train, y_val = split_data(X, y)
+
+    def make_model(n_blocks, d_block, dropout):
+        return TabM.make(n_num_features=n_features, d_out=n_classes,n_blocks=int(n_blocks), d_block=int(d_block),dropout=float(dropout), k=TABM_K).to(DEVICE)
+
+    def run_training(model, X_fit, y_fit, lr, weight_decay, batch_size, epochs, trial=None, X_eval=None, y_eval=None, patience=15):
+        optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+        loss_fn = nn.CrossEntropyLoss()
+        loader = DataLoader(TensorDataset(torch.tensor(X_fit, dtype=torch.float32), torch.tensor(y_fit, dtype=torch.long)), batch_size=batch_size, shuffle=True)
+        best_f1, best_state, no_improve = -1.0, None, 0
+        for epoch in range(epochs):
+            model.train()
+            for xb, yb in loader:
+                xb, yb = xb.to(DEVICE), yb.to(DEVICE)
+                optimizer.zero_grad()
+                out = model(xb)                                  # (B, k, C); k independent submodels
+                k = out.shape[1]
+                loss = loss_fn(out.reshape(-1, out.shape[-1]), yb.repeat_interleave(k))
+                loss.backward()
+                optimizer.step()
+            if X_eval is not None:
+                model.eval()
+                with torch.no_grad():
+                    out = model(torch.tensor(X_eval, dtype=torch.float32).to(DEVICE))
+                    proba = torch.softmax(out, dim=-1).mean(dim=1).cpu().numpy()
+                val_f1 = float(f1_score(y_eval, np.argmax(proba, axis=1), average="macro"))
+                if val_f1 > best_f1:
+                    best_f1, no_improve = val_f1, 0
+                    best_state = {kk: v.detach().cpu().clone() for kk, v in model.state_dict().items()}
+                else:
+                    no_improve += 1
+                if trial is not None:
+                    trial.report(val_f1, step=epoch)
+                    if trial.should_prune():
+                        raise optuna.TrialPruned()
+                if no_improve >= patience:
+                    break
+        if best_state is not None:
+            model.load_state_dict(best_state)
+        model.eval()
+        return model
+
+    if optuna_trials <= 0:
+        best = {"n_blocks": 3, "d_block": 512, "dropout": 0.023, "lr": 0.001,
+                "weight_decay": 0.000007, "batch_size": 512, "epochs": 200}
+    else:
+        def objective(trial: optuna.Trial) -> float:
+            torch.manual_seed(SEED)
+            model = make_model(trial.suggest_int("n_blocks", 1, 5),
+                                trial.suggest_int("d_block", 64, 512, step=64),
+                                trial.suggest_float("dropout", 0.0, 0.20))
+            model = run_training(model, X_train, y_train,
+                                    trial.suggest_float("lr", 1e-4, 5e-3, log=True),
+                                    trial.suggest_float("weight_decay", 1e-6, 1e-1, log=True),
+                                    int(trial.suggest_categorical("batch_size", [128, 256, 512])),
+                                    trial.suggest_int("epochs", 50, 200),
+                                    trial, X_val, y_val)
+            with torch.no_grad():
+                out = model(torch.tensor(X_val, dtype=torch.float32).to(DEVICE))
+                proba = torch.softmax(out, dim=-1).mean(dim=1).cpu().numpy()
+            return float(f1_score(y_val, np.argmax(proba, axis=1), average="macro"))
+
+        study = get_or_create_study(study_name=study_name)
+        ensure_study_trials(study, objective, optuna_trials)
+        best = dict(study.best_params)
+
+    torch.manual_seed(SEED)
+    final_model = make_model(best["n_blocks"], best["d_block"], best["dropout"])
+    final_model = run_training(final_model, X_train, y_train, float(best["lr"]), float(best["weight_decay"]),
+                                int(best["batch_size"]), int(best["epochs"]), X_eval=X_val, y_eval=y_val)
+    return final_model, time.perf_counter() - start_total, best
+
+def tabm_predict_proba(model, X) -> np.ndarray:
+    with torch.no_grad():
+        out = model(torch.tensor(np.asarray(X, dtype=np.float32)).to(DEVICE))
+        return torch.softmax(out, dim=-1).mean(dim=1).cpu().numpy()
+
+def train_playlist_bundle(optuna_trials_xgb: int = OPTUNA_TRIALS_XGB, optuna_trials_mlp: int = OPTUNA_TRIALS_MLP,
+                            optuna_trials_tabm: int = OPTUNA_TRIALS_TABM) -> dict:
     df, source = load_spotify_dataframe()
     labels = sorted(df["genre"].unique())
     label_to_id = {label: idx for idx, label in enumerate(labels)}
@@ -417,77 +520,89 @@ def train_playlist_bundle(optuna_trials_xgb: int = OPTUNA_TRIALS_XGB, optuna_tri
     X_xgb_train, X_xgb_val, y_xgb_train, y_xgb_val = split_data(X_train, y_train)
     study_prefix = safe_name(f"playlist_{source}_{X_train.shape[1]}feat_{len(labels)}genres")
 
-    if optuna_trials_xgb <= 0:
-        best_xgb_params = {"n_estimators": 600, "max_depth": 12, "learning_rate": 0.03,
-                            "subsample": 0.8, "colsample_bytree": 0.58, "min_child_weight": 2.4,
-                            "gamma": 0.1, "reg_alpha": 0.54, "reg_lambda": 0.02}
-        xgb_time = 0.0
-    else:
-        def xgb_objective(trial: optuna.Trial) -> float:
-            params = {
-                        "n_estimators": trial.suggest_int("n_estimators", 600, 1200, step=100),
-                        "max_depth": trial.suggest_int("max_depth", 8, 15),
-                        "learning_rate": trial.suggest_float("learning_rate", 0.001, 0.1, log=True),
-                        "subsample": trial.suggest_float("subsample", 0.5, 1.0),
-                        "colsample_bytree": trial.suggest_float("colsample_bytree", 0.5, 1.0),
-                        "min_child_weight": trial.suggest_float("min_child_weight", 1.0, 10.0),
-                        "gamma": trial.suggest_float("gamma", 0.0, 2.0),
-                        "reg_alpha": trial.suggest_float("reg_alpha", 0.01, 1.0, log=True),
-                        "reg_lambda": trial.suggest_float("reg_lambda", 0.00005, 1, log=True),
-                        "eval_metric": "mlogloss",
-                        "early_stopping_rounds": 25,
-                        "random_state": SEED, 
-                        "n_jobs": 8, 
-                        "device": XGB_DEVICE,
-                        }
-            model = XGBClassifier(**params)
-            model.fit(X_xgb_train, y_xgb_train, eval_set=[(X_xgb_val, y_xgb_val)], verbose=False)
-            return float(f1_score(y_xgb_val, model.predict(X_xgb_val), average="macro"))
+    proba_fns: dict = {}      # name -> callable(feats_np) -> (N, C) probabilities (base models only)
+    test_proba: dict = {}     # name -> probabilities on X_test
+    metric_rows: list = []
 
-        start_xgb = time.perf_counter()
-        xgb_study = get_or_create_study(study_name=f"{study_prefix}_xgboost")
-        ensure_study_trials(xgb_study, xgb_objective, optuna_trials_xgb)
-        best_xgb_params = dict(xgb_study.best_params)
-        xgb_time = time.perf_counter() - start_xgb
+    def _row(model_name, pred, secs, params):
+        return {"Task": "Playlist creator", "Model": model_name,
+                "Accuracy": round(float(accuracy_score(y_test, pred)), 4),
+                "Macro F1": round(float(f1_score(y_test, pred, average="macro")), 4),
+                "Train sec incl. Optuna": round(float(secs), 3), "Source": source,
+                "Best params": params if isinstance(params, str) else json.dumps(params, ensure_ascii=False)}
 
-    final_xgb_params = {**best_xgb_params, "eval_metric": "mlogloss", "early_stopping_rounds": 50, "random_state": SEED, "n_jobs": 8, "device": XGB_DEVICE}
-    start_final_xgb = time.perf_counter()
-    xgb = XGBClassifier(**final_xgb_params)
-    xgb.fit(X_xgb_train, y_xgb_train, eval_set=[(X_xgb_val, y_xgb_val)], verbose=False)
-    xgb_time += time.perf_counter() - start_final_xgb
+    if ENABLE_XGBOOST:
+        if optuna_trials_xgb <= 0:
+            best_xgb_params = {"n_estimators": 600, "max_depth": 8, "learning_rate": 0.05,
+                                "subsample": 0.8, "colsample_bytree": 0.56, "min_child_weight": 2.4,
+                                "gamma": 0.1, "reg_alpha": 0.54, "reg_lambda": 0.02}
+            xgb_time = 0.0
+        else:
+            def xgb_objective(trial: optuna.Trial) -> float:
+                params = {
+                            "n_estimators": trial.suggest_int("n_estimators", 300, 1200, step=100),
+                            "max_depth": trial.suggest_int("max_depth", 5, 8),
+                            "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.1, log=True),
+                            "subsample": trial.suggest_float("subsample", 0.5, 1.0),
+                            "colsample_bytree": trial.suggest_float("colsample_bytree", 0.5, 1.0),
+                            "min_child_weight": trial.suggest_float("min_child_weight", 1.0, 10.0),
+                            "gamma": trial.suggest_float("gamma", 0.0, 2.0),
+                            "reg_alpha": trial.suggest_float("reg_alpha", 0.01, 1.0, log=True),
+                            "reg_lambda": trial.suggest_float("reg_lambda", 0.00005, 1, log=True),
+                            "eval_metric": "mlogloss", "early_stopping_rounds": 50,
+                            "random_state": SEED, "n_jobs": 8, "device": XGB_DEVICE,
+                            }
+                model = XGBClassifier(**params)
+                model.fit(X_xgb_train, y_xgb_train, eval_set=[(X_xgb_val, y_xgb_val)], verbose=False)
+                return float(f1_score(y_xgb_val, model.predict(X_xgb_val), average="macro"))
 
-    mlp, mlp_time, best_mlp_params = train_multi_mlp(X_train, y_train, optuna_trials=optuna_trials_mlp, study_name=f"{study_prefix}_torch_mlp")
+            start_xgb = time.perf_counter()
+            xgb_study = get_or_create_study(study_name=f"{study_prefix}_xgboost")
+            ensure_study_trials(xgb_study, xgb_objective, optuna_trials_xgb)
+            best_xgb_params = dict(xgb_study.best_params)
+            xgb_time = time.perf_counter() - start_xgb
 
-    xgb_proba = xgb.predict_proba(X_test)
-    xgb_pred = np.argmax(xgb_proba, axis=1)
-    with torch.no_grad():
-        mlp_proba = torch.softmax(mlp(torch.tensor(np.asarray(X_test, dtype=np.float32)).to(DEVICE)), dim=1).cpu().numpy()
-    mlp_pred = np.argmax(mlp_proba, axis=1)
-    ens_proba = 0.5 * (xgb_proba + mlp_proba)
-    ens_pred = np.argmax(ens_proba, axis=1)
+        final_xgb_params = {**best_xgb_params, "eval_metric": "mlogloss", "early_stopping_rounds": 50,
+                            "random_state": SEED, "n_jobs": 8, "device": XGB_DEVICE}
+        start_final_xgb = time.perf_counter()
+        xgb = XGBClassifier(**final_xgb_params)
+        xgb.fit(X_xgb_train, y_xgb_train, eval_set=[(X_xgb_val, y_xgb_val)], verbose=False)
+        xgb_time += time.perf_counter() - start_final_xgb
+        proba_fns["XGBoost"] = lambda f, _m=xgb: _m.predict_proba(f)
+        test_proba["XGBoost"] = xgb.predict_proba(X_test)
+        metric_rows.append(_row("XGBoost", np.argmax(test_proba["XGBoost"], axis=1), xgb_time, best_xgb_params))
 
-    metrics = pd.DataFrame([
-                            {"Task": "Playlist creator", "Model": "XGBoost",
-                                "Accuracy": round(float(accuracy_score(y_test, xgb_pred)), 4),
-                                "Macro F1": round(float(f1_score(y_test, xgb_pred, average="macro")), 4),
-                                "Train sec incl. Optuna": round(float(xgb_time), 3), "Source": source,
-                                "Best params": json.dumps(best_xgb_params, ensure_ascii=False)},
-                            {"Task": "Playlist creator", "Model": "Torch MLP",
-                                "Accuracy": round(float(accuracy_score(y_test, mlp_pred)), 4),
-                                "Macro F1": round(float(f1_score(y_test, mlp_pred, average="macro")), 4),
-                                "Train sec incl. Optuna": round(float(mlp_time), 3), "Source": source,
-                                "Best params": json.dumps(best_mlp_params, ensure_ascii=False)},
-                            {"Task": "Playlist creator", "Model": "Ensemble (soft vote)",
-                                "Accuracy": round(float(accuracy_score(y_test, ens_pred)), 4),
-                                "Macro F1": round(float(f1_score(y_test, ens_pred, average="macro")), 4),
-                                "Train sec incl. Optuna": round(float(xgb_time + mlp_time), 3), "Source": source,
-                                "Best params": "Average of XGBoost and Torch MLP probabilities (0.5 / 0.5)"},
-                            ])
+    if ENABLE_MLP:
+        mlp, mlp_time, best_mlp_params = train_multi_mlp(X_train, y_train, optuna_trials=optuna_trials_mlp,
+                                                            study_name=f"{study_prefix}_torch_mlp")
+        def _mlp_proba(f, _m=mlp):
+            with torch.no_grad():
+                return torch.softmax(_m(torch.tensor(np.asarray(f, dtype=np.float32)).to(DEVICE)), dim=1).cpu().numpy()
+        proba_fns["Torch MLP"] = _mlp_proba
+        test_proba["Torch MLP"] = _mlp_proba(X_test)
+        metric_rows.append(_row("Torch MLP", np.argmax(test_proba["Torch MLP"], axis=1), mlp_time, best_mlp_params))
+
+    if ENABLE_TABM:
+        tabm_model, tabm_time, best_tabm_params = train_tabm(X_train, y_train, optuna_trials=optuna_trials_tabm,
+                                                                study_name=f"{study_prefix}_tabm")
+        proba_fns["TabM"] = lambda f, _m=tabm_model: tabm_predict_proba(_m, f)
+        test_proba["TabM"] = tabm_predict_proba(tabm_model, X_test)
+        metric_rows.append(_row("TabM", np.argmax(test_proba["TabM"], axis=1), tabm_time, best_tabm_params))
+
+    base_fns = dict(proba_fns)
+    if len(test_proba) >= 2:
+        ens_test = np.mean(list(test_proba.values()), axis=0)
+        metric_rows.append(_row("Ensemble (soft vote)", np.argmax(ens_test, axis=1),
+                                0.0, f"Average of {', '.join(test_proba.keys())} probabilities"))
+
+    metrics = pd.DataFrame(metric_rows) if metric_rows else pd.DataFrame(
+        [{"Task": "Playlist creator", "Model": "None enabled", "Accuracy": np.nan, "Macro F1": np.nan,
+            "Train sec incl. Optuna": 0.0, "Source": source, "Best params": "All models disabled."}])
 
     catalog = df.sample(n=min(len(df), PLAYLIST_CANDIDATES), random_state=SEED).reset_index(drop=True)
     catalog_scaled = scaler.transform(catalog[SPOTIFY_MODEL_FEATURES].to_numpy(dtype=np.float32)).astype(np.float32)
 
-    return {"xgb": xgb, "mlp": mlp, "scaler": scaler, "labels": labels, "label_to_id": label_to_id,
+    return {"proba_fns": base_fns, "scaler": scaler, "labels": labels, "label_to_id": label_to_id,
             "catalog": catalog, "catalog_scaled": catalog_scaled, "metrics": metrics,
             "source": source, "rows": len(df)}
 
@@ -495,6 +610,7 @@ def create_playlist(target_genre, energy, danceability, valence, acousticness, t
     n_tracks = int(n_tracks)
     catalog = PLAYLIST_MODEL["catalog"]
     scaled = PLAYLIST_MODEL["catalog_scaled"]
+    proba_fns = PLAYLIST_MODEL["proba_fns"]
     target_id = PLAYLIST_MODEL["label_to_id"].get(target_genre, 0)
 
     notes = []
@@ -503,14 +619,9 @@ def create_playlist(target_genre, energy, danceability, valence, acousticness, t
         notes.append(f"Few tracks above popularity {int(min_popularity)}, so that filter was relaxed.")
         mask = np.ones(len(catalog), dtype=bool)
     idx = np.where(mask)[0]
-
     feats = scaled[idx]
-    xgb_p = PLAYLIST_MODEL["xgb"].predict_proba(feats)[:, target_id]
-    with torch.no_grad():
-        mlp_all = torch.softmax(PLAYLIST_MODEL["mlp"](torch.tensor(feats, dtype=torch.float32).to(DEVICE)), dim=1).cpu().numpy()
-    mlp_p = mlp_all[:, target_id]
-
     sub = catalog.iloc[idx]
+
     desired = np.array([energy, danceability, valence, acousticness, float(tempo) / 250.0], dtype=np.float32)
     track_taste = np.column_stack([
                         sub["energy"].to_numpy(),
@@ -520,14 +631,11 @@ def create_playlist(target_genre, energy, danceability, valence, acousticness, t
                         sub["tempo"].to_numpy() / 250.0,
                         ]).astype(np.float32)
     dist = np.sqrt(((track_taste - desired) ** 2).mean(axis=1))
-    taste = np.clip(1.0 - dist, 0.0, 1.0)
+    taste = np.clip(1.0 - dist, 0.0, 1.0).astype(np.float64)
 
-    score_xgb = 0.6 * xgb_p + 0.4 * taste
-    score_mlp = 0.6 * mlp_p + 0.4 * taste
-
-    def build(scores, model_p):
-        scores = np.asarray(scores, dtype=np.float64)
+    def build(model_p):
         model_p = np.asarray(model_p, dtype=np.float64)
+        scores = 0.6 * model_p + 0.4 * taste
         order = np.argsort(scores)[::-1][:n_tracks]
         chosen = sub.iloc[order]
         table = pd.DataFrame({
@@ -546,23 +654,32 @@ def create_playlist(target_genre, energy, danceability, valence, acousticness, t
         conf = float(np.mean(model_p[order])) if len(order) else 0.0
         return table, picks, conf
 
-    xgb_table, xgb_set, xgb_conf = build(score_xgb, xgb_p)
-    mlp_table, mlp_set, mlp_conf = build(score_mlp, mlp_p)
-    overlap = len(xgb_set & mlp_set)
+    model_order = ["XGBoost", "Torch MLP", "TabM"]
+    empty = pd.DataFrame()
+    results = {}
+    for name in model_order:
+        if name in proba_fns:
+            results[name] = build(proba_fns[name](feats)[:, target_id])
+        else:
+            results[name] = (empty, set(), 0.0)
 
-    summary = (
-                f"Target vibe: {target_genre}\n"
-                f"Playlist length: {n_tracks} tracks per model\n\n"
-                f"Shared tracks (both models): {overlap}/{n_tracks}\n"
-                f"XGBoost mean confidence in '{target_genre}': {xgb_conf * 100:.1f} %\n"
-                f"Torch MLP mean confidence in '{target_genre}': {mlp_conf * 100:.1f} %\n\n"
-                f"Candidate pool: {len(sub):,} tracks from {PLAYLIST_MODEL['source']}.\n"
-                )
-    summary += ("Models largely agree on this vibe." if overlap >= n_tracks / 2
-                else "Models pick noticeably different tracks. Different algorithms read the same audio features differently.")
+    enabled = [n for n in model_order if n in proba_fns]
+    lines = [f"Target vibe: {target_genre}", f"Playlist length: {n_tracks} tracks per model", ""]
+    for n in enabled:
+        lines.append(f"{n} mean confidence in '{target_genre}': {results[n][2] * 100:.1f} %")
+    if len(enabled) >= 2:
+        common = set.intersection(*[results[n][1] for n in enabled])
+        lines += ["", f"Tracks shared by all enabled models: {len(common)}/{n_tracks}",
+                    ("Models largely agree on this vibe." if len(common) >= n_tracks / 2
+                    else "Models pick noticeably different tracks for this vibe.")]
+    elif not enabled:
+        lines.append("No models are enabled. Set ENABLE_XGBOOST / ENABLE_MLP / ENABLE_TABM.")
+    lines += ["", f"Candidate pool: {len(sub):,} tracks from {PLAYLIST_MODEL['source']}."]
+    summary = "\n".join(lines)
     if notes:
         summary += "\n\nNote: " + " ".join(notes)
-    return summary, xgb_table, mlp_table, PLAYLIST_MODEL["metrics"]
+    return summary, results["XGBoost"][0], results["Torch MLP"][0], results["TabM"][0], PLAYLIST_MODEL["metrics"]
+
 # ============================================================
 # 6. CLIP image relevance
 # ============================================================
@@ -754,14 +871,174 @@ def evaluate_product_image(image, selected_category: str, customer_preference: s
         return message, pd.DataFrame()
 
 # ============================================================
+# 6b. Movie recommender (trained: XGBoost / Torch MLP / TabM)
+# ============================================================
+def generate_movie_training_data(rows: int = 12000) -> pd.DataFrame:
+    """Self-contained synthetic 'recommended' dataset (no external generate_inputs dependency)."""
+    rng = np.random.default_rng(SEED)
+    n_g, n_m = len(GENRES), len(MOODS)
+    data = []
+    for _ in range(rows):
+        prefs = rng.uniform(0, 1, 6)
+        gid = int(rng.integers(0, n_g))
+        rating = float(np.clip(rng.normal(7.0, 1.1), 3.5, 9.8))
+        age = int(rng.integers(0, 45))
+        length = float(np.clip(rng.normal(112, 22), 70, 190))
+        mid = int(rng.integers(0, n_m))
+        genre_match = [prefs[0], prefs[1], prefs[2], prefs[3],
+                       0.65 * prefs[3] + 0.35 * prefs[0], prefs[4], prefs[5]][gid]
+        mood_bonus = 0.12 if ((mid == 4 and gid in (3, 4)) or (mid == 1 and gid == 1)
+                              or (mid == 3 and gid == 0)) else 0.0
+        score = (1.85 * genre_match + 0.23 * (rating - 6.5) - 0.006 * age
+                 - 0.002 * max(length - 130, 0) + mood_bonus + rng.normal(0, 0.25))
+        data.append({
+            "user_action": round(float(prefs[0]), 3), "user_comedy": round(float(prefs[1]), 3),
+            "user_drama": round(float(prefs[2]), 3), "user_scifi": round(float(prefs[3]), 3),
+            "user_romance": round(float(prefs[4]), 3), "user_documentary": round(float(prefs[5]), 3),
+            "movie_genre": GENRES[gid], "movie_rating": round(rating, 2), "movie_age_years": age,
+            "movie_length_min": int(length), "mood": MOODS[mid], "recommended": int(score > 0.95)})
+    return pd.DataFrame(data)
+
+def movie_feature_matrix(frame, scaler) -> np.ndarray:
+    num = scaler.transform(frame[MOVIE_NUM_FEATURES].to_numpy(dtype=np.float32))
+    genre_oh = np.stack([(frame["movie_genre"].astype(str).to_numpy() == g).astype(np.float32) for g in GENRES], axis=1)
+    mood_oh = np.stack([(frame["mood"].astype(str).to_numpy() == m).astype(np.float32) for m in MOODS], axis=1)
+    return np.concatenate([num, genre_oh, mood_oh], axis=1).astype(np.float32)
+
+def map_catalog_to_movie_features(movie_df) -> pd.DataFrame:
+    current_year = datetime.date.today().year
+    genres_lc = movie_df["all_genres"].astype(str).str.lower().tolist()
+    def first_genre(g):
+        for cand in GENRES:
+            if cand.lower() in g:
+                return cand
+        return "Drama"
+    return pd.DataFrame({
+        "movie_title": movie_df["movie_title"].to_numpy(),
+        "release_year": movie_df["release_year"].astype(int).to_numpy(),
+        "director_clean": movie_df["director_clean"].to_numpy(),
+        "imdb_rating_10": movie_df["imdb_rating_10"].to_numpy(),
+        "runtime_minutes": movie_df["runtime_minutes"].astype(int).to_numpy(),
+        "movie_genre": [first_genre(g) for g in genres_lc],
+        "movie_rating": movie_df["imdb_rating_10"].to_numpy(),
+        "movie_age_years": (current_year - movie_df["release_year"]).clip(lower=0).to_numpy(),
+        "movie_length_min": movie_df["runtime_minutes"].to_numpy(),
+    })
+
+def train_movie_bundle(optuna_trials_xgb: int = OPTUNA_TRIALS_XGB, optuna_trials_mlp: int = OPTUNA_TRIALS_MLP,
+                       optuna_trials_tabm: int = OPTUNA_TRIALS_TABM) -> dict:
+    path = find_existing_input(MOVIE_TRAIN_CSV)
+    if path is not None:
+        df = read_table_file(path)
+        source = path.name
+    else:
+        df = generate_movie_training_data(rows=12000)
+        source = "synthetic (built-in generator)"
+
+    for c in MOVIE_NUM_FEATURES:
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    df = df.dropna(subset=MOVIE_NUM_FEATURES + ["movie_genre", "mood", "recommended"]).copy()
+    df["movie_genre"] = df["movie_genre"].astype(str)
+    df["mood"] = df["mood"].astype(str)
+    y = df["recommended"].astype(int).to_numpy()
+
+    idx = np.arange(len(df))
+    idx_train, idx_test, y_train, y_test = split_data(idx, y)
+    train_df, test_df = df.iloc[idx_train], df.iloc[idx_test]
+    scaler = StandardScaler().fit(train_df[MOVIE_NUM_FEATURES].to_numpy(dtype=np.float32))
+    X_train = movie_feature_matrix(train_df, scaler)
+    X_test = movie_feature_matrix(test_df, scaler)
+    X_xgb_train, X_xgb_val, y_xgb_train, y_xgb_val = split_data(X_train, y_train)
+    study_prefix = safe_name(f"movie_{source}_{X_train.shape[1]}feat")
+
+    proba_fns: dict = {}
+    test_proba: dict = {}
+    metric_rows: list = []
+    def _row(name, pred, secs, params):
+        return {"Task": "Movie recommender", "Model": name,
+                "Accuracy": round(float(accuracy_score(y_test, pred)), 4),
+                "Macro F1": round(float(f1_score(y_test, pred, average="macro")), 4),
+                "Train sec incl. Optuna": round(float(secs), 3), "Source": source,
+                "Best params": params if isinstance(params, str) else json.dumps(params, ensure_ascii=False)}
+
+    if ENABLE_XGBOOST:
+        if optuna_trials_xgb <= 0:
+            best_xgb = {"n_estimators": 400, "max_depth": 5, "learning_rate": 0.05, "subsample": 0.9,
+                        "colsample_bytree": 0.9, "min_child_weight": 2.0, "gamma": 0.0,
+                        "reg_alpha": 0.01, "reg_lambda": 1.0}
+            xgb_time = 0.0
+        else:
+            def xgb_obj(trial: optuna.Trial) -> float:
+                params = {"n_estimators": trial.suggest_int("n_estimators", 200, 900, step=100),
+                          "max_depth": trial.suggest_int("max_depth", 3, 8),
+                          "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.2, log=True),
+                          "subsample": trial.suggest_float("subsample", 0.6, 1.0),
+                          "colsample_bytree": trial.suggest_float("colsample_bytree", 0.6, 1.0),
+                          "min_child_weight": trial.suggest_float("min_child_weight", 1.0, 10.0),
+                          "gamma": trial.suggest_float("gamma", 0.0, 2.0),
+                          "reg_alpha": trial.suggest_float("reg_alpha", 0.001, 1.0, log=True),
+                          "reg_lambda": trial.suggest_float("reg_lambda", 0.001, 5.0, log=True),
+                          "eval_metric": "logloss", "early_stopping_rounds": 40,
+                          "random_state": SEED, "n_jobs": 8, "device": XGB_DEVICE}
+                m = XGBClassifier(**params)
+                m.fit(X_xgb_train, y_xgb_train, eval_set=[(X_xgb_val, y_xgb_val)], verbose=False)
+                return float(f1_score(y_xgb_val, m.predict(X_xgb_val), average="macro"))
+            t0 = time.perf_counter()
+            st = get_or_create_study(study_name=f"{study_prefix}_xgboost")
+            ensure_study_trials(st, xgb_obj, optuna_trials_xgb)
+            best_xgb = dict(st.best_params); xgb_time = time.perf_counter() - t0
+        fp = {**best_xgb, "eval_metric": "logloss", "early_stopping_rounds": 40,
+              "random_state": SEED, "n_jobs": 8, "device": XGB_DEVICE}
+        t0 = time.perf_counter()
+        xgbm = XGBClassifier(**fp)
+        xgbm.fit(X_xgb_train, y_xgb_train, eval_set=[(X_xgb_val, y_xgb_val)], verbose=False)
+        xgb_time += time.perf_counter() - t0
+        proba_fns["XGBoost"] = lambda f, _m=xgbm: _m.predict_proba(f)
+        test_proba["XGBoost"] = xgbm.predict_proba(X_test)
+        metric_rows.append(_row("XGBoost", np.argmax(test_proba["XGBoost"], axis=1), xgb_time, best_xgb))
+
+    if ENABLE_MLP:
+        mlpm, mlp_time, best_mlp = train_multi_mlp(X_train, y_train, optuna_trials=optuna_trials_mlp,
+                                                   study_name=f"{study_prefix}_torch_mlp")
+        def _mlp_proba(f, _m=mlpm):
+            with torch.no_grad():
+                return torch.softmax(_m(torch.tensor(np.asarray(f, dtype=np.float32)).to(DEVICE)), dim=1).cpu().numpy()
+        proba_fns["Torch MLP"] = _mlp_proba
+        test_proba["Torch MLP"] = _mlp_proba(X_test)
+        metric_rows.append(_row("Torch MLP", np.argmax(test_proba["Torch MLP"], axis=1), mlp_time, best_mlp))
+
+    if ENABLE_TABM:
+        tabmm, tabm_time, best_tabm = train_tabm(X_train, y_train, optuna_trials=optuna_trials_tabm,
+                                                 study_name=f"{study_prefix}_tabm")
+        proba_fns["TabM"] = lambda f, _m=tabmm: tabm_predict_proba(_m, f)
+        test_proba["TabM"] = tabm_predict_proba(tabmm, X_test)
+        metric_rows.append(_row("TabM", np.argmax(test_proba["TabM"], axis=1), tabm_time, best_tabm))
+
+    if len(test_proba) >= 2:
+        ens = np.mean(list(test_proba.values()), axis=0)
+        metric_rows.append(_row("Ensemble (soft vote)", np.argmax(ens, axis=1), 0.0,
+                                f"Average of {', '.join(test_proba.keys())} probabilities"))
+
+    metrics = pd.DataFrame(metric_rows) if metric_rows else pd.DataFrame(
+        [{"Task": "Movie recommender", "Model": "None enabled", "Accuracy": np.nan, "Macro F1": np.nan,
+          "Train sec incl. Optuna": 0.0, "Source": source, "Best params": "All models disabled."}])
+
+    candidates = map_catalog_to_movie_features(MOVIE["df"])
+    return {"proba_fns": proba_fns, "scaler": scaler, "candidates": candidates,
+            "metrics": metrics, "source": source, "rows": len(df)}
+
+# ============================================================
 # 7. Startup: load catalog + train genre model
 # ============================================================
-print("Loading movie catalog (content-based recommender, no training)")
+print("Loading movie catalog")
 MOVIE = load_movie_catalog()
+
+print("Training/loading Movie recommender models (XGBoost / Torch MLP / TabM, per ENABLE_* flags)")
+MOVIE_MODEL = train_movie_bundle(optuna_trials_xgb=OPTUNA_TRIALS_XGB, optuna_trials_mlp=OPTUNA_TRIALS_MLP)
 
 print("Product image relevance uses CLIP zero-shot model. No startup training required.")
 
-print("Training/loading Playlist models (XGBoost vs Torch MLP)")
+print("Training/loading Playlist models (XGBoost / Torch MLP / TabM, per ENABLE_* flags)")
 PLAYLIST_MODEL = train_playlist_bundle(optuna_trials_xgb=OPTUNA_TRIALS_XGB, optuna_trials_mlp=OPTUNA_TRIALS_MLP)
 
 # ============================================================
@@ -814,12 +1091,12 @@ def get_all_metrics() -> pd.DataFrame:
                             "Source": "Uploaded image + customer preference text",
                             "Best params": "No training. Zero-shot image-text similarity.",
                             }])
-    return pd.concat([clip_row, PLAYLIST_MODEL["metrics"]], ignore_index=True)
+    return pd.concat([clip_row, MOVIE_MODEL["metrics"], PLAYLIST_MODEL["metrics"]], ignore_index=True)
 
 def get_training_sources() -> pd.DataFrame:
     return pd.DataFrame([
-                        {"Dataset": "Movie recommender", "Source": MOVIE["source"], "Rows": MOVIE["rows"],
-                        "Purpose": "Content-based movie recommendations from the IMDb catalog"},
+                        {"Dataset": "Movie recommender", "Source": MOVIE_MODEL["source"], "Rows": MOVIE_MODEL["rows"],
+                        "Purpose": "Predict 'recommended' from user taste + movie attributes (XGBoost / MLP / TabM)"},
                         {"Dataset": "Product image relevance", "Source": f"Uploaded image + {CLIP_MODEL_ID}",
                         "Rows": "N/A", "Purpose": "Image-category and customer preference matching"},
                         {"Dataset": "Playlist creator", "Source": PLAYLIST_MODEL["source"], "Rows": PLAYLIST_MODEL["rows"],
@@ -839,9 +1116,10 @@ with gr.Blocks(title="ML Demo - Recommender + XGBoost vs Torch MLP + CLIP") as d
 
         with gr.Tab("1. Movie recommender"):
             gr.Markdown(
-                        "## Movie recommendation\n\n"
-                        "Set your taste, mood and constraints. The app scores every movie in "
-                        f"`{MOVIE['source']}` ({MOVIE['rows']} titles) and returns the best matches."
+                        "## Movie recommendation (XGBoost vs Torch MLP vs TabM)\n\n"
+                        f"Enabled models: **{', '.join(MOVIE_MODEL['proba_fns'].keys()) or 'none'}**. "
+                        "Set your taste, mood and constraints. Each enabled model predicts how likely you are to "
+                        f"like every title in `{MOVIE['source']}` ({MOVIE['rows']} movies) and returns its own top picks."
                         )
             with gr.Row():
                 with gr.Column():
@@ -859,12 +1137,16 @@ with gr.Blocks(title="ML Demo - Recommender + XGBoost vs Torch MLP + CLIP") as d
                     mood = gr.Dropdown(MOODS, value="Mind-bending", label="Current mood")
                     top_n = gr.Slider(1, 20, value=8, step=1, label="How many recommendations")
                     movie_btn = gr.Button("Recommend", variant="primary")
-            movie_out = gr.Textbox(label="Top recommendation", lines=12, elem_classes=["prediction-box"])
-            movie_table = gr.Dataframe(label="Recommended movies", interactive=False, elem_classes=["dataframe-table"])
+            movie_out = gr.Textbox(label="Recommendation summary", lines=8, elem_classes=["prediction-box"])
+            with gr.Row():
+                movie_xgb_table = gr.Dataframe(label="XGBoost picks", interactive=False, elem_classes=["dataframe-table"])
+                movie_mlp_table = gr.Dataframe(label="Torch MLP picks", interactive=False, elem_classes=["dataframe-table"])
+                movie_tabm_table = gr.Dataframe(label="TabM picks", interactive=False, elem_classes=["dataframe-table"])
+            movie_metrics = gr.Dataframe(label="Movie model metrics", interactive=False)
             movie_btn.click(
                             recommend_movies,
                             [action, comedy, drama, scifi, romance, documentary, genre, rating, age, length, mood, top_n],
-                            [movie_out, movie_table],
+                            [movie_out, movie_xgb_table, movie_mlp_table, movie_tabm_table, movie_metrics],
                             )
 
         with gr.Tab("2. Product image relevance"):
@@ -888,10 +1170,11 @@ with gr.Blocks(title="ML Demo - Recommender + XGBoost vs Torch MLP + CLIP") as d
 
         with gr.Tab("3. Playlist creator"):
             gr.Markdown(
-                        "## Playlist creator (XGBoost vs Torch MLP)\n\n"
-                        "Pick a target vibe and shape the audio profile. Both models score every track in "
-                        f"`{PLAYLIST_MODEL['source']}` ({PLAYLIST_MODEL['rows']:,} tracks) and each builds its own playlist, "
-                        "so you can compare how the two algorithms read the same taste."
+                        "## Playlist creator (XGBoost vs Torch MLP vs TabM)\n\n"
+                        f"Enabled models: **{', '.join(PLAYLIST_MODEL['proba_fns'].keys()) or 'none'}**. "
+                        "Pick a target vibe and shape the audio profile. Each enabled model scores every track in "
+                        f"`{PLAYLIST_MODEL['source']}` ({PLAYLIST_MODEL['rows']:,} tracks) and builds its own playlist, "
+                        "so you can compare how the algorithms read the same taste."
                         )
             _pl_genres = PLAYLIST_MODEL["labels"]
             _pl_default = "pop" if "pop" in _pl_genres else _pl_genres[0]
@@ -911,11 +1194,12 @@ with gr.Blocks(title="ML Demo - Recommender + XGBoost vs Torch MLP + CLIP") as d
             with gr.Row():
                 pl_xgb_table = gr.Dataframe(label="XGBoost playlist", interactive=False, elem_classes=["dataframe-table"])
                 pl_mlp_table = gr.Dataframe(label="Torch MLP playlist", interactive=False, elem_classes=["dataframe-table"])
+                pl_tabm_table = gr.Dataframe(label="TabM playlist", interactive=False, elem_classes=["dataframe-table"])
             pl_metrics = gr.Dataframe(label="Playlist model metrics", interactive=False)
             pl_btn.click(
                         create_playlist,
                         [pl_genre, pl_energy, pl_dance, pl_valence, pl_acoustic, pl_tempo, pl_pop, pl_n],
-                        [pl_out, pl_xgb_table, pl_mlp_table, pl_metrics],
+                        [pl_out, pl_xgb_table, pl_mlp_table, pl_tabm_table, pl_metrics],
                         )
 
 if __name__ == "__main__":
