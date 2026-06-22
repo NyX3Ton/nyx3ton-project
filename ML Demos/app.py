@@ -649,12 +649,12 @@ def create_playlist(target_genre, energy, danceability, valence, acousticness, t
 
     desired = np.array([energy, danceability, valence, acousticness, float(tempo) / 250.0], dtype=np.float32)
     track_taste = np.column_stack([
-                        sub["energy"].to_numpy(),
-                        sub["danceability"].to_numpy(),
-                        sub["valence"].to_numpy(),
-                        sub["acousticness"].to_numpy(),
-                        sub["tempo"].to_numpy() / 250.0,
-                        ]).astype(np.float32)
+                                    sub["energy"].to_numpy(),
+                                    sub["danceability"].to_numpy(),
+                                    sub["valence"].to_numpy(),
+                                    sub["acousticness"].to_numpy(),
+                                    sub["tempo"].to_numpy() / 250.0,
+                                ]).astype(np.float32)
     dist = np.sqrt(((track_taste - desired) ** 2).mean(axis=1))
     taste = np.clip(1.0 - dist, 0.0, 1.0).astype(np.float64)
 
