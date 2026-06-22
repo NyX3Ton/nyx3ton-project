@@ -240,17 +240,13 @@ def load_movie_catalog() -> dict:
 
     df = read_table_file(path)
 
-    numeric_cols = [
-                    "imdb_rating_10", "runtime_minutes", "release_year", "popularity_score",
-                    *PREF_COL.values(), *MOOD_COL.values(),
-                    ]
+    numeric_cols = ["imdb_rating_10", "runtime_minutes", "release_year", "popularity_score",*PREF_COL.values(), *MOOD_COL.values()]
     for col in numeric_cols:
         if col not in df.columns:
             df[col] = 0.0
         df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
 
-    for col in ("movie_title", "all_genres", "director_clean", "lead_actor",
-                "overview_clean", "recommendation_explanation_base"):
+    for col in ("movie_title", "all_genres", "director_clean", "lead_actor","overview_clean", "recommendation_explanation_base"):
         if col not in df.columns:
             df[col] = ""
         df[col] = df[col].fillna("").astype(str)
@@ -424,10 +420,10 @@ def train_multi_mlp(X, y, optuna_trials: int = OPTUNA_TRIALS_MLP, study_name: st
         def objective(trial: optuna.Trial) -> float:
             torch.manual_seed(SEED)
             model = MultiMLP(
-                                X.shape[1], n_classes,
-                                trial.suggest_int("hidden_1", 128, 2024, step=128),
-                                trial.suggest_int("hidden_2", 64, 256, step=64),
-                                trial.suggest_float("dropout", 0.02, 0.2),
+                            X.shape[1], n_classes,
+                            trial.suggest_int("hidden_1", 128, 2024, step=128),
+                            trial.suggest_int("hidden_2", 64, 256, step=64),
+                            trial.suggest_float("dropout", 0.02, 0.2),
                             )
             model = run_training(
                                 model, X_train, y_train,
@@ -523,8 +519,7 @@ def train_tabm(X, y, optuna_trials: int = OPTUNA_TRIALS_TABM, study_name: str = 
 
     torch.manual_seed(SEED)
     final_model = make_model(best["n_blocks"], best["d_block"], best["dropout"])
-    final_model = run_training(final_model, X_train, y_train, float(best["lr"]), float(best["weight_decay"]),
-                                int(best["batch_size"]), int(best["epochs"]), X_eval=X_val, y_eval=y_val)
+    final_model = run_training(final_model, X_train, y_train, float(best["lr"]), float(best["weight_decay"]), int(best["batch_size"]), int(best["epochs"]), X_eval=X_val, y_eval=y_val)
     return final_model, time.perf_counter() - start_total, best
 
 def tabm_predict_proba(model, X) -> np.ndarray:
@@ -556,7 +551,8 @@ def train_playlist_bundle(optuna_trials_xgb: int = OPTUNA_TRIALS_XGB, optuna_tri
                 "Accuracy": round(float(accuracy_score(y_test, pred)), 4),
                 "Macro F1": round(float(f1_score(y_test, pred, average="macro")), 4),
                 "Train sec incl. Optuna": round(float(secs), 3), "Source": source,
-                "Best params": params if isinstance(params, str) else json.dumps(params, ensure_ascii=False)}
+                "Best params": params if isinstance(params, str) else json.dumps(params, ensure_ascii=False)
+                }
 
     if ENABLE_XGBOOST:
         if optuna_trials_xgb <= 0:
@@ -608,8 +604,7 @@ def train_playlist_bundle(optuna_trials_xgb: int = OPTUNA_TRIALS_XGB, optuna_tri
         metric_rows.append(_row("Torch MLP", np.argmax(test_proba["Torch MLP"], axis=1), mlp_time, best_mlp_params))
 
     if ENABLE_TABM:
-        tabm_model, tabm_time, best_tabm_params = train_tabm(X_train, y_train, optuna_trials=optuna_trials_tabm,
-                                                                study_name=f"{study_prefix}_tabm", default_params=PLAYLIST_TABM_DEFAULTS)
+        tabm_model, tabm_time, best_tabm_params = train_tabm(X_train, y_train, optuna_trials=optuna_trials_tabm, study_name=f"{study_prefix}_tabm", default_params=PLAYLIST_TABM_DEFAULTS)
         proba_fns["TabM"] = lambda f, _m=tabm_model: tabm_predict_proba(_m, f)
         test_proba["TabM"] = tabm_predict_proba(tabm_model, X_test)
         metric_rows.append(_row("TabM", np.argmax(test_proba["TabM"], axis=1), tabm_time, best_tabm_params))
@@ -617,8 +612,7 @@ def train_playlist_bundle(optuna_trials_xgb: int = OPTUNA_TRIALS_XGB, optuna_tri
     base_fns = dict(proba_fns)
     if len(test_proba) >= 2:
         ens_test = np.mean(list(test_proba.values()), axis=0)
-        metric_rows.append(_row("Ensemble (soft vote)", np.argmax(ens_test, axis=1),
-                                0.0, f"Average of {', '.join(test_proba.keys())} probabilities"))
+        metric_rows.append(_row("Ensemble (soft vote)", np.argmax(ens_test, axis=1), 0.0, f"Average of {', '.join(test_proba.keys())} probabilities"))
 
     metrics = pd.DataFrame(metric_rows) if metric_rows else pd.DataFrame(
         [{"Task": "Playlist creator", "Model": "None enabled", "Accuracy": np.nan, "Macro F1": np.nan,
@@ -900,17 +894,16 @@ def generate_movie_training_data(rows: int = 12000) -> pd.DataFrame:
         age = int(rng.integers(0, 45))
         length = float(np.clip(rng.normal(112, 22), 70, 190))
         mid = int(rng.integers(0, n_m))
-        genre_match = [prefs[0], prefs[1], prefs[2], prefs[3],
-                       0.65 * prefs[3] + 0.35 * prefs[0], prefs[4], prefs[5]][gid]
+        genre_match = [prefs[0], prefs[1], prefs[2], prefs[3],0.65 * prefs[3] + 0.35 * prefs[0], prefs[4], prefs[5]][gid]
         mood_bonus = 0.12 if ((mid == 4 and gid in (3, 4)) or (mid == 1 and gid == 1) or (mid == 3 and gid == 0)) else 0.0
-        score = (1.85 * genre_match + 0.23 * (rating - 6.5) - 0.006 * age
-                 - 0.002 * max(length - 130, 0) + mood_bonus + rng.normal(0, 0.25))
+        score = (1.85 * genre_match + 0.23 * (rating - 6.5) - 0.006 * age - 0.002 * max(length - 130, 0) + mood_bonus + rng.normal(0, 0.25))
         data.append({
-            "user_action": round(float(prefs[0]), 3), "user_comedy": round(float(prefs[1]), 3),
-            "user_drama": round(float(prefs[2]), 3), "user_scifi": round(float(prefs[3]), 3),
-            "user_romance": round(float(prefs[4]), 3), "user_documentary": round(float(prefs[5]), 3),
-            "movie_genre": GENRES[gid], "movie_rating": round(rating, 2), "movie_age_years": age,
-            "movie_length_min": int(length), "mood": MOODS[mid], "recommended": int(score > 0.95)})
+                    "user_action": round(float(prefs[0]), 3), "user_comedy": round(float(prefs[1]), 3),
+                    "user_drama": round(float(prefs[2]), 3), "user_scifi": round(float(prefs[3]), 3),
+                    "user_romance": round(float(prefs[4]), 3), "user_documentary": round(float(prefs[5]), 3),
+                    "movie_genre": GENRES[gid], "movie_rating": round(rating, 2), "movie_age_years": age,
+                    "movie_length_min": int(length), "mood": MOODS[mid], "recommended": int(score > 0.95)
+                    })
     return pd.DataFrame(data)
 
 def movie_feature_matrix(frame, scaler) -> np.ndarray:
@@ -928,16 +921,16 @@ def map_catalog_to_movie_features(movie_df) -> pd.DataFrame:
                 return cand
         return "Drama"
     return pd.DataFrame({
-        "movie_title": movie_df["movie_title"].to_numpy(),
-        "release_year": movie_df["release_year"].astype(int).to_numpy(),
-        "director_clean": movie_df["director_clean"].to_numpy(),
-        "imdb_rating_10": movie_df["imdb_rating_10"].to_numpy(),
-        "runtime_minutes": movie_df["runtime_minutes"].astype(int).to_numpy(),
-        "movie_genre": [first_genre(g) for g in genres_lc],
-        "movie_rating": movie_df["imdb_rating_10"].to_numpy(),
-        "movie_age_years": (current_year - movie_df["release_year"]).clip(lower=0).to_numpy(),
-        "movie_length_min": movie_df["runtime_minutes"].to_numpy(),
-    })
+                        "movie_title": movie_df["movie_title"].to_numpy(),
+                        "release_year": movie_df["release_year"].astype(int).to_numpy(),
+                        "director_clean": movie_df["director_clean"].to_numpy(),
+                        "imdb_rating_10": movie_df["imdb_rating_10"].to_numpy(),
+                        "runtime_minutes": movie_df["runtime_minutes"].astype(int).to_numpy(),
+                        "movie_genre": [first_genre(g) for g in genres_lc],
+                        "movie_rating": movie_df["imdb_rating_10"].to_numpy(),
+                        "movie_age_years": (current_year - movie_df["release_year"]).clip(lower=0).to_numpy(),
+                        "movie_length_min": movie_df["runtime_minutes"].to_numpy(),
+                        })
 
 def train_movie_bundle(optuna_trials_xgb: int = OPTUNA_TRIALS_XGB, optuna_trials_mlp: int = OPTUNA_TRIALS_MLP,
                         optuna_trials_tabm: int = OPTUNA_TRIALS_TABM) -> dict:
@@ -1025,8 +1018,7 @@ def train_movie_bundle(optuna_trials_xgb: int = OPTUNA_TRIALS_XGB, optuna_trials
 
     if len(test_proba) >= 2:
         ens = np.mean(list(test_proba.values()), axis=0)
-        metric_rows.append(_row("Ensemble (soft vote)", np.argmax(ens, axis=1), 0.0,
-                                f"Average of {', '.join(test_proba.keys())} probabilities"))
+        metric_rows.append(_row("Ensemble (soft vote)", np.argmax(ens, axis=1), 0.0, f"Average of {', '.join(test_proba.keys())} probabilities"))
 
     metrics = pd.DataFrame(metric_rows) if metric_rows else pd.DataFrame(
         [{"Task": "Movie recommender", "Model": "None enabled", "Accuracy": np.nan, "Macro F1": np.nan,
