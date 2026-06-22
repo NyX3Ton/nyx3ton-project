@@ -4,8 +4,11 @@ An interactive [Gradio](https://www.gradio.app/) application that demonstrates h
 
 > Built as a hands-on way to show non-experts what model selection, tuning, and ensembling actually do — using movies, music, and product images instead of abstract benchmarks.
 
-<!-- Optional: add a screenshot or GIF of the running app here -->
-<!-- ![App overview](docs/screenshot.png) -->
+1. Movie recommendation:
+![Dashboard](images/movie-recommendations.png)
+2. Product image relevance
+3. Spotify playlist creator
+![Dashboard](images/playlist-creator.png)
 
 ## Features
 
