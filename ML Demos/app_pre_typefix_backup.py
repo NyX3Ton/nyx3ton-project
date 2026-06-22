@@ -64,7 +64,6 @@ try:
     from tabm import TabM
     _TABM_AVAILABLE = True
 except Exception:
-    TabM = None
     _TABM_AVAILABLE = False
     if ENABLE_TABM:
         print("tabm package not installed; TabM disabled. Install with: pip install tabm")
@@ -389,7 +388,7 @@ def train_multi_mlp(X, y, optuna_trials: int = OPTUNA_TRIALS_MLP, study_name: st
                 optimizer.zero_grad()
                 loss_fn(model(xb), yb).backward()
                 optimizer.step()
-            if X_eval is not None and y_eval is not None:
+            if X_eval is not None:
                 model.eval()
                 with torch.no_grad():
                     pred = torch.argmax(model(torch.tensor(X_eval, dtype=torch.float32).to(DEVICE)), dim=1).cpu().numpy()
@@ -468,7 +467,7 @@ def train_tabm(X, y, optuna_trials: int = OPTUNA_TRIALS_TABM, study_name: str = 
                 loss = loss_fn(out.reshape(-1, out.shape[-1]), yb.repeat_interleave(k))
                 loss.backward()
                 optimizer.step()
-            if X_eval is not None and y_eval is not None:
+            if X_eval is not None:
                 model.eval()
                 with torch.no_grad():
                     out = model(torch.tensor(X_eval, dtype=torch.float32).to(DEVICE))
@@ -491,19 +490,19 @@ def train_tabm(X, y, optuna_trials: int = OPTUNA_TRIALS_TABM, study_name: str = 
         return model
 
     if optuna_trials <= 0:
-        best = {"n_blocks": 3, "d_block": 320, "dropout": 0.01, "lr": 0.002,
-                "weight_decay": 0.00015, "batch_size": 256, "epochs": 220}
+        best = {"n_blocks": 3, "d_block": 512, "dropout": 0.023, "lr": 0.001,
+                "weight_decay": 0.000007, "batch_size": 512, "epochs": 200}
     else:
         def objective(trial: optuna.Trial) -> float:
             torch.manual_seed(SEED)
-            model = make_model(trial.suggest_int("n_blocks", 2, 4),
-                                trial.suggest_int("d_block", 128, 1024, step=128),
+            model = make_model(trial.suggest_int("n_blocks", 1, 5),
+                                trial.suggest_int("d_block", 64, 512, step=64),
                                 trial.suggest_float("dropout", 0.0, 0.20))
             model = run_training(model, X_train, y_train,
                                     trial.suggest_float("lr", 1e-4, 5e-3, log=True),
                                     trial.suggest_float("weight_decay", 1e-6, 1e-1, log=True),
                                     int(trial.suggest_categorical("batch_size", [128, 256, 512])),
-                                    trial.suggest_int("epochs", 50, 250),
+                                    trial.suggest_int("epochs", 50, 200),
                                     trial, X_val, y_val)
             with torch.no_grad():
                 out = model(torch.tensor(X_val, dtype=torch.float32).to(DEVICE))
@@ -727,7 +726,7 @@ def get_clip_model():
 
         print(f"Loading CLIP model: {CLIP_MODEL_ID} on CUDA")
         CLIP_MODEL = CLIPModel.from_pretrained(CLIP_MODEL_ID)
-        CLIP_MODEL.to(CLIP_DEVICE)  # type: ignore[arg-type]
+        CLIP_MODEL.to(CLIP_DEVICE)
         CLIP_MODEL.eval()
 
         return CLIP_MODEL, CLIP_PROCESSOR, CLIP_DEVICE, CLIP_BACKEND
@@ -753,17 +752,17 @@ def get_clip_model():
 
     print(f"Loading CLIP model: {CLIP_MODEL_ID} on CPU")
     CLIP_MODEL = CLIPModel.from_pretrained(CLIP_MODEL_ID)
-    CLIP_MODEL.to(CLIP_DEVICE)  # type: ignore[arg-type]
+    CLIP_MODEL.to(CLIP_DEVICE)
     CLIP_MODEL.eval()
 
     return CLIP_MODEL, CLIP_PROCESSOR, CLIP_DEVICE, CLIP_BACKEND
 
-def get_cached_clip_text_inputs(texts: list[str], device: str | None) -> dict[str, torch.Tensor]:
+def get_cached_clip_text_inputs(texts: list[str], device: str) -> dict[str, torch.Tensor]:
     _, processor, _, _ = get_clip_model()
     key = tuple(texts)
 
     if key not in CLIP_TEXT_INPUT_CACHE:
-        text_inputs = processor(text=list(texts), return_tensors="pt", padding=True, truncation=True)  # type: ignore[call-arg]
+        text_inputs = processor(text=list(texts), return_tensors="pt", padding=True, truncation=True)
 
         CLIP_TEXT_INPUT_CACHE[key] = {
                                     name: value.detach().cpu()
@@ -777,10 +776,10 @@ def get_cached_clip_text_inputs(texts: list[str], device: str | None) -> dict[st
 
     return cached
 
-def get_clip_image_inputs(image: Any, device: str | None) -> dict[str, torch.Tensor]:
+def get_clip_image_inputs(image: Any, device: str) -> dict[str, torch.Tensor]:
     _, processor, _, _ = get_clip_model()
 
-    image_inputs = processor(images=image, return_tensors="pt")  # type: ignore[call-arg]
+    image_inputs = processor(images=image,return_tensors="pt")
 
     if device in {"cuda", "cpu"}:
         return {name: value.to(device) for name, value in image_inputs.items()}
@@ -1193,21 +1192,4 @@ with gr.Blocks(title="ML Demo - Recommender + XGBoost vs Torch MLP + CLIP") as d
                 with gr.Column():
                     pl_acoustic = gr.Slider(0, 1, value=0.2, step=0.1, label="Acousticness")
                     pl_tempo = gr.Slider(60, 200, value=120, step=5, label="Preferred tempo (BPM)")
-                    pl_pop = gr.Slider(0, 100, value=30, step=1, label="Minimum popularity")
-                    pl_n = gr.Slider(10, 20, value=15, step=1, label="Playlist length (tracks)")
-                    pl_btn = gr.Button("Create playlist", variant="primary")
-            pl_out = gr.Textbox(label="Playlist summary", lines=9, elem_classes=["prediction-box"])
-            with gr.Row():
-                pl_xgb_table = gr.Dataframe(label="XGBoost playlist", interactive=False, elem_classes=["dataframe-table"])
-                pl_mlp_table = gr.Dataframe(label="Torch MLP playlist", interactive=False, elem_classes=["dataframe-table"])
-                pl_tabm_table = gr.Dataframe(label="TabM playlist", interactive=False, elem_classes=["dataframe-table"])
-            pl_metrics = gr.Dataframe(label="Playlist model metrics", interactive=False)
-            pl_btn.click(
-                        create_playlist,
-                        [pl_genre, pl_energy, pl_dance, pl_valence, pl_acoustic, pl_tempo, pl_pop, pl_n],
-                        [pl_out, pl_xgb_table, pl_mlp_table, pl_tabm_table, pl_metrics],
-                        )
-
-if __name__ == "__main__":
-    launch_optuna_dashboard()
-    demo.launch(server_name="127.0.0.1", inbrowser=True, share=False, css=CUSTOM_CSS)
+                    pl_pop = gr.Slider(0, 100, value=30, step=1, label="Minimum popularity
