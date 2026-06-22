@@ -52,13 +52,21 @@ IMAGE_PRODUCT_CATEGORIES = ["Tech gadget", "Gaming accessory", "Fitness product"
 
 OPTUNA_TRIALS_XGB = int(os.getenv("OPTUNA_TRIALS_XGB", "0"))
 OPTUNA_TRIALS_MLP = int(os.getenv("OPTUNA_TRIALS_MLP", "0"))
-OPTUNA_TRIALS_TABM = int(os.getenv("OPTUNA_TRIALS_TABM", "8"))
+OPTUNA_TRIALS_TABM = int(os.getenv("OPTUNA_TRIALS_TABM", "0"))
 
 # Enable/disable each model family at startup (disabled models are not trained and not shown).
 ENABLE_XGBOOST = os.getenv("ENABLE_XGBOOST", "1") == "1"
 ENABLE_MLP = os.getenv("ENABLE_MLP", "1") == "1"
 ENABLE_TABM = os.getenv("ENABLE_TABM", "1") == "1"
 TABM_K = int(os.getenv("TABM_K", "16"))  # number of TabM ensemble submodels
+
+# Best hyperparameters found via Optuna, reused as the OPTUNA_TRIALS_* == 0 defaults (per task, per model).
+PLAYLIST_XGB_DEFAULTS = {"n_estimators": 800, "max_depth": 11, "learning_rate": 0.04,"subsample": 0.7, "colsample_bytree": 1,"min_child_weight": 5.3, "gamma": 0.55, "reg_alpha": 0.2, "reg_lambda": 0.054}
+MOVIE_XGB_DEFAULTS = {"n_estimators": 900, "max_depth": 6, "learning_rate": 0.0244,"subsample": 0.6, "colsample_bytree": 0.81,"min_child_weight": 6.2, "gamma": 1.1,"reg_alpha": 0.06, "reg_lambda": 0.00155}
+PLAYLIST_MLP_DEFAULTS = {"hidden_1": 320, "hidden_2": 256, "dropout": 0.0265,"lr": 0.002, "weight_decay": 0.000015,"batch_size": 256, "epochs": 216}
+MOVIE_MLP_DEFAULTS = {"hidden_1": 512, "hidden_2": 96, "dropout": 0.18,"lr": 0.001, "weight_decay": 0.01,"batch_size": 128, "epochs": 125}
+PLAYLIST_TABM_DEFAULTS = {"n_blocks": 3, "d_block": 512, "dropout": 0.0172,"lr": 0.0035, "weight_decay": 1.97e-05,"batch_size": 128, "epochs": 87}
+MOVIE_TABM_DEFAULTS = {"n_blocks": 4, "d_block": 256, "dropout": 0.146,"lr": 0.00042, "weight_decay": 0.0002,"batch_size": 128, "epochs": 59}
 
 try:
     from tabm import TabM
@@ -369,7 +377,7 @@ def load_spotify_dataframe() -> tuple[pd.DataFrame, str]:
                         )
     return df.reset_index(drop=True), path.name
 
-def train_multi_mlp(X, y, optuna_trials: int = OPTUNA_TRIALS_MLP, study_name: str = "multi_mlp") -> tuple[nn.Module, float, dict]:
+def train_multi_mlp(X, y, optuna_trials: int = OPTUNA_TRIALS_MLP, study_name: str = "multi_mlp", default_params: dict | None = None) -> tuple[nn.Module, float, dict]:
     start_total = time.perf_counter()
     X = np.asarray(X, dtype=np.float32)
     y = np.asarray(y, dtype=np.int64)
@@ -411,21 +419,21 @@ def train_multi_mlp(X, y, optuna_trials: int = OPTUNA_TRIALS_MLP, study_name: st
         return model
 
     if optuna_trials <= 0:
-        best = {"hidden_1": 320, "hidden_2": 256, "dropout": 0.026, "lr": 0.002, "weight_decay": 0.000015, "batch_size": 256, "epochs": 220}
+        best = dict(default_params) if default_params else {"hidden_1": 256, "hidden_2": 128, "dropout": 0.1, "lr": 0.005, "weight_decay": 1e-4, "batch_size": 256, "epochs": 200}
     else:
         def objective(trial: optuna.Trial) -> float:
             torch.manual_seed(SEED)
             model = MultiMLP(
                                 X.shape[1], n_classes,
-                                trial.suggest_int("hidden_1", 64, 512, step=64),
-                                trial.suggest_int("hidden_2", 32, 256, step=32),
-                                trial.suggest_float("dropout", 0.0, 0.3),
+                                trial.suggest_int("hidden_1", 128, 2024, step=128),
+                                trial.suggest_int("hidden_2", 64, 256, step=64),
+                                trial.suggest_float("dropout", 0.0, 0.5),
                             )
             model = run_training(
                                 model, X_train, y_train,
                                 trial.suggest_float("lr", 1e-3, 3e-2, log=True),
                                 trial.suggest_float("weight_decay", 1e-6, 1e-2, log=True),
-                                int(trial.suggest_categorical("batch_size", [128, 256, 512])),
+                                int(trial.suggest_categorical("batch_size", [256, 512, 1024])),
                                 trial.suggest_int("epochs", 50, 250),
                                 trial, X_val, y_val,
                                 )
@@ -442,7 +450,7 @@ def train_multi_mlp(X, y, optuna_trials: int = OPTUNA_TRIALS_MLP, study_name: st
     final_model = run_training(final_model, X_train, y_train, float(best["lr"]), float(best["weight_decay"]), int(best["batch_size"]), int(best["epochs"]), X_eval=X_val, y_eval=y_val)
     return final_model, time.perf_counter() - start_total, best
 
-def train_tabm(X, y, optuna_trials: int = OPTUNA_TRIALS_TABM, study_name: str = "tabm") -> tuple[object, float, dict]:
+def train_tabm(X, y, optuna_trials: int = OPTUNA_TRIALS_TABM, study_name: str = "tabm", default_params: dict | None = None) -> tuple[object, float, dict]:
     start_total = time.perf_counter()
     X = np.asarray(X, dtype=np.float32)
     y = np.asarray(y, dtype=np.int64)
@@ -491,8 +499,7 @@ def train_tabm(X, y, optuna_trials: int = OPTUNA_TRIALS_TABM, study_name: str = 
         return model
 
     if optuna_trials <= 0:
-        best = {"n_blocks": 3, "d_block": 320, "dropout": 0.01, "lr": 0.002,
-                "weight_decay": 0.00015, "batch_size": 512, "epochs": 220}
+        best = dict(default_params) if default_params else {"n_blocks": 2, "d_block": 256, "dropout": 0.1, "lr": 0.002, "weight_decay": 3e-4, "batch_size": 256, "epochs": 150}
     else:
         def objective(trial: optuna.Trial) -> float:
             torch.manual_seed(SEED)
@@ -553,16 +560,14 @@ def train_playlist_bundle(optuna_trials_xgb: int = OPTUNA_TRIALS_XGB, optuna_tri
 
     if ENABLE_XGBOOST:
         if optuna_trials_xgb <= 0:
-            best_xgb_params = {"n_estimators": 600, "max_depth": 8, "learning_rate": 0.05,
-                                "subsample": 0.8, "colsample_bytree": 0.56, "min_child_weight": 2.4,
-                                "gamma": 0.1, "reg_alpha": 0.54, "reg_lambda": 0.02}
+            best_xgb_params = dict(PLAYLIST_XGB_DEFAULTS)
             xgb_time = 0.0
         else:
             def xgb_objective(trial: optuna.Trial) -> float:
                 params = {
-                            "n_estimators": trial.suggest_int("n_estimators", 300, 1200, step=100),
-                            "max_depth": trial.suggest_int("max_depth", 5, 8),
-                            "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.1, log=True),
+                            "n_estimators": trial.suggest_int("n_estimators", 600, 1800, step=100),
+                            "max_depth": trial.suggest_int("max_depth", 8, 12),
+                            "learning_rate": trial.suggest_float("learning_rate", 0.001, 0.1, log=True),
                             "subsample": trial.suggest_float("subsample", 0.5, 1.0),
                             "colsample_bytree": trial.suggest_float("colsample_bytree", 0.5, 1.0),
                             "min_child_weight": trial.suggest_float("min_child_weight", 1.0, 10.0),
@@ -570,7 +575,7 @@ def train_playlist_bundle(optuna_trials_xgb: int = OPTUNA_TRIALS_XGB, optuna_tri
                             "reg_alpha": trial.suggest_float("reg_alpha", 0.01, 1.0, log=True),
                             "reg_lambda": trial.suggest_float("reg_lambda", 0.00005, 1, log=True),
                             "eval_metric": "mlogloss", "early_stopping_rounds": 50,
-                            "random_state": SEED, "n_jobs": 8, "device": XGB_DEVICE,
+                            "random_state": SEED, "n_jobs": 24, "device": XGB_DEVICE,
                             }
                 model = XGBClassifier(**params)
                 model.fit(X_xgb_train, y_xgb_train, eval_set=[(X_xgb_val, y_xgb_val)], verbose=False)
@@ -594,7 +599,7 @@ def train_playlist_bundle(optuna_trials_xgb: int = OPTUNA_TRIALS_XGB, optuna_tri
 
     if ENABLE_MLP:
         mlp, mlp_time, best_mlp_params = train_multi_mlp(X_train, y_train, optuna_trials=optuna_trials_mlp,
-                                                            study_name=f"{study_prefix}_torch_mlp")
+                                                            study_name=f"{study_prefix}_torch_mlp", default_params=PLAYLIST_MLP_DEFAULTS)
         def _mlp_proba(f, _m=mlp):
             with torch.no_grad():
                 return torch.softmax(_m(torch.tensor(np.asarray(f, dtype=np.float32)).to(DEVICE)), dim=1).cpu().numpy()
@@ -604,7 +609,7 @@ def train_playlist_bundle(optuna_trials_xgb: int = OPTUNA_TRIALS_XGB, optuna_tri
 
     if ENABLE_TABM:
         tabm_model, tabm_time, best_tabm_params = train_tabm(X_train, y_train, optuna_trials=optuna_trials_tabm,
-                                                                study_name=f"{study_prefix}_tabm")
+                                                                study_name=f"{study_prefix}_tabm", default_params=PLAYLIST_TABM_DEFAULTS)
         proba_fns["TabM"] = lambda f, _m=tabm_model: tabm_predict_proba(_m, f)
         test_proba["TabM"] = tabm_predict_proba(tabm_model, X_test)
         metric_rows.append(_row("TabM", np.argmax(test_proba["TabM"], axis=1), tabm_time, best_tabm_params))
@@ -972,9 +977,7 @@ def train_movie_bundle(optuna_trials_xgb: int = OPTUNA_TRIALS_XGB, optuna_trials
 
     if ENABLE_XGBOOST:
         if optuna_trials_xgb <= 0:
-            best_xgb = {"n_estimators": 400, "max_depth": 5, "learning_rate": 0.05, "subsample": 0.9,
-                        "colsample_bytree": 0.9, "min_child_weight": 2.0, "gamma": 0.0,
-                        "reg_alpha": 0.01, "reg_lambda": 1.0}
+            best_xgb = dict(MOVIE_XGB_DEFAULTS)
             xgb_time = 0.0
         else:
             def xgb_obj(trial: optuna.Trial) -> float:
@@ -1006,7 +1009,7 @@ def train_movie_bundle(optuna_trials_xgb: int = OPTUNA_TRIALS_XGB, optuna_trials
         metric_rows.append(_row("XGBoost", np.argmax(test_proba["XGBoost"], axis=1), xgb_time, best_xgb))
 
     if ENABLE_MLP:
-        mlpm, mlp_time, best_mlp = train_multi_mlp(X_train, y_train, optuna_trials=optuna_trials_mlp,study_name=f"{study_prefix}_torch_mlp")
+        mlpm, mlp_time, best_mlp = train_multi_mlp(X_train, y_train, optuna_trials=optuna_trials_mlp, study_name=f"{study_prefix}_torch_mlp", default_params=MOVIE_MLP_DEFAULTS)
         def _mlp_proba(f, _m=mlpm):
             with torch.no_grad():
                 return torch.softmax(_m(torch.tensor(np.asarray(f, dtype=np.float32)).to(DEVICE)), dim=1).cpu().numpy()
@@ -1015,7 +1018,7 @@ def train_movie_bundle(optuna_trials_xgb: int = OPTUNA_TRIALS_XGB, optuna_trials
         metric_rows.append(_row("Torch MLP", np.argmax(test_proba["Torch MLP"], axis=1), mlp_time, best_mlp))
 
     if ENABLE_TABM:
-        tabmm, tabm_time, best_tabm = train_tabm(X_train, y_train, optuna_trials=optuna_trials_tabm,study_name=f"{study_prefix}_tabm")
+        tabmm, tabm_time, best_tabm = train_tabm(X_train, y_train, optuna_trials=optuna_trials_tabm, study_name=f"{study_prefix}_tabm", default_params=MOVIE_TABM_DEFAULTS)
         proba_fns["TabM"] = lambda f, _m=tabmm: tabm_predict_proba(_m, f)
         test_proba["TabM"] = tabm_predict_proba(tabmm, X_test)
         metric_rows.append(_row("TabM", np.argmax(test_proba["TabM"], axis=1), tabm_time, best_tabm))
