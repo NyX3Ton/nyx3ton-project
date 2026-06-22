@@ -492,17 +492,17 @@ def train_tabm(X, y, optuna_trials: int = OPTUNA_TRIALS_TABM, study_name: str = 
 
     if optuna_trials <= 0:
         best = {"n_blocks": 3, "d_block": 320, "dropout": 0.01, "lr": 0.002,
-                "weight_decay": 0.00015, "batch_size": 256, "epochs": 220}
+                "weight_decay": 0.00015, "batch_size": 512, "epochs": 220}
     else:
         def objective(trial: optuna.Trial) -> float:
             torch.manual_seed(SEED)
-            model = make_model(trial.suggest_int("n_blocks", 2, 4),
+            model = make_model(trial.suggest_int("n_blocks", 3, 5),
                                 trial.suggest_int("d_block", 128, 1024, step=128),
-                                trial.suggest_float("dropout", 0.0, 0.20))
+                                trial.suggest_float("dropout", 0.0, 0.50))
             model = run_training(model, X_train, y_train,
                                     trial.suggest_float("lr", 1e-4, 5e-3, log=True),
                                     trial.suggest_float("weight_decay", 1e-6, 1e-1, log=True),
-                                    int(trial.suggest_categorical("batch_size", [128, 256, 512])),
+                                    int(trial.suggest_categorical("batch_size", [128, 256, 512, 1024])),
                                     trial.suggest_int("epochs", 50, 250),
                                     trial, X_val, y_val)
             with torch.no_grad():
