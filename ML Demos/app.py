@@ -42,6 +42,8 @@ INPUTS_DIR.mkdir(parents=True, exist_ok=True)
 CACHE_DIR = BASE_DIR / "Cache"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 OPTUNA_STORAGE = f"sqlite:///{(CACHE_DIR / 'optuna_studies.sqlite3').as_posix()}"
+OPTUNA_DASHBOARD = os.getenv("OPTUNA_DASHBOARD", "1") == "1"
+OPTUNA_DASHBOARD_PORT = int(os.getenv("OPTUNA_DASHBOARD_PORT", "8080"))
 
 GENRES = ["Action", "Comedy", "Drama", "Sci-Fi", "Fantasy", "Romance", "Documentary"]
 MOODS = ["Relax", "Funny", "Emotional", "Adrenaline", "Mind-bending"]
@@ -50,7 +52,7 @@ IMAGE_PRODUCT_CATEGORIES = ["Tech gadget", "Gaming accessory", "Fitness product"
 
 OPTUNA_TRIALS_XGB = int(os.getenv("OPTUNA_TRIALS_XGB", "0"))
 OPTUNA_TRIALS_MLP = int(os.getenv("OPTUNA_TRIALS_MLP", "0"))
-OPTUNA_TRIALS_TABM = int(os.getenv("OPTUNA_TRIALS_TABM", "0"))
+OPTUNA_TRIALS_TABM = int(os.getenv("OPTUNA_TRIALS_TABM", "8"))
 
 # Enable/disable each model family at startup (disabled models are not trained and not shown).
 ENABLE_XGBOOST = os.getenv("ENABLE_XGBOOST", "1") == "1"
@@ -174,6 +176,23 @@ def softmax_numpy(values: np.ndarray) -> np.ndarray:
     values = values - np.max(values)
     exp_values = np.exp(values)
     return exp_values / np.sum(exp_values)
+
+def launch_optuna_dashboard():
+    if not OPTUNA_DASHBOARD:
+        return
+    try:
+        from optuna_dashboard import run_server
+    except ImportError:
+        print("optuna-dashboard not installed; skipping. Install: pip install optuna-dashboard")
+        return
+    import threading
+    def _run():
+        try:
+            run_server(OPTUNA_STORAGE, host="127.0.0.1", port=OPTUNA_DASHBOARD_PORT)
+        except Exception as exc:
+            print(f"Optuna dashboard failed to start: {exc}")
+    threading.Thread(target=_run, daemon=True).start()
+    print(f"Optuna dashboard at http://127.0.0.1:{OPTUNA_DASHBOARD_PORT}")
 
 # ============================================================
 # 3. Persistent Optuna helpers (used by the genre classifier)
@@ -753,26 +772,17 @@ def get_cached_clip_text_inputs(texts: list[str], device: str) -> dict[str, torc
     cached = CLIP_TEXT_INPUT_CACHE[key]
 
     if device in {"cuda", "cpu"}:
-        return {
-                name: value.to(device)
-                for name, value in cached.items()
-                }
+        return {name: value.to(device) for name, value in cached.items()}
 
     return cached
 
 def get_clip_image_inputs(image: Any, device: str) -> dict[str, torch.Tensor]:
     _, processor, _, _ = get_clip_model()
 
-    image_inputs = processor(
-                            images=image,
-                            return_tensors="pt",
-                            )
+    image_inputs = processor(images=image,return_tensors="pt")
 
     if device in {"cuda", "cpu"}:
-        return {
-                name: value.to(device)
-                for name, value in image_inputs.items()
-                }
+        return {name: value.to(device) for name, value in image_inputs.items()}
 
     return image_inputs
 
@@ -874,7 +884,6 @@ def evaluate_product_image(image, selected_category: str, customer_preference: s
 # 6b. Movie recommender (trained: XGBoost / Torch MLP / TabM)
 # ============================================================
 def generate_movie_training_data(rows: int = 12000) -> pd.DataFrame:
-    """Self-contained synthetic 'recommended' dataset (no external generate_inputs dependency)."""
     rng = np.random.default_rng(SEED)
     n_g, n_m = len(GENRES), len(MOODS)
     data = []
@@ -887,8 +896,7 @@ def generate_movie_training_data(rows: int = 12000) -> pd.DataFrame:
         mid = int(rng.integers(0, n_m))
         genre_match = [prefs[0], prefs[1], prefs[2], prefs[3],
                        0.65 * prefs[3] + 0.35 * prefs[0], prefs[4], prefs[5]][gid]
-        mood_bonus = 0.12 if ((mid == 4 and gid in (3, 4)) or (mid == 1 and gid == 1)
-                              or (mid == 3 and gid == 0)) else 0.0
+        mood_bonus = 0.12 if ((mid == 4 and gid in (3, 4)) or (mid == 1 and gid == 1) or (mid == 3 and gid == 0)) else 0.0
         score = (1.85 * genre_match + 0.23 * (rating - 6.5) - 0.006 * age
                  - 0.002 * max(length - 130, 0) + mood_bonus + rng.normal(0, 0.25))
         data.append({
@@ -926,7 +934,7 @@ def map_catalog_to_movie_features(movie_df) -> pd.DataFrame:
     })
 
 def train_movie_bundle(optuna_trials_xgb: int = OPTUNA_TRIALS_XGB, optuna_trials_mlp: int = OPTUNA_TRIALS_MLP,
-                       optuna_trials_tabm: int = OPTUNA_TRIALS_TABM) -> dict:
+                        optuna_trials_tabm: int = OPTUNA_TRIALS_TABM) -> dict:
     path = find_existing_input(MOVIE_TRAIN_CSV)
     if path is not None:
         df = read_table_file(path)
@@ -970,16 +978,16 @@ def train_movie_bundle(optuna_trials_xgb: int = OPTUNA_TRIALS_XGB, optuna_trials
         else:
             def xgb_obj(trial: optuna.Trial) -> float:
                 params = {"n_estimators": trial.suggest_int("n_estimators", 200, 900, step=100),
-                          "max_depth": trial.suggest_int("max_depth", 3, 8),
-                          "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.2, log=True),
-                          "subsample": trial.suggest_float("subsample", 0.6, 1.0),
-                          "colsample_bytree": trial.suggest_float("colsample_bytree", 0.6, 1.0),
-                          "min_child_weight": trial.suggest_float("min_child_weight", 1.0, 10.0),
-                          "gamma": trial.suggest_float("gamma", 0.0, 2.0),
-                          "reg_alpha": trial.suggest_float("reg_alpha", 0.001, 1.0, log=True),
-                          "reg_lambda": trial.suggest_float("reg_lambda", 0.001, 5.0, log=True),
-                          "eval_metric": "logloss", "early_stopping_rounds": 40,
-                          "random_state": SEED, "n_jobs": 8, "device": XGB_DEVICE}
+                            "max_depth": trial.suggest_int("max_depth", 3, 8),
+                            "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.2, log=True),
+                            "subsample": trial.suggest_float("subsample", 0.6, 1.0),
+                            "colsample_bytree": trial.suggest_float("colsample_bytree", 0.6, 1.0),
+                            "min_child_weight": trial.suggest_float("min_child_weight", 1.0, 10.0),
+                            "gamma": trial.suggest_float("gamma", 0.0, 2.0),
+                            "reg_alpha": trial.suggest_float("reg_alpha", 0.001, 1.0, log=True),
+                            "reg_lambda": trial.suggest_float("reg_lambda", 0.001, 5.0, log=True),
+                            "eval_metric": "logloss", "early_stopping_rounds": 40,
+                            "random_state": SEED, "n_jobs": 8, "device": XGB_DEVICE}
                 m = XGBClassifier(**params)
                 m.fit(X_xgb_train, y_xgb_train, eval_set=[(X_xgb_val, y_xgb_val)], verbose=False)
                 return float(f1_score(y_xgb_val, m.predict(X_xgb_val), average="macro"))
@@ -987,8 +995,7 @@ def train_movie_bundle(optuna_trials_xgb: int = OPTUNA_TRIALS_XGB, optuna_trials
             st = get_or_create_study(study_name=f"{study_prefix}_xgboost")
             ensure_study_trials(st, xgb_obj, optuna_trials_xgb)
             best_xgb = dict(st.best_params); xgb_time = time.perf_counter() - t0
-        fp = {**best_xgb, "eval_metric": "logloss", "early_stopping_rounds": 40,
-              "random_state": SEED, "n_jobs": 8, "device": XGB_DEVICE}
+        fp = {**best_xgb, "eval_metric": "logloss", "early_stopping_rounds": 40,"random_state": SEED, "n_jobs": 8, "device": XGB_DEVICE}
         t0 = time.perf_counter()
         xgbm = XGBClassifier(**fp)
         xgbm.fit(X_xgb_train, y_xgb_train, eval_set=[(X_xgb_val, y_xgb_val)], verbose=False)
@@ -998,8 +1005,7 @@ def train_movie_bundle(optuna_trials_xgb: int = OPTUNA_TRIALS_XGB, optuna_trials
         metric_rows.append(_row("XGBoost", np.argmax(test_proba["XGBoost"], axis=1), xgb_time, best_xgb))
 
     if ENABLE_MLP:
-        mlpm, mlp_time, best_mlp = train_multi_mlp(X_train, y_train, optuna_trials=optuna_trials_mlp,
-                                                   study_name=f"{study_prefix}_torch_mlp")
+        mlpm, mlp_time, best_mlp = train_multi_mlp(X_train, y_train, optuna_trials=optuna_trials_mlp,study_name=f"{study_prefix}_torch_mlp")
         def _mlp_proba(f, _m=mlpm):
             with torch.no_grad():
                 return torch.softmax(_m(torch.tensor(np.asarray(f, dtype=np.float32)).to(DEVICE)), dim=1).cpu().numpy()
@@ -1008,8 +1014,7 @@ def train_movie_bundle(optuna_trials_xgb: int = OPTUNA_TRIALS_XGB, optuna_trials
         metric_rows.append(_row("Torch MLP", np.argmax(test_proba["Torch MLP"], axis=1), mlp_time, best_mlp))
 
     if ENABLE_TABM:
-        tabmm, tabm_time, best_tabm = train_tabm(X_train, y_train, optuna_trials=optuna_trials_tabm,
-                                                 study_name=f"{study_prefix}_tabm")
+        tabmm, tabm_time, best_tabm = train_tabm(X_train, y_train, optuna_trials=optuna_trials_tabm,study_name=f"{study_prefix}_tabm")
         proba_fns["TabM"] = lambda f, _m=tabmm: tabm_predict_proba(_m, f)
         test_proba["TabM"] = tabm_predict_proba(tabmm, X_test)
         metric_rows.append(_row("TabM", np.argmax(test_proba["TabM"], axis=1), tabm_time, best_tabm))
@@ -1021,7 +1026,7 @@ def train_movie_bundle(optuna_trials_xgb: int = OPTUNA_TRIALS_XGB, optuna_trials
 
     metrics = pd.DataFrame(metric_rows) if metric_rows else pd.DataFrame(
         [{"Task": "Movie recommender", "Model": "None enabled", "Accuracy": np.nan, "Macro F1": np.nan,
-          "Train sec incl. Optuna": 0.0, "Source": source, "Best params": "All models disabled."}])
+            "Train sec incl. Optuna": 0.0, "Source": source, "Best params": "All models disabled."}])
 
     candidates = map_catalog_to_movie_features(MOVIE["df"])
     return {"proba_fns": proba_fns, "scaler": scaler, "candidates": candidates,
@@ -1203,4 +1208,5 @@ with gr.Blocks(title="ML Demo - Recommender + XGBoost vs Torch MLP + CLIP") as d
                         )
 
 if __name__ == "__main__":
+    launch_optuna_dashboard()
     demo.launch(server_name="127.0.0.1", inbrowser=True, share=False, css=CUSTOM_CSS)
