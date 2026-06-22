@@ -427,13 +427,13 @@ def train_multi_mlp(X, y, optuna_trials: int = OPTUNA_TRIALS_MLP, study_name: st
                                 X.shape[1], n_classes,
                                 trial.suggest_int("hidden_1", 128, 2024, step=128),
                                 trial.suggest_int("hidden_2", 64, 256, step=64),
-                                trial.suggest_float("dropout", 0.0, 0.5),
+                                trial.suggest_float("dropout", 0.02, 0.2),
                             )
             model = run_training(
                                 model, X_train, y_train,
                                 trial.suggest_float("lr", 1e-3, 3e-2, log=True),
                                 trial.suggest_float("weight_decay", 1e-6, 1e-2, log=True),
-                                int(trial.suggest_categorical("batch_size", [256, 512, 1024])),
+                                int(trial.suggest_categorical("batch_size", [128, 256])),
                                 trial.suggest_int("epochs", 50, 250),
                                 trial, X_val, y_val,
                                 )
@@ -504,12 +504,12 @@ def train_tabm(X, y, optuna_trials: int = OPTUNA_TRIALS_TABM, study_name: str = 
         def objective(trial: optuna.Trial) -> float:
             torch.manual_seed(SEED)
             model = make_model(trial.suggest_int("n_blocks", 3, 5),
-                                trial.suggest_int("d_block", 128, 1024, step=128),
-                                trial.suggest_float("dropout", 0.0, 0.50))
+                                trial.suggest_int("d_block", 128, 512, step=128),
+                                trial.suggest_float("dropout", 0.001, 0.20))
             model = run_training(model, X_train, y_train,
                                     trial.suggest_float("lr", 1e-4, 5e-3, log=True),
                                     trial.suggest_float("weight_decay", 1e-6, 1e-1, log=True),
-                                    int(trial.suggest_categorical("batch_size", [128, 256, 512, 1024])),
+                                    int(trial.suggest_categorical("batch_size", [128, 256])),
                                     trial.suggest_int("epochs", 50, 250),
                                     trial, X_val, y_val)
             with torch.no_grad():
@@ -565,17 +565,17 @@ def train_playlist_bundle(optuna_trials_xgb: int = OPTUNA_TRIALS_XGB, optuna_tri
         else:
             def xgb_objective(trial: optuna.Trial) -> float:
                 params = {
-                            "n_estimators": trial.suggest_int("n_estimators", 600, 1800, step=100),
-                            "max_depth": trial.suggest_int("max_depth", 8, 12),
+                            "n_estimators": trial.suggest_int("n_estimators", 600, 1000, step=100),
+                            "max_depth": trial.suggest_int("max_depth", 6, 11),
                             "learning_rate": trial.suggest_float("learning_rate", 0.001, 0.1, log=True),
                             "subsample": trial.suggest_float("subsample", 0.5, 1.0),
-                            "colsample_bytree": trial.suggest_float("colsample_bytree", 0.5, 1.0),
-                            "min_child_weight": trial.suggest_float("min_child_weight", 1.0, 10.0),
-                            "gamma": trial.suggest_float("gamma", 0.0, 2.0),
-                            "reg_alpha": trial.suggest_float("reg_alpha", 0.01, 1.0, log=True),
-                            "reg_lambda": trial.suggest_float("reg_lambda", 0.00005, 1, log=True),
+                            "colsample_bytree": trial.suggest_float("colsample_bytree", 0.7, 1.0),
+                            "min_child_weight": trial.suggest_float("min_child_weight", 5.0, 10.0),
+                            "gamma": trial.suggest_float("gamma", 0.5, 2.0),
+                            "reg_alpha": trial.suggest_float("reg_alpha", 0.05, 1.0, log=True),
+                            "reg_lambda": trial.suggest_float("reg_lambda", 0.001, 0.1, log=True),
                             "eval_metric": "mlogloss", "early_stopping_rounds": 50,
-                            "random_state": SEED, "n_jobs": 24, "device": XGB_DEVICE,
+                            "random_state": SEED, "n_jobs": 8, "device": XGB_DEVICE,
                             }
                 model = XGBClassifier(**params)
                 model.fit(X_xgb_train, y_xgb_train, eval_set=[(X_xgb_val, y_xgb_val)], verbose=False)
