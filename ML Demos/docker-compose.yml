@@ -1,0 +1,43 @@
+services:
+  ml-demos:
+    build: .
+    image: ml-demos:latest
+    container_name: ml-demos
+    ports:
+      - "7860:7860"   # Gradio UI        -> http://localhost:7860
+      - "8080:8080"   # Optuna dashboard -> http://localhost:8080
+    environment:
+      ENABLE_XGBOOST: "1"
+      ENABLE_MLP: "1"
+      ENABLE_TABM: "1"
+      # 0 = use the built-in (Optuna-found) defaults, no tuning at startup.
+      OPTUNA_TRIALS_XGB: "0"
+      OPTUNA_TRIALS_MLP: "0"
+      OPTUNA_TRIALS_TABM: "0"
+      OPTUNA_DASHBOARD: "1"
+      TABM_K: "16"
+      TOP_GENRES_N: "14"
+      # PLAYLIST_CANDIDATES: "10000"
+      # MAX_SPOTIFY_ROWS: "1048000"
+    volumes:
+      - ./app.py:/app/app.py:ro             # the application, mounted read-only and UNCHANGED
+      - ./Inputs:/app/Inputs:ro             # datasets (read-only)
+      - ./Cache:/app/Cache                  # Optuna study DB, persisted across runs
+      - hf-cache:/root/.cache/huggingface   # CLIP weights cache (downloaded on first use)
+    restart: unless-stopped
+
+    # ---------------------------------------------------------------
+    # GPU (optional): requires the NVIDIA Container Toolkit on the host
+    # AND a CUDA-based image (swap the Dockerfile base + torch index).
+    # Then uncomment:
+    # ---------------------------------------------------------------
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+volumes:
+  hf-cache:

@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Large datasets (not committed — see README)
+Inputs/*.csv
+Inputs/*.xlsx
+
+# Caches and training artifacts
+Cache/
+*.sqlite3
+hf-cache/
+
+# Backups / corrupted dumps
+*.bak
+app_*backup*.py
+app_corrupted_*.py
+
+# OS
+.DS_Store
+Thumbs.db

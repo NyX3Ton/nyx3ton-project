@@ -1,0 +1,17 @@
+# Keep the build context tiny — datasets and caches are bind-mounted, not copied.
+Inputs/
+Cache/
+hf-cache/
+__pycache__/
+*.pyc
+.venv/
+venv/
+.git/
+.gitignore
+images/
+*.md
+*.bak
+app_*backup*.py
+app_corrupted_*.py
+.DS_Store
+Thumbs.db
