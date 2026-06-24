@@ -1,0 +1,29 @@
+FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    DEBIAN_FRONTEND=noninteractive \
+    HF_HOME=/root/.cache/huggingface \
+    GRADIO_ANALYTICS_ENABLED=False
+
+WORKDIR /app
+
+# Python + OpenMP runtime (libgomp1 is needed by XGBoost / scikit-learn).
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends python3 python3-pip libgomp1 \
+ && rm -rf /var/lib/apt/lists/* \
+ && ln -sf /usr/bin/python3 /usr/bin/python
+
+COPY requirements.txt ./
+
+# CUDA 12.1 build of PyTorch. XGBoost's pip wheel already ships GPU support;
+# the app uses CUDA automatically when torch.cuda.is_available() is True.
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cu121 \
+ && pip install --no-cache-dir -r requirements.txt
+
+# app.py and datasets are bind-mounted at runtime; only the entrypoint is baked in.
+COPY docker_entrypoint.py ./
+
+EXPOSE 7860 8080
+
+CMD ["python", "docker_entrypoint.py"]
