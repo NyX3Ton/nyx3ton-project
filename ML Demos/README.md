@@ -58,25 +58,17 @@ The Movie recommender's *training labels* are generated synthetically at startup
 
 ## Installation
 
-Requires **Python 3.10+**. A virtual environment is recommended.
+Requires Docker composer.
+
 
 ```bash
-git clone https://github.com/<your-username>/<your-repo>.git
-cd "<your-repo>"
-
-python -m venv .venv
-# Windows
-.venv\Scripts\activate
-# macOS / Linux
-source .venv/bin/activate
-
-pip install -r requirements.txt
+To force GPU version: 
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
 ```
 
-For **GPU acceleration**, install the CUDA build of PyTorch that matches your driver from the [official selector](https://pytorch.org/get-started/locally/) instead of the default CPU wheel, e.g.:
+To use standard CPU version:
+docker compose up --build
 
-```bash
-pip install torch --index-url https://download.pytorch.org/whl/cu121
 ```
 
 `requirements.txt`:
