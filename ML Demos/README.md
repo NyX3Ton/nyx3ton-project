@@ -58,22 +58,22 @@ The Movie recommender's *training labels* are generated synthetically at startup
 
 ## Installation
 
-Requires Docker composer.
+Requires Docker composer to run.
 
+To force GPU version: 
 
 ```bash
-To force GPU version: 
 docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
 ```
 
 To use standard CPU version:
+
+```bash
 docker compose up --build
-
 ```
 
-`requirements.txt`:
-
-```
+For 'requirements.txt':
+```bash
 gradio
 numpy
 pandas
