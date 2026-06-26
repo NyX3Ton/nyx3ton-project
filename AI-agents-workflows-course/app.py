@@ -70,11 +70,11 @@ WEATHER_CODES = {
 
 @dataclass
 class AgentEvent:
-    agent: str
-    step: str
-    status: str
-    detail: str
-    elapsed_sec: float
+                agent: str
+                step: str
+                status: str
+                detail: str
+                elapsed_sec: float
 class Trace:
     def __init__(self) -> None:
         self.events: list[AgentEvent] = []
@@ -136,8 +136,6 @@ class Reasoner:
     def generate(self, prompt: str, max_new_tokens: int = 180) -> str:
         return ""
 class RuleBasedReasoner(Reasoner):
-    """No-op reasoner: deterministic parsing only."""
-
     backend = "rule-based"
 
     def __init__(self, status: str = "Rule-based mode: no LLM backend enabled.") -> None:
@@ -386,7 +384,6 @@ class WeatherAgent:
                     )
         response.raise_for_status()
         return response.json()
-
 class ExcelReportAgent:
     def run(self, weather_payload: dict[str, Any], trace: Trace) -> tuple[Path, pd.DataFrame, dict[str, Any]]:
         start = time.perf_counter()
@@ -599,7 +596,6 @@ def run_pipeline(prompt: str,location_override: str,send_email: bool,recipient_e
                 )
 
     return status, trace.dataframe(), daily_df, str(file_path)
-
 
 def _launch_supports_css() -> bool:
     try:
