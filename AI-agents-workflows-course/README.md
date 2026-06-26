@@ -401,6 +401,13 @@ repeatedly (e.g. on a schedule) to accumulate accuracy/latency trends over time.
   set, and that `torch`/`transformers` are installed. The runtime status explains the
   fallback reason.
 - **Port already in use** — change `GRADIO_SERVER_PORT`.
+- **No runs in MLflow / `Invalid Host header` 403** — MLflow 3.5+ has DNS-rebinding
+  protection that only accepts allow-listed `Host` headers. The `mlflow` service passes
+  `--allowed-hosts` (including `mlflow:5000`, the host the app connects as). If you change the
+  service name or port, update that list. The app prints `[MetricsLogger] logging runs to …`
+  on success or `[MetricsLogger] MLflow logging failed … <reason>` on failure — check
+  `docker compose logs weather-pipeline`. Also confirm you're viewing the
+  `agentic-weather-pipeline` experiment in the UI, not `Default`.
 
 ---
 
