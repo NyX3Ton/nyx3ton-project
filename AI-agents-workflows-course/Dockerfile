@@ -12,16 +12,14 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# Core runtime dependencies, plus mlflow (used both for background metric
-# logging by the app and to serve the MLflow UI service in docker-compose).
-# LLM backends (torch/transformers/openvino) remain opt-in.
+# Core runtime dependencies only (kept in sync with the non-optional entries in
+# requirements.txt). LLM backends (torch/transformers/openvino) remain opt-in.
 RUN pip install --no-cache-dir \
     "gradio>=4.44" \
     "requests>=2.32" \
     "pandas>=2.2" \
     "openpyxl>=3.1" \
-    "python-dotenv>=1.0" \
-    "mlflow>=2.12"
+    "python-dotenv>=1.0"
 
 # Application code. app.py is copied unchanged; .env is provided at runtime via
 # docker-compose (env_file), never baked into the image.

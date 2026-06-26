@@ -14,10 +14,6 @@ services:
       # it via os.getenv - so no code change is needed.
       GRADIO_SERVER_NAME: "0.0.0.0"
       GRADIO_SERVER_PORT: "7861"
-      # Log to the SQLite-backed MLflow tracking server (the `mlflow` service).
-      # When that service is not running (no `metrics` profile), logging just
-      # no-ops gracefully.
-      MLFLOW_TRACKING_URI: "http://mlflow:5000"
 
     ports:
       - "7861:7861"
@@ -34,44 +30,3 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
-
-  # MLflow tracking server with a SQLite backend for durable, long-term
-  # validation history. Owns the DB and artifact store; the app logs to it over
-  # HTTP. Optional: only starts with `docker compose --profile metrics up`.
-  mlflow:
-    image: agentic-weather-pipeline
-    container_name: agentic-weather-mlflow
-    profiles:
-      - metrics
-    command:
-      - mlflow
-      - server
-      - --backend-store-uri
-      - sqlite:////mlflow/mlflow.db
-      - --artifacts-destination
-      - /mlflow/artifacts
-      - --host
-      - "0.0.0.0"
-      - --port
-      - "5000"
-      # MLflow 3.5+ rejects non-allowlisted Host headers (DNS-rebinding guard).
-      # The app connects as host "mlflow:5000"; the browser/healthcheck use
-      # localhost/127.0.0.1. List both with and without the port (the port form
-      # is required - see mlflow issue #22095).
-      - --allowed-hosts
-      - "mlflow:5000,mlflow,localhost:5000,localhost,127.0.0.1:5000,127.0.0.1"
-    ports:
-      - "5000:5000"
-    volumes:
-      # Named volume keeps the SQLite DB + artifacts across rebuilds/restarts.
-      - mlflow-data:/mlflow
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health').read()"]
-      interval: 30s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-
-volumes:
-  mlflow-data:

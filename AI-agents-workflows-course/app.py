@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import json, os, re, smtplib, ssl, threading, time, requests
+import json, os, re, smtplib, ssl, time, requests
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from email.message import EmailMessage
@@ -40,11 +40,6 @@ SMTP_FROM = os.getenv("SMTP_FROM", SMTP_USER).strip()
 
 SMTP_SECURITY = (os.getenv("SMTP_SECURITY", "starttls").strip().lower() or "starttls")
 PREDEFINED_RECIPIENT = os.getenv("PREDEFINED_RECIPIENT", "").strip()
-
-# Metrics / evaluation (optional, MLflow). Disabled gracefully if not installed.
-MLFLOW_ENABLED = (os.getenv("MLFLOW_ENABLED", "on").strip().lower() or "auto")  # auto | on | off
-MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "").strip()                # empty = local ./mlruns
-MLFLOW_EXPERIMENT = os.getenv("MLFLOW_EXPERIMENT", "agentic-weather-pipeline").strip()
 
 CUSTOM_CSS = """
 .gradio-container { max-width: 1500px !important; }
@@ -89,58 +84,6 @@ class Trace:
 
     def dataframe(self) -> pd.DataFrame:
         return pd.DataFrame([asdict(event) for event in self.events])
-
-def _metric_key(name: str) -> str:
-    return re.sub(r"[^A-Za-z0-9_./: -]", "_", name)[:250]
-class MetricsLogger:
-
-    def __init__(self, experiment: str = MLFLOW_EXPERIMENT) -> None:
-        self.enabled = False
-        self.experiment = experiment
-        self.uri = MLFLOW_TRACKING_URI or (BASE_DIR / "mlruns").as_uri()
-        self.status = "MLflow disabled."
-
-        if MLFLOW_ENABLED in ("off", "false", "0", "no"):
-            return
-        try:
-            import mlflow  # type: ignore[import-not-found]  # noqa: F401
-        except Exception as exc:
-            self.status = f"MLflow not installed: {exc}"
-            return
-        self.enabled = True
-        self.status = f"MLflow -> {self.uri} (experiment: {self.experiment})"
-
-    def log_run(self, *, params: dict[str, Any], metrics: dict[str, float],
-                tags: dict[str, Any] | None = None, artifacts: list[str] | None = None,
-                run_name: str | None = None, blocking: bool = False) -> None:
-        if not self.enabled:
-            return
-        args = (params, metrics, tags, artifacts, run_name)
-        if blocking:
-            self._log(*args)
-        else:
-            threading.Thread(target=self._log, args=args, daemon=True).start()
-
-    def _log(self, params: dict[str, Any], metrics: dict[str, float],
-                tags: dict[str, Any] | None, artifacts: list[str] | None,
-                run_name: str | None) -> None:
-        try:
-            import mlflow  # type: ignore[import-not-found]
-
-            mlflow.set_tracking_uri(self.uri)
-            mlflow.set_experiment(self.experiment)
-            with mlflow.start_run(run_name=run_name):
-                if tags:
-                    mlflow.set_tags(tags)
-                mlflow.log_params(params)
-                mlflow.log_metrics(metrics)
-                for path in (artifacts or []):
-                    try:
-                        mlflow.log_artifact(path)
-                    except Exception:
-                        pass
-        except Exception:
-            pass  # never let logging break/raise
 
 
 def detect_cuda() -> tuple[bool, str]:
@@ -363,7 +306,7 @@ class PromptAgent:
             match = re.search(r"\bfor\s+(\d+)\b", prompt, re.IGNORECASE)
         if match:
             try:
-                return max(1, min(int(match.group(1)), 7))
+                return max(1, min(int(match.group(1)), 30))
             except ValueError:
                 pass
         return default
@@ -629,7 +572,6 @@ PROMPT_AGENT = PromptAgent(REASONER)
 WEATHER_AGENT = WeatherAgent()
 EXCEL_AGENT = ExcelReportAgent()
 EMAIL_AGENT = EmailAgent()
-METRICS = MetricsLogger()
 
 def run_pipeline(prompt: str,location_override: str,send_email: bool,recipient_email: str):
     trace = Trace()
@@ -653,89 +595,7 @@ def run_pipeline(prompt: str,location_override: str,send_email: bool,recipient_e
                 f"{summary.get('current_condition')}, {summary.get('current_temperature_c')} °C"
                 )
 
-    try:
-        events = trace.events
-        status_counts: dict[str, int] = {}
-        for e in events:
-            status_counts[e.status] = status_counts.get(e.status, 0) + 1
-
-        metrics: dict[str, float] = {
-                                    "total_latency_sec": total_sec,
-                                    "n_steps": len(events),
-                                    "n_ok": status_counts.get("OK", 0),
-                                    "n_error": status_counts.get("ERROR", 0),
-                                    "n_skipped": status_counts.get("SKIPPED", 0),
-                                    "forecast_days": float(request_data["forecast_days"]),
-                                    "success": 1.0 if status_counts.get("ERROR", 0) == 0 else 0.0,
-                                    }
-        for e in events:  # per-agent/step latency
-            metrics[_metric_key(f"latency.{e.agent}.{e.step}")] = e.elapsed_sec
-        for k in ("current_temperature_c", "latitude", "longitude"):
-            v = summary.get(k)
-            if isinstance(v, (int, float)):
-                metrics[k] = float(v)
-
-        params = {
-                    "reasoning_backend": REASONER.backend,
-                    "model_id": CUDA_MODEL_ID or "(none)",
-                    "quantization": CUDA_QUANTIZATION,
-                    "smtp_security": SMTP_SECURITY,
-                    "location": request_data["location"],
-                    "forecast_days": request_data["forecast_days"],
-                }
-        tags = {
-                    "matched_location": str(summary.get("matched_location")),
-                    "condition": str(summary.get("current_condition")),
-                    "email_status": email_status[:250],
-                }
-        METRICS.log_run(params=params, metrics=metrics, tags=tags,
-                        artifacts=[str(file_path)], run_name=request_data["location"])
-    except Exception:
-        pass
-
     return status, trace.dataframe(), daily_df, str(file_path)
-
-
-EVAL_CASES = [
-                {"prompt": "Please prepare a 3-day weather report for Bratislava and send it as Excel.", "location": "Bratislava", "days": 3},
-                {"prompt": "5 day forecast for Vienna", "location": "Vienna", "days": 5},
-                {"prompt": "weather for Prague for 7 days", "location": "Prague", "days": 7},
-                {"prompt": "give me a 10-day outlook for London", "location": "London", "days": 7},
-                {"prompt": "weather in Paris", "location": "Paris", "days": 3},
-                {"prompt": "2-day report for Madrid please", "location": "Madrid", "days": 2},
-                #{"prompt": "10-day report for Berlin please", "location": "Berlin", "days": 10},
-                ]
-
-def run_evaluation() -> None:
-    agent = PromptAgent(REASONER)
-    loc_hits = day_hits = 0
-    latencies: list[float] = []
-    for case in EVAL_CASES:
-        t = time.perf_counter()
-        try:
-            rd = agent.run(case["prompt"], "", Trace())
-            loc_ok = str(rd["location"]).strip().lower() == case["location"].lower()
-            day_ok = rd["forecast_days"] == case["days"]
-        except Exception:
-            loc_ok = day_ok = False
-        latencies.append(time.perf_counter() - t)
-        loc_hits += int(loc_ok)
-        day_hits += int(day_ok)
-        print(f"[{'OK ' if loc_ok and day_ok else 'XX '}] {case['prompt']!r}")
-
-    n = len(EVAL_CASES)
-    metrics = {
-                "location_accuracy": loc_hits / n,
-                "days_accuracy": day_hits / n,
-                "n_cases": float(n),
-                "avg_parse_latency_sec": sum(latencies) / n,
-                }
-    print(
-            f"\nlocation_accuracy={metrics['location_accuracy']:.2f} "
-            f"days_accuracy={metrics['days_accuracy']:.2f} "
-            f"avg_latency={metrics['avg_parse_latency_sec'] * 1000:.1f}ms"
-        )
-    MetricsLogger(experiment=f"{MLFLOW_EXPERIMENT}-eval").log_run(params={"reasoning_backend": REASONER.backend, "model_id": CUDA_MODEL_ID or "(none)"},metrics=metrics, run_name="extraction-eval", blocking=True)
 
 
 def _launch_supports_css() -> bool:
@@ -766,7 +626,7 @@ def build_ui() -> gr.Blocks:
                                     label="User prompt",
                                     lines=5,
                                     value="Please prepare a 3-day weather report for Bratislava and send it as Excel.",
-                                    info="Forecast length is read from the text, e.g. '3-day' or 'for 5 days' (1-7, default 3).",
+                                    info="Forecast length is read from the text, e.g. '3-day' or 'for 5 days' (1-10, default 3).",
                                     elem_classes=["agent-box"],
                                     )
                 location = gr.Textbox(
@@ -798,8 +658,6 @@ def build_ui() -> gr.Blocks:
 
                     `{REASONER.status}`
 
-                    `{METRICS.status}`
-
                     The recipient email defaults to `PREDEFINED_RECIPIENT` but can be edited in the interface. The address is validated before sending, and SMTP credentials still come from environment variables.
                     """
                     )
@@ -812,10 +670,6 @@ if __name__ == "__main__":
     import sys
     if "--download" in sys.argv:
         download_model(CUDA_MODEL_ID)
-        sys.exit(0)
-
-    if "--eval" in sys.argv:
-        run_evaluation()
         sys.exit(0)
 
     app = build_ui()

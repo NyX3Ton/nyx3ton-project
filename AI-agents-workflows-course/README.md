@@ -233,24 +233,19 @@ both report which reasoning backend was selected.
 
 ## Run with Docker
 
-A `Dockerfile` and `docker-compose.yml` are included. By default Compose runs just the weather
-app; the MLflow dashboard is an **optional service behind a `metrics` profile**. The app runs
-the full pipeline (Prompt → Weather → Excel → Email) in deterministic **rule-based** mode — the
-optional CUDA/OpenVINO LLM backends are not bundled (they need a GPU or extra runtimes).
+A `Dockerfile` and `docker-compose.yml` are included. The app runs the full pipeline
+(Prompt → Weather → Excel → Email) in deterministic **rule-based** mode — the optional
+CUDA/OpenVINO LLM backends are not bundled (they need a GPU or extra runtimes).
 
 ```bash
 # 1. Create your .env (kept on the host, never baked into the image)
 cp .env.example .env        # then fill in SMTP_* for email
 
-# 2a. App only
+# 2. Build and start
 docker compose up --build
-
-# 2b. App + MLflow dashboard
-docker compose --profile metrics up --build
 ```
 
-- App UI: `http://localhost:7861`
-- MLflow dashboard (only with the `metrics` profile): `http://localhost:5000`
+Open `http://localhost:7861`.
 
 How it fits together:
 
@@ -260,13 +255,9 @@ How it fits together:
   reachable from the host) and `GRADIO_SERVER_PORT=7861`; `app.py` already reads both from the
   environment.
 - Generated reports are written to **`./Outputs`** on the host via a volume mount.
-- The image includes `mlflow`. With `--profile metrics`, a **SQLite-backed MLflow tracking
-  server** (`mlflow` service, port 5000) starts; the app logs to it over HTTP
-  (`MLFLOW_TRACKING_URI=http://mlflow:5000`), and the DB + artifacts persist in the
-  `mlflow-data` named volume. Without the profile, the server is absent and logging no-ops.
-- Healthchecks poll the running services.
+- A healthcheck polls the Gradio root every 30s.
 
-Stop with `docker compose down` (add `--profile metrics` if you started the dashboard).
+Stop with `docker compose down`.
 
 **Enabling the LLM backends in Docker (advanced):** install `transformers`/`torch` (and use
 an NVIDIA CUDA base image plus `nvidia-container-toolkit` and a `deploy.resources` GPU
@@ -323,54 +314,6 @@ This makes it easy to audit how a given report was produced and to reproduce it.
 
 ---
 
-## Metrics & evaluation (MLflow)
-
-The app can log detailed performance metrics to [MLflow](https://mlflow.org/). It is
-**optional and graceful** — if `mlflow` is not installed (or `MLFLOW_ENABLED=off`), the
-pipeline runs unchanged and nothing is logged.
-
-```bash
-pip install mlflow
-```
-
-**Per-run telemetry (background).** Every pipeline run logs, in a non-blocking daemon thread:
-
-- **Params:** reasoning backend, model id, quantization mode, SMTP security, location, forecast days.
-- **Metrics:** total latency, per-agent/step latency (derived from the `Trace`), step counts
-  (OK / ERROR / SKIPPED), a `success` flag, and current temperature / coordinates.
-- **Tags & artifacts:** matched location, condition, email status, and the generated Excel file.
-
-**Evaluation suite (on demand).** Score location/day extraction over a fixed prompt set and
-log accuracy + parse latency as a separate experiment:
-
-```bash
-python app.py --eval
-```
-
-**Storage backends.** Set `MLFLOW_TRACKING_URI` in `.env`:
-
-| Value | Backend | Notes |
-|-------|---------|-------|
-| *(empty)* | `./mlruns` file store | Simplest; deprecated in MLflow 3.x — needs `MLFLOW_ALLOW_FILE_STORE=true` |
-| `sqlite:///mlflow.db` | local SQLite DB | **Recommended for durable, long-term validation history** |
-| `http://host:5000` | tracking server | Used by Docker (`http://mlflow:5000`) |
-
-**View the results (host).** For a SQLite backend, point the UI at the same DB:
-
-```bash
-mlflow ui --backend-store-uri sqlite:///mlflow.db    # open http://127.0.0.1:5000
-# Or for the legacy file store (needs the opt-out):
-#   MLFLOW_ALLOW_FILE_STORE=true mlflow ui
-```
-
-**Long-term validations with Docker.** `docker compose --profile metrics up` starts a
-**SQLite-backed MLflow tracking server** (`mlflow` service) at `http://localhost:5000`. The
-app logs to it over HTTP, and the database + artifacts are kept in a persistent named volume
-(`mlflow-data`), so validation history survives rebuilds and restarts. Run the eval suite
-repeatedly (e.g. on a schedule) to accumulate accuracy/latency trends over time.
-
----
-
 ## Project structure
 
 ```
@@ -383,8 +326,7 @@ repeatedly (e.g. on a schedule) to accumulate accuracy/latency trends over time.
 ├── .dockerignore         # keeps secrets/noise out of the build context
 ├── .gitignore            # keeps .env and generated files out of git
 ├── README.md             # this file
-├── Outputs/              # generated Excel reports (created at runtime)
-└── mlruns/               # MLflow run logs, if enabled (created at runtime)
+└── Outputs/              # generated Excel reports (created at runtime)
 ```
 
 ---
@@ -401,13 +343,6 @@ repeatedly (e.g. on a schedule) to accumulate accuracy/latency trends over time.
   set, and that `torch`/`transformers` are installed. The runtime status explains the
   fallback reason.
 - **Port already in use** — change `GRADIO_SERVER_PORT`.
-- **No runs in MLflow / `Invalid Host header` 403** — MLflow 3.5+ has DNS-rebinding
-  protection that only accepts allow-listed `Host` headers. The `mlflow` service passes
-  `--allowed-hosts` (including `mlflow:5000`, the host the app connects as). If you change the
-  service name or port, update that list. The app prints `[MetricsLogger] logging runs to …`
-  on success or `[MetricsLogger] MLflow logging failed … <reason>` on failure — check
-  `docker compose logs weather-pipeline`. Also confirm you're viewing the
-  `agentic-weather-pipeline` experiment in the UI, not `Default`.
 
 ---
 

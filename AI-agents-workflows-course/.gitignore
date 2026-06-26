@@ -7,10 +7,6 @@
 Outputs/
 *.xslx
 
-# MLflow tracking (local file store)
-mlruns/
-mlartifacts/
-
 # Python
 __pycache__/
 *.py[cod]
