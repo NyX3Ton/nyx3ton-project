@@ -54,6 +54,12 @@ services:
       - "0.0.0.0"
       - --port
       - "5000"
+      # MLflow 3.5+ rejects non-allowlisted Host headers (DNS-rebinding guard).
+      # The app connects as host "mlflow:5000"; the browser/healthcheck use
+      # localhost/127.0.0.1. List both with and without the port (the port form
+      # is required - see mlflow issue #22095).
+      - --allowed-hosts
+      - "mlflow:5000,mlflow,localhost:5000,localhost,127.0.0.1:5000,127.0.0.1"
     ports:
       - "5000:5000"
     volumes:
