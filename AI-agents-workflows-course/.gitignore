@@ -5,6 +5,7 @@
 
 # Generated reports
 Outputs/
+*.xslx
 
 # Python
 __pycache__/
