@@ -1,0 +1,17 @@
+# Keep secrets and noise out of the build context / image
+.env
+.env.*
+!.env.example
+
+Outputs/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+.git/
+.gitignore
+*.md
+Legacy training/
+ov_*/

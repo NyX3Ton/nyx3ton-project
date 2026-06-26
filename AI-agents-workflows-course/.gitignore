@@ -1,0 +1,21 @@
+# Secrets / local config - never commit
+.env
+.env.*
+!.env.example
+
+# Generated reports
+Outputs/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

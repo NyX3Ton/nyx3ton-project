@@ -1,0 +1,32 @@
+services:
+  weather-pipeline:
+    build: .
+    image: agentic-weather-pipeline
+    container_name: agentic-weather-pipeline
+
+    # Reuse your existing .env unchanged (SMTP creds, backend settings, etc.).
+    env_file:
+      - .env
+
+    environment:
+      # Inside a container the app must bind to all interfaces so the host can
+      # reach it. This takes precedence over any value in .env, and app.py reads
+      # it via os.getenv - so no code change is needed.
+      GRADIO_SERVER_NAME: "0.0.0.0"
+      GRADIO_SERVER_PORT: "7861"
+
+    ports:
+      - "7861:7861"
+
+    volumes:
+      # Persist generated Excel reports to ./Outputs on the host.
+      - ./Outputs:/app/Outputs
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7861/').read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
