@@ -90,18 +90,17 @@ class Trace:
     def dataframe(self) -> pd.DataFrame:
         return pd.DataFrame([asdict(event) for event in self.events])
 
-
 def _metric_key(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9_./: -]", "_", name)[:250]
-
 class MetricsLogger:
 
     def __init__(self, experiment: str = MLFLOW_EXPERIMENT) -> None:
         self.enabled = False
         self.experiment = experiment
-        # file store (./mlruns) by default; or a sqlite/server URI from .env.
         self.uri = MLFLOW_TRACKING_URI or (BASE_DIR / "mlruns").as_uri()
         self.status = "MLflow disabled."
+        self._warned = False      # print the first logging failure
+        self._announced = False   # print the first successful log
 
         if MLFLOW_ENABLED in ("off", "false", "0", "no"):
             return
@@ -110,9 +109,6 @@ class MetricsLogger:
         except Exception as exc:
             self.status = f"MLflow not installed: {exc}"
             return
-        # Enabled if mlflow is importable; the actual connection is made lazily
-        # per run, so a tracking server that starts alongside the app (or has
-        # transient downtime) does not permanently disable logging.
         self.enabled = True
         self.status = f"MLflow -> {self.uri} (experiment: {self.experiment})"
 
@@ -130,6 +126,8 @@ class MetricsLogger:
     def _log(self, params: dict[str, Any], metrics: dict[str, float],
                 tags: dict[str, Any] | None, artifacts: list[str] | None,
                 run_name: str | None) -> None:
+        import sys
+
         try:
             import mlflow  # type: ignore[import-not-found]
 
@@ -143,10 +141,19 @@ class MetricsLogger:
                 for path in (artifacts or []):
                     try:
                         mlflow.log_artifact(path)
-                    except Exception:
-                        pass
-        except Exception:
-            pass  # never let logging break/raise
+                    except Exception as art_exc:
+                        print(f"[MetricsLogger] artifact upload failed: {art_exc!r}", file=sys.stderr)
+            if not self._announced:
+                self._announced = True
+                print(f"[MetricsLogger] logging runs to {self.uri} "
+                      f"(experiment: {self.experiment})", file=sys.stderr)
+        except Exception as exc:
+            # Never break the pipeline, but surface the first failure so it is
+            # diagnosable (e.g. tracking server unreachable / not started).
+            if not self._warned:
+                self._warned = True
+                print(f"[MetricsLogger] MLflow logging failed for {self.uri}: {exc!r} "
+                      f"(further messages suppressed)", file=sys.stderr)
 
 
 def detect_cuda() -> tuple[bool, str]:
@@ -660,7 +667,6 @@ def run_pipeline(prompt: str,location_override: str,send_email: bool,recipient_e
                 f"{summary.get('current_condition')}, {summary.get('current_temperature_c')} °C"
                 )
 
-    # --- MLflow telemetry (optional, background, never fatal) ---
     try:
         events = trace.events
         status_counts: dict[str, int] = {}
@@ -668,14 +674,14 @@ def run_pipeline(prompt: str,location_override: str,send_email: bool,recipient_e
             status_counts[e.status] = status_counts.get(e.status, 0) + 1
 
         metrics: dict[str, float] = {
-            "total_latency_sec": total_sec,
-            "n_steps": len(events),
-            "n_ok": status_counts.get("OK", 0),
-            "n_error": status_counts.get("ERROR", 0),
-            "n_skipped": status_counts.get("SKIPPED", 0),
-            "forecast_days": float(request_data["forecast_days"]),
-            "success": 1.0 if status_counts.get("ERROR", 0) == 0 else 0.0,
-        }
+                                    "total_latency_sec": total_sec,
+                                    "n_steps": len(events),
+                                    "n_ok": status_counts.get("OK", 0),
+                                    "n_error": status_counts.get("ERROR", 0),
+                                    "n_skipped": status_counts.get("SKIPPED", 0),
+                                    "forecast_days": float(request_data["forecast_days"]),
+                                    "success": 1.0 if status_counts.get("ERROR", 0) == 0 else 0.0,
+                                    }
         for e in events:  # per-agent/step latency
             metrics[_metric_key(f"latency.{e.agent}.{e.step}")] = e.elapsed_sec
         for k in ("current_temperature_c", "latitude", "longitude"):
@@ -684,18 +690,18 @@ def run_pipeline(prompt: str,location_override: str,send_email: bool,recipient_e
                 metrics[k] = float(v)
 
         params = {
-            "reasoning_backend": REASONER.backend,
-            "model_id": CUDA_MODEL_ID or "(none)",
-            "quantization": CUDA_QUANTIZATION,
-            "smtp_security": SMTP_SECURITY,
-            "location": request_data["location"],
-            "forecast_days": request_data["forecast_days"],
-        }
+                    "reasoning_backend": REASONER.backend,
+                    "model_id": CUDA_MODEL_ID or "(none)",
+                    "quantization": CUDA_QUANTIZATION,
+                    "smtp_security": SMTP_SECURITY,
+                    "location": request_data["location"],
+                    "forecast_days": request_data["forecast_days"],
+                }
         tags = {
-            "matched_location": str(summary.get("matched_location")),
-            "condition": str(summary.get("current_condition")),
-            "email_status": email_status[:250],
-        }
+                    "matched_location": str(summary.get("matched_location")),
+                    "condition": str(summary.get("current_condition")),
+                    "email_status": email_status[:250],
+                }
         METRICS.log_run(params=params, metrics=metrics, tags=tags,
                         artifacts=[str(file_path)], run_name=request_data["location"])
     except Exception:
@@ -713,7 +719,6 @@ EVAL_CASES = [
                 {"prompt": "2-day report for Madrid please", "location": "Madrid", "days": 2},
                 {"prompt": "10-day report for Berlin please", "location": "Berlin", "days": 10},
                 ]
-
 
 def run_evaluation() -> None:
     agent = PromptAgent(REASONER)
@@ -754,7 +759,6 @@ def _launch_supports_css() -> bool:
         return "css" in inspect.signature(gr.Blocks.launch).parameters
     except Exception:
         return False
-
 
 def build_ui() -> gr.Blocks:
     blocks_kwargs: dict[str, Any] = {"title": "Agentic AI Weather Pipeline"}
