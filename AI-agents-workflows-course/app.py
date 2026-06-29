@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-import json, os, re, smtplib, ssl, time, requests
+import json, os, re, smtplib, ssl, time, requests, truststore
+truststore.inject_into_ssl()
+
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from email.message import EmailMessage
