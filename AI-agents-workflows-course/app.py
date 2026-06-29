@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json, os, re, smtplib, ssl, time, requests, truststore
 truststore.inject_into_ssl()
-
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from email.message import EmailMessage
@@ -26,7 +25,10 @@ OPEN_METEO_GEOCODING = "https://geocoding-api.open-meteo.com/v1/search"
 OPEN_METEO_FORECAST = "https://api.open-meteo.com/v1/forecast"
 
 OPENVINO_MODEL_DIR = os.getenv("OPENVINO_MODEL_DIR", "").strip()
+OPENVINO_MODEL_ID = os.getenv("OPENVINO_MODEL_ID", "unsloth/Qwen3-4B-Instruct-2507").strip()
 OPENVINO_DEVICE = os.getenv("OPENVINO_DEVICE", "CPU").strip() or "CPU"
+OPENVINO_WEIGHT_FORMAT = os.getenv("OPENVINO_WEIGHT_FORMAT", "int8").strip().lower()
+OV_CACHE_DIR = BASE_DIR / "ov_cache"
 
 CUDA_MODEL_ID = os.getenv("CUDA_MODEL_ID", "").strip()
 CUDA_DEVICE = os.getenv("CUDA_DEVICE", "cuda:0").strip() or "cuda:0"
@@ -221,35 +223,99 @@ class OpenVINOReasoner(Reasoner):
     backend = "openvino"
 
     def __init__(self) -> None:
-        self.pipeline: Any = None
-        self.status = "OpenVINO backend unavailable: OPENVINO_MODEL_DIR is not configured."
-
-        if not OPENVINO_MODEL_DIR:
-            return
-
-        model_dir = Path(OPENVINO_MODEL_DIR)
-        if not model_dir.exists():
-            self.status = f"OpenVINO backend unavailable: model path not found: {model_dir}"
+        self.model: Any = None
+        self.tokenizer: Any = None
+        self.status = "OpenVINO backend unavailable: no model configured (set OPENVINO_MODEL_ID or OPENVINO_MODEL_DIR)."
+        if not (OPENVINO_MODEL_DIR or OPENVINO_MODEL_ID):
             return
 
         try:
-            import openvino_genai as ov_genai  # type: ignore[import-not-found]
-
-            self.pipeline = ov_genai.LLMPipeline(str(model_dir), OPENVINO_DEVICE)
-            self.status = f"OpenVINO GenAI loaded: {model_dir.name} on {OPENVINO_DEVICE}"
+            from optimum.intel import OVModelForCausalLM  # type: ignore[import-not-found]
         except Exception as exc:
-            self.pipeline = None
+            self.status = (
+                            "OpenVINO backend unavailable: missing dependencies. "
+                            f'Install: pip install "optimum[openvino]" nncf  ({exc})'
+                            )
+            return
+
+        try:
+            cache_dir = OV_CACHE_DIR / OPENVINO_MODEL_ID.replace("/", "__")
+
+            if OPENVINO_MODEL_DIR:                              # user-supplied IR dir
+                load_dir, export = OPENVINO_MODEL_DIR, False
+            elif (cache_dir / "openvino_model.xml").exists():  # previously converted
+                load_dir, export = str(cache_dir), False
+            else:                                              # first run -> convert + cache
+                load_dir, export = OPENVINO_MODEL_ID, True
+
+            tokenizer = self._load_tokenizer(OPENVINO_MODEL_ID if export else load_dir)
+            model = self._load_ov_model(OVModelForCausalLM, load_dir, export)
+
+            if export:                                         # persist IR for fast restarts
+                try:
+                    model.save_pretrained(cache_dir)
+                    tokenizer.save_pretrained(cache_dir)
+                except Exception:
+                    pass
+
+            try:
+                model.to(OPENVINO_DEVICE)
+            except Exception:
+                pass
+
+            self.tokenizer = tokenizer
+            self.model = model
+            mode = "converted" if export else "cached/local IR"
+            self.status = f"OpenVINO (optimum-intel, {mode}) loaded: {OPENVINO_MODEL_ID} on {OPENVINO_DEVICE}."
+        except Exception as exc:
+            self.model = None
+            self.tokenizer = None
             self.status = f"OpenVINO backend load failed: {exc}"
 
+    @staticmethod
+    def _load_tokenizer(source: str) -> Any:
+        from transformers import AutoTokenizer
+        try:
+            return AutoTokenizer.from_pretrained(source, trust_remote_code=True)
+        except TypeError:
+            return AutoTokenizer.from_pretrained(source)
+
+    @staticmethod
+    def _load_ov_model(ov_cls: Any, load_dir: str, export: bool) -> Any:
+        base: dict[str, Any] = {"export": export, "trust_remote_code": True}
+        attempts: list[dict[str, Any]] = []
+        if export and OPENVINO_WEIGHT_FORMAT in ("int8", "8bit"):
+            attempts.append({**base, "load_in_8bit": True})
+        attempts.append(dict(base))
+        attempts.append({k: v for k, v in base.items() if k != "trust_remote_code"})
+
+        last_exc: Exception | None = None
+        for kwargs in attempts:
+            try:
+                return ov_cls.from_pretrained(load_dir, **kwargs)
+            except Exception as exc:
+                last_exc = exc
+        raise last_exc if last_exc else RuntimeError("OpenVINO model load failed.")
+
     def is_enabled(self) -> bool:
-        return self.pipeline is not None
+        return self.model is not None and self.tokenizer is not None
 
     def generate(self, prompt: str, max_new_tokens: int = 180) -> str:
-        if not self.pipeline:
+        if not self.is_enabled():
             return ""
 
         try:
-            return str(self.pipeline.generate(prompt, max_new_tokens=max_new_tokens))
+            import torch  # type: ignore[import-not-found]
+
+            text = prompt
+            if getattr(self.tokenizer, "chat_template", None):
+                text = self.tokenizer.apply_chat_template([{"role": "user", "content": prompt}],tokenize=False,add_generation_prompt=True)
+
+            inputs = self.tokenizer(text, return_tensors="pt")
+            with torch.no_grad():
+                output = self.model.generate(**inputs,max_new_tokens=max_new_tokens,do_sample=False,pad_token_id=self.tokenizer.eos_token_id)
+            generated = output[0][inputs["input_ids"].shape[1]:]
+            return self.tokenizer.decode(generated, skip_special_tokens=True)
         except Exception:
             return ""
 
@@ -280,6 +346,7 @@ def build_reasoner() -> Reasoner:
 
     fallback_status = "Rule-based mode (deterministic parsing). " + " | ".join(notes)
     return RuleBasedReasoner(fallback_status.strip())
+
 class PromptAgent:
     def __init__(self, reasoner: Reasoner) -> None:
         self.reasoner = reasoner
