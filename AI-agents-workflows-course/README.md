@@ -64,6 +64,7 @@ live table of every agent action with timings and status codes.
 | **Weather Agent** | Geocode the location and fetch current + daily forecast data. | Open-Meteo Geocoding & Forecast APIs |
 | **Excel Report Agent** | Produce a styled multi-sheet `.xlsx` (Summary, Daily forecast, Agent trace). | `openpyxl`, `pandas` |
 | **Email Agent** | Validate the recipient address and send the workbook over SMTP with STARTTLS. | `smtplib`, `ssl`, `email` |
+| **SLL Verification** | Python script routes TLS verification through OS. | `truststore` |
 
 The workflow never depends on LLM output. If no model is available, deterministic parsing
 handles everything end-to-end.
