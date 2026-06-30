@@ -284,10 +284,14 @@ class OpenVINOReasoner(Reasoner):
     @staticmethod
     def _load_tokenizer(source: str) -> Any:
         from transformers import AutoTokenizer
-        try:
-            return AutoTokenizer.from_pretrained(source, trust_remote_code=True)
-        except TypeError:
-            return AutoTokenizer.from_pretrained(source)
+        for kwargs in ({"trust_remote_code": True, "fix_mistral_regex": True},
+                   {"trust_remote_code": True},
+                   {}):
+            try:
+                return AutoTokenizer.from_pretrained(source, **kwargs)
+            except TypeError:
+                continue
+        return AutoTokenizer.from_pretrained(source)
 
     @staticmethod
     def _load_ov_model(ov_cls: Any, load_dir: str, export: bool) -> Any:
