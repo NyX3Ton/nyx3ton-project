@@ -4,7 +4,6 @@ import semantic_match
 from agent import GoveeTools, TOOL_CALL_RE, DeviceNotFoundError
 from govee_client import Capability, Device
 
-
 class FakeGoveeClient:
     def __init__(self, devices):
         self._devices = devices

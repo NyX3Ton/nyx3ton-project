@@ -1,22 +1,4 @@
-"""
-govee_client.py
-----------------
-Thin, typed wrapper around the Govee Developer (Open) API v1 (v2 capability model).
-
-Docs:  https://developer.govee.com/reference
-Host:  https://openapi.api.govee.com
-
-Notes
------
-* Auth: header `Govee-API-Key: <key>`.
-* Rate limit: 10,000 requests / account / day account-wide (HTTP 429 once exceeded).
-* Every device exposes a list of "capabilities" (on_off, range, color_setting,
-  mode, toggle, dynamic_scene, work_mode, ...) which differs per device/SKU.
-  We keep the raw capability list on each Device so a later LLM agent can
-  build tool schemas dynamically per-device instead of assuming every
-  device supports the same things (e.g. not all lights support colorTem
-  or scenes).
-"""
+#govee_client.py
 
 from __future__ import annotations
 
@@ -34,21 +16,15 @@ BASE_URL = "https://openapi.api.govee.com"
 DEVICES_PATH = "/router/api/v1/user/devices"
 CONTROL_PATH = "/router/api/v1/device/control"
 STATE_PATH = "/router/api/v1/device/state"
-
-
 class GoveeAPIError(RuntimeError):
-    """Raised for any non-200 response from the Govee API."""
 
     def __init__(self, status_code: int, message: str):
         self.status_code = status_code
         self.message = message
         super().__init__(f"Govee API error {status_code}: {message}")
 
-
 class GoveeRateLimitError(GoveeAPIError):
     pass
-
-
 @dataclass
 class Capability:
     type: str
@@ -68,8 +44,6 @@ class Capability:
     def value_range(self) -> Optional[dict[str, Any]]:
         """For INTEGER capabilities: {'min': .., 'max': .., 'precision': ..}"""
         return self.parameters.get("range")
-
-
 @dataclass
 class Device:
     sku: str
@@ -86,34 +60,17 @@ class Device:
 
     def has(self, cap_type: str, instance: str) -> bool:
         return self.capability(cap_type, instance) is not None
-
-
 class GoveeClient:
-    def __init__(
-        self,
-        api_key: Optional[str] = None,
-        timeout: float = 10.0,
-        verify: Union[bool, str] = True,
-    ):
-        """
-        api_key: falls back to the GOVEE_API_KEY env var if not passed.
-        verify:  pass a path to a corporate CA bundle here (or just set the
-                 REQUESTS_CA_BUNDLE env var) if you're behind a TLS-inspecting
-                 proxy on the corporate laptop and see SSL verification errors.
-        """
+    def __init__(self,api_key: Optional[str] = None,timeout: float = 10.0,verify: Union[bool, str] = True):
+
         self.api_key = api_key or os.environ.get("GOVEE_API_KEY")
         if not self.api_key:
             raise ValueError("Govee API key not provided (arg or GOVEE_API_KEY env var)")
         self.timeout = timeout
         self.session = requests.Session()
         self.session.verify = verify
-        self.session.headers.update({
-            "Govee-API-Key": self.api_key,
-            "Content-Type": "application/json",
-        })
+        self.session.headers.update({"Govee-API-Key": self.api_key,"Content-Type": "application/json"})
         self._device_cache: Optional[list[Device]] = None
-
-    # -- low level ------------------------------------------------------
 
     def _request(self, method: str, path: str, json_body: Optional[dict] = None) -> dict:
         url = f"{BASE_URL}{path}"
@@ -137,10 +94,7 @@ class GoveeClient:
 
         return resp.json()
 
-    # -- devices ----------------------------------------------------------
-
     def list_devices(self, force_refresh: bool = False) -> list[Device]:
-        """GET /router/api/v1/user/devices - cached in-process after first call."""
         if self._device_cache is not None and not force_refresh:
             return self._device_cache
 
@@ -148,16 +102,16 @@ class GoveeClient:
         devices: list[Device] = []
         for raw in data.get("data", []):
             caps = [
-                Capability(type=c["type"], instance=c["instance"], parameters=c.get("parameters", {}))
-                for c in raw.get("capabilities", [])
-            ]
+                    Capability(type=c["type"], instance=c["instance"], parameters=c.get("parameters", {}))
+                    for c in raw.get("capabilities", [])
+                    ]
             devices.append(Device(
-                sku=raw["sku"],
-                device_id=raw["device"],
-                device_name=raw.get("deviceName", raw["sku"]),
-                device_type=raw.get("type", "devices.types.light"),
-                capabilities=caps,
-            ))
+                                    sku=raw["sku"],
+                                    device_id=raw["device"],
+                                    device_name=raw.get("deviceName", raw["sku"]),
+                                    device_type=raw.get("type", "devices.types.light"),
+                                    capabilities=caps
+                                    ))
         self._device_cache = devices
         return devices
 
@@ -167,17 +121,9 @@ class GoveeClient:
                 return d
         raise KeyError(f"No cached device with id {device_id}. Try list_devices(force_refresh=True).")
 
-    # -- state --------------------------------------------------------------
-
     def get_state(self, sku: str, device_id: str) -> dict[str, Any]:
-        """
-        POST /router/api/v1/device/state
-        Returns a flattened dict, e.g. {"online": True, "powerSwitch": 1, "brightness": 42, ...}
-        """
-        body = {
-            "requestId": str(uuid.uuid4()),
-            "payload": {"sku": sku, "device": device_id},
-        }
+
+        body = {"requestId": str(uuid.uuid4()),"payload": {"sku": sku, "device": device_id}}
         data = self._request("POST", STATE_PATH, body)
         payload = data.get("payload", {})
         state: dict[str, Any] = {}
@@ -187,30 +133,17 @@ class GoveeClient:
             if cap.get("type") == "devices.capabilities.online":
                 state["online"] = bool(value)
             elif instance == "sensorTemperature" and isinstance(value, (int, float)):
-                # Govee's thermometer/sensor devices report sensorTemperature
-                # in Fahrenheit with no unit field to say so (confirmed against
-                # the official docs example and your H5179's real readings) -
-                # convert to Celsius once here so every caller gets Celsius.
                 state[instance] = round((value - 32) * 5 / 9, 1)
             else:
                 state[instance] = value
         return state
 
-    # -- control --------------------------------------------------------------
-
     def control(self, sku: str, device_id: str, cap_type: str, instance: str, value: Any) -> dict:
-        """Low-level control call. Prefer the convenience methods below when possible."""
         body = {
-            "requestId": str(uuid.uuid4()),
-            "payload": {
-                "sku": sku,
-                "device": device_id,
-                "capability": {"type": cap_type, "instance": instance, "value": value},
-            },
-        }
+                "requestId": str(uuid.uuid4()),
+                "payload": {"sku": sku,"device": device_id,"capability": {"type": cap_type, "instance": instance, "value": value}}
+                }
         return self._request("POST", CONTROL_PATH, body)
-
-    # -- convenience wrappers ---------------------------------------------------
 
     def set_power(self, device: Device, on: bool) -> dict:
         return self.control(device.sku, device.device_id, "devices.capabilities.on_off", "powerSwitch", 1 if on else 0)
@@ -234,5 +167,4 @@ class GoveeClient:
         return self.control(device.sku, device.device_id, "devices.capabilities.color_setting", "colorTemperatureK", kelvin)
 
     def set_scene(self, device: Device, scene_value: int, instance: str = "lightScene") -> dict:
-        """instance is usually 'lightScene', sometimes 'diyScene' or 'snapshot' - see device.capabilities."""
         return self.control(device.sku, device.device_id, "devices.capabilities.dynamic_scene", instance, scene_value)

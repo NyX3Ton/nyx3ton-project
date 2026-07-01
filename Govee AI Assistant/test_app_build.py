@@ -2,7 +2,6 @@
 
 from app import build_ui
 from test_tools_offline import FakeGoveeClient, build_devices
-
 class DummyBackend:
     backend_name = "cpu (stub)"
 

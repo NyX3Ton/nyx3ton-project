@@ -25,11 +25,9 @@ SYSTEM_PROMPT = (
 
 class DeviceNotFoundError(Exception):
     pass
-
 # ---------------------------------------------------------------------------
 # Backend loading: CUDA -> OpenVINO -> CPU
 # ---------------------------------------------------------------------------
-
 class ModelBackend:
     def __init__(self, model_id: str = MODEL_ID, int8: bool = False):
         self.model_id = model_id
@@ -89,11 +87,7 @@ class ModelBackend:
 # ---------------------------------------------------------------------------
 # Govee tool implementations (bridges GoveeClient <-> LLM-callable functions)
 # ---------------------------------------------------------------------------
-
 class GoveeClientLike(Protocol):
-    """Structural type for what GoveeTools/GoveeAgent actually call on the client,
-    so test doubles (FakeGoveeClient) type-check without inheriting from the real
-    (network-backed) GoveeClient."""
     def list_devices(self, force_refresh: bool = False) -> list[Device]: ...
     def get_state(self, sku: str, device_id: str) -> dict: ...
     def control(self, sku: str, device_id: str, cap_type: str, instance: str, value: Any) -> dict: ...
@@ -102,7 +96,6 @@ class GoveeClientLike(Protocol):
     def set_color_rgb(self, device: Device, r: int, g: int, b: int) -> dict: ...
     def set_color_temp(self, device: Device, kelvin: int) -> dict: ...
     def set_scene(self, device: Device, scene_value: int, instance: str = "lightScene") -> dict: ...
-
 class GoveeTools:
     def __init__(self, client: GoveeClientLike):
         self.client = client
@@ -359,7 +352,6 @@ def build_tool_schema() -> list[dict]:
 # ---------------------------------------------------------------------------
 # Agent: chat loop with tool-call parsing
 # ---------------------------------------------------------------------------
-
 class GoveeAgent:
     def __init__(self, client: GoveeClientLike, backend: Optional[ModelBackend] = None, max_tool_iters: int = 5):
         self.tools_impl = GoveeTools(client)

@@ -27,11 +27,9 @@ DEVICE_ICONS = {
                 "heater": "\U0001F525",
                 }
 
-
 def _icon_for(device_type: str) -> str:
     key = device_type.split(".")[-1]
     return DEVICE_ICONS.get(key, "\U0001F3E0")
-
 
 def _format_state(state: dict) -> str:
     if not state.get("online", True):
@@ -52,17 +50,13 @@ def _format_state(state: dict) -> str:
         parts.append("oscillating" if state["oscillationToggle"] else "still")
     return " \u00b7 ".join(parts) if parts else "no readable state"
 
-# structural types for what build_ui actually calls, so test doubles (FakeGoveeClient,
-# DummyAgent) type-check without inheriting from the real (network/model-backed) classes
 class _AgentBackend(Protocol):
     @property
     def backend_name(self) -> str: ...
-
 class AgentLike(Protocol):
     @property
     def backend(self) -> _AgentBackend: ...
     def chat(self, user_message: str, history: list[dict] | None, /) -> tuple[str, list[dict]]: ...
-
 class ClientLike(Protocol):
     def list_devices(self, force_refresh: bool = False) -> list[Device]: ...
     def get_state(self, sku: str, device_id: str) -> dict: ...
