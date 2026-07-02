@@ -137,9 +137,6 @@ def build_ui(client: ClientLike, agent: AgentLike) -> gr.Blocks:
             return chat_display, history, ""
 
         def transcribe_audio(audio_path: str | None):
-            # Fills the textbox for review/edit rather than auto-submitting -
-            # speech-to-text errors on a smart-home command are worse than a
-            # one-tap extra Enter, so the user always confirms what was heard.
             text = speech_to_text.transcribe(audio_path)
             if not text:
                 logger.warning("Speech-to-text produced no usable transcription")

@@ -21,7 +21,12 @@ SYSTEM_PROMPT = (
                     "You are a home assistant that controls Govee smart home devices through "
                     "tool calls. Always call list_devices or get_device_state first if you're "
                     "not sure a device exists or what it supports, rather than guessing a "
-                    "device name or capability. Keep replies short and state what changed. "
+                    "device name or capability. "
+                    "To turn several devices on or off at once - e.g. 'turn off everything', "
+                    "'turn off all the lights', or 'turn off the bedroom' - make a SINGLE "
+                    "set_power_all call (optionally filtered by device_type and/or "
+                    "name_contains) instead of calling set_power once per device. "
+                    "Keep replies short and state what changed. "
                     "The user may write in any language - always reply in the same language "
                     "they used, but pass device/scene names to tools as the user wrote them "
                     "(untranslated); device resolution handles matching across languages."
@@ -147,6 +152,60 @@ class GoveeTools:
             return {"error": f"{d.device_name} doesn't support power control"}
         self.client.set_power(d, on)
         return {"ok": True, "device": d.device_name, "power": "on" if on else "off"}
+
+    def set_power_all(self, on: bool, device_type: Optional[str] = None, name_contains: Optional[str] = None) -> dict:
+        """Turn every matching device on/off in one call ('turn off everything').
+
+        Optional filters combine with AND:
+          device_type   - only devices of this type, e.g. 'light', 'fan', 'socket'
+          name_contains - only devices whose name contains this text (case-insensitive),
+                          e.g. 'bedroom' to target a single room
+
+        Devices that can't be powered (sensors, etc.) are skipped rather than
+        errored, and one device failing doesn't abort the rest - each is tried
+        independently and the outcome is reported per device.
+        """
+        devices = self.client.list_devices()
+        type_l = device_type.strip().lower() if device_type else None
+        name_l = name_contains.strip().lower() if name_contains else None
+
+        changed: list[str] = []
+        skipped: list[str] = []
+        errors: list[dict] = []
+        matched = False
+
+        for d in devices:
+            if type_l and d.device_type.split(".")[-1].lower() != type_l:
+                continue
+            if name_l and name_l not in d.device_name.lower():
+                continue
+            matched = True
+            if not d.has("devices.capabilities.on_off", "powerSwitch"):
+                skipped.append(d.device_name)
+                continue
+            try:
+                self.client.set_power(d, on)
+                changed.append(d.device_name)
+            except GoveeAPIError as e:
+                errors.append({"device": d.device_name, "error": str(e)})
+
+        if not matched:
+            filt = []
+            if type_l:
+                filt.append(f"type '{device_type}'")
+            if name_l:
+                filt.append(f"name containing '{name_contains}'")
+            where = " and ".join(filt) if filt else "any filter"
+            known = ", ".join(d.device_name for d in devices)
+            return {"error": f"No devices matched {where}. Known devices: {known}"}
+
+        return {
+            "ok": not errors,
+            "power": "on" if on else "off",
+            "changed": changed,
+            "skipped": skipped,
+            "errors": errors,
+        }
 
     def set_brightness(self, device_name: str, percent: int) -> dict:
         d = self._find_device(device_name)
@@ -298,6 +357,25 @@ def build_tool_schema() -> list[dict]:
                                                         },
                                         }},
         {"type": "function", "function": {
+                                            "name": "set_power_all",
+                                            "description": (
+                                                            "Turn MANY devices on or off in a single call. Use this for "
+                                                            "requests like 'turn off everything', 'turn off all the lights', "
+                                                            "or 'turn off the bedroom' instead of calling set_power once per "
+                                                            "device. Optionally narrow the set with device_type ('light', "
+                                                            "'fan', 'socket', ...) and/or name_contains (e.g. 'bedroom' to "
+                                                            "target one room); with no filter it targets every device. "
+                                                            "Devices that can't be powered (like sensors) are skipped "
+                                                            "automatically."
+                                                            ),
+                                            "parameters": {"type": "object", "properties": {
+                                                                                            "on": {"type": "boolean"},
+                                                                                            "device_type": {"type": "string", "description": "Optional. Only devices of this type, e.g. 'light', 'fan', 'socket'."},
+                                                                                            "name_contains": {"type": "string", "description": "Optional. Only devices whose name contains this text, e.g. 'bedroom'."},
+                                                                                            }, "required": ["on"]
+                                                        },
+                                        }},
+        {"type": "function", "function": {
                                             "name": "set_brightness",
                                             "description": "Set a light's brightness as a percentage (1-100).",
                                             "parameters": {"type": "object", "properties": {
@@ -366,6 +444,7 @@ class GoveeAgent:
                                                             "list_devices": self.tools_impl.list_devices,
                                                             "get_device_state": self.tools_impl.get_device_state,
                                                             "set_power": self.tools_impl.set_power,
+                                                            "set_power_all": self.tools_impl.set_power_all,
                                                             "set_brightness": self.tools_impl.set_brightness,
                                                             "set_color_rgb": self.tools_impl.set_color_rgb,
                                                             "set_color_temp": self.tools_impl.set_color_temp,

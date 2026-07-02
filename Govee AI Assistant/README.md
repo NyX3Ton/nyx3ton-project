@@ -275,6 +275,7 @@ wrapping `GoveeClient` with device resolution and capability checking:
 | `list_devices` | Lists every device and what it can be controlled for |
 | `get_device_state` | Current state of one device |
 | `set_power` | Turn a device on/off |
+| `set_power_all` | Turn **many** devices on/off in one call — "turn off everything", optionally filtered by type or room |
 | `set_brightness` | Set brightness 1–100% |
 | `set_color_rgb` | Set RGB color |
 | `set_color_temp` | Set white color temperature (Kelvin) |
@@ -295,7 +296,18 @@ no names at all. The implementation handles both shapes (and a flat integer
 range) generically, mapping low/medium/high positionally when there's
 nothing to match by name.
 
-**`build_tool_schema()`** describes all nine tools in OpenAI-style function-schema
+`set_power_all` is the one bulk tool: instead of making the model enumerate
+devices and fire `set_power` once each (which a small local model tends to
+get wrong or truncate), a request like *"turn off everything"* becomes a
+single call. It accepts optional `device_type` (`light`/`fan`/`socket`/…)
+and `name_contains` (e.g. `"bedroom"`) filters that combine with AND, skips
+devices that can't be powered (sensors) instead of erroring, and tries each
+device independently so one offline device can't abort the rest — returning
+`changed` / `skipped` / `errors` lists for the model to summarise. The
+system prompt explicitly steers the model to this tool for "all"/"everything"
+/room-level requests.
+
+**`build_tool_schema()`** describes all ten tools in OpenAI-style function-schema
 JSON. Qwen3's chat template supports this natively — passing `tools=` to
 `tokenizer.apply_chat_template(...)` makes the model emit
 `<tool_call>{"name": ..., "arguments": {...}}</tool_call>` blocks, which

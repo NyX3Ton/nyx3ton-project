@@ -198,6 +198,39 @@ def main():
     print(tools.set_toggle("Tower Fan", "oscillationToggle", False))
     assert fake_client.calls[-1][-1] == 0
 
+    print("\n== set_power_all: turn EVERYTHING off in one call ==")
+    fake_client.calls.clear()
+    result = tools.set_power_all(False)
+    print(result)
+    # The three powerable devices get switched off; the rest are skipped, not errored.
+    assert set(result["changed"]) == {"Bedroom Light 2", "Bedroom Light", "Tower Fan"}
+    assert set(result["skipped"]) == {"Tower Fan Numbered", "Tower Fan Ranged", "Wifi Thermometer"}
+    assert result["errors"] == []
+    # One control call per changed device, all powerSwitch -> 0, in a single tool call.
+    power_offs = [c for c in fake_client.calls if c[2:] == ("devices.capabilities.on_off", "powerSwitch", 0)]
+    assert len(power_offs) == len(result["changed"])
+
+    print("\n== set_power_all: filter by device_type 'fan' ==")
+    fake_client.calls.clear()
+    result = tools.set_power_all(True, device_type="fan")
+    print(result)
+    # Only the fan with a powerSwitch is changed; the two work-mode-only fans are skipped.
+    assert set(result["changed"]) == {"Tower Fan"}
+    assert set(result["skipped"]) == {"Tower Fan Numbered", "Tower Fan Ranged"}
+
+    print("\n== set_power_all: filter by room name_contains 'bedroom' ==")
+    result = tools.set_power_all(False, name_contains="bedroom")
+    print(result)
+    assert set(result["changed"]) == {"Bedroom Light 2", "Bedroom Light"}
+    assert result["skipped"] == []
+
+    print("\n== set_power_all: nothing matches -> error, no calls ==")
+    fake_client.calls.clear()
+    result = tools.set_power_all(False, name_contains="garage")
+    assert "error" in result
+    assert fake_client.calls == []
+    print(f"OK: {result}")
+
     print("\n== <tool_call> regex parsing ==")
     sample_reply = ("Sure, turning that on.\n<tool_call>\n"'{"name": "set_power", "arguments": {"device_name": "Bedroom Light 2", "on": true}}\n'"</tool_call>")
     matches = TOOL_CALL_RE.findall(sample_reply)
