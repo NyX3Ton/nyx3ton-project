@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-import logging, os
+import logging
+import os
 from typing import Any, Callable, Optional
 
 logger = logging.getLogger("speech_to_text")
@@ -25,6 +26,12 @@ _pipeline: Any = None
 
 
 def _result_to_text(result: Any) -> str:
+    """Pull the transcript string out of whatever shape the ASR pipeline returns.
+
+    For a single input the pipeline returns {"text": ...} (plus "chunks" when
+    timestamps are on); for a list of inputs it returns a list of such dicts.
+    Handle both, plus a bare string, so a shape change can't crash the caller.
+    """
     if isinstance(result, dict):
         return str(result.get("text", ""))
     if isinstance(result, list) and result:
@@ -34,6 +41,7 @@ def _result_to_text(result: Any) -> str:
     if isinstance(result, str):
         return result
     return ""
+
 
 def _default_transcribe(audio_path: str) -> str:
     global _pipeline
@@ -52,6 +60,7 @@ def _default_transcribe(audio_path: str) -> str:
     # length work. No "language" kwarg -> Whisper auto-detects the spoken one.
     result = _pipeline(audio_path, chunk_length_s=30, generate_kwargs={"task": "transcribe"})
     return _result_to_text(result)
+
 
 def transcribe(audio_path: Optional[str], transcribe_fn: Optional[Callable[[str], str]] = None) -> str:
     if not audio_path:
