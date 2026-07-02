@@ -3,13 +3,22 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Callable, Optional, Sequence
 import numpy as np
 
 logger = logging.getLogger("semantic_match")
 
-_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
-_model = None 
+# Multilingual by default: paraphrase-multilingual-MiniLM-L12-v2 covers 50+
+# languages and maps semantically equivalent phrases from *different*
+# languages close together in embedding space. That means a query like
+# "allume la lumière du salon" or "enciende la luz del salón" can still
+# resolve to an English device name like "Living Room Light" without any
+# translation step. Override with the GOVEE_EMBEDDING_MODEL env var, e.g.
+# to fall back to the smaller English-only "all-MiniLM-L6-v2" (~90MB) or to
+# swap in a different multilingual model.
+_MODEL_NAME = os.getenv("GOVEE_EMBEDDING_MODEL", "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
+_model = None
 
 def _default_encode(texts: Sequence[str]) -> np.ndarray:
     global _model

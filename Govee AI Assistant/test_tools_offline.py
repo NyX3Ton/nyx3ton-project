@@ -1,6 +1,7 @@
 import json
 
 import semantic_match
+import speech_to_text
 from agent import GoveeTools, TOOL_CALL_RE, DeviceNotFoundError
 from govee_client import Capability, Device
 
@@ -218,6 +219,22 @@ def main():
             print(f"OK (ambiguous, correctly declined to guess): {e}")
     finally:
         semantic_match._model = None
+
+    print("\n== speech-to-text: injected transcribe_fn (no network/model) ==")
+    result = speech_to_text.transcribe("fake/path.wav", transcribe_fn=lambda p: "turn on the bedroom light")
+    assert result == "turn on the bedroom light"
+    print(f"OK: {result!r}")
+
+    print("\n== speech-to-text: no audio path -> empty string ==")
+    assert speech_to_text.transcribe(None) == ""
+    assert speech_to_text.transcribe("") == ""
+    print("OK: empty input short-circuits without touching the model")
+
+    print("\n== speech-to-text: failing transcribe_fn -> empty string, not a crash ==")
+    def _boom(_path):
+        raise RuntimeError("model unavailable")
+    assert speech_to_text.transcribe("fake/path.wav", transcribe_fn=_boom) == ""
+    print("OK: failure degrades to '' instead of raising")
 
     print("\nAll offline checks passed.")
 

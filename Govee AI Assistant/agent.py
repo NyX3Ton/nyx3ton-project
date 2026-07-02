@@ -11,7 +11,8 @@ from govee_client import Device, GoveeAPIError
 
 logger = logging.getLogger("agent")
 
-MODEL_ID = "unsloth/Qwen3-4B-Instruct-2507"
+#MODEL_ID = "unsloth/Qwen3-4B-Instruct-2507"
+MODEL_ID = "unsloth/Qwen3-1.7B"
 OV_CACHE_DIR = Path("ov_cache")
 
 TOOL_CALL_RE = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL)
@@ -20,7 +21,10 @@ SYSTEM_PROMPT = (
                     "You are a home assistant that controls Govee smart home devices through "
                     "tool calls. Always call list_devices or get_device_state first if you're "
                     "not sure a device exists or what it supports, rather than guessing a "
-                    "device name or capability. Keep replies short and state what changed."
+                    "device name or capability. Keep replies short and state what changed. "
+                    "The user may write in any language - always reply in the same language "
+                    "they used, but pass device/scene names to tools as the user wrote them "
+                    "(untranslated); device resolution handles matching across languages."
                 )
 
 class DeviceNotFoundError(Exception):

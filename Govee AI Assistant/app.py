@@ -9,6 +9,7 @@ import gradio as gr
 from dotenv import load_dotenv
 from typing import Protocol
 
+import speech_to_text
 from agent import GoveeAgent
 from govee_client import Device, GoveeAPIError, GoveeClient
 
@@ -96,7 +97,9 @@ def build_ui(client: ClientLike, agent: AgentLike) -> gr.Blocks:
             with gr.Column(scale=1):
                 gr.Markdown(f"### Assistant (backend: `{agent.backend.backend_name}`)")
                 chatbot = gr.Chatbot(height=500)
-                msg_box = gr.Textbox(placeholder="Ask me to check or control a device...", show_label=False)
+                with gr.Row():
+                    msg_box = gr.Textbox(placeholder="Ask me to check or control a device, or use the mic ->", show_label=False, scale=4)
+                    mic = gr.Audio(sources=["microphone"], type="filepath", show_label=False, scale=1)
                 agent_history = gr.State([])  # tool-call-aware history fed back into agent.chat
 
         def refresh_all():
@@ -133,6 +136,15 @@ def build_ui(client: ClientLike, agent: AgentLike) -> gr.Blocks:
             chat_display = chat_display + [{"role": "user", "content": user_message},{"role": "assistant", "content": reply}]
             return chat_display, history, ""
 
+        def transcribe_audio(audio_path: str | None):
+            # Fills the textbox for review/edit rather than auto-submitting -
+            # speech-to-text errors on a smart-home command are worse than a
+            # one-tap extra Enter, so the user always confirms what was heard.
+            text = speech_to_text.transcribe(audio_path)
+            if not text:
+                logger.warning("Speech-to-text produced no usable transcription")
+            return text
+
         all_state_outputs = [state_boxes[d.device_id] for d in devices]
 
         refresh_btn.click(refresh_all, outputs=all_state_outputs)
@@ -149,6 +161,8 @@ def build_ui(client: ClientLike, agent: AgentLike) -> gr.Blocks:
                             )
 
         msg_box.submit(respond,inputs=[msg_box, chatbot, agent_history],outputs=[chatbot, agent_history, msg_box]).then(refresh_all, outputs=all_state_outputs)
+
+        mic.stop_recording(transcribe_audio, inputs=mic, outputs=msg_box).then(lambda: None, outputs=mic)
 
     return demo
 

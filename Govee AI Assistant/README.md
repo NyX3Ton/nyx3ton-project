@@ -23,6 +23,7 @@ directly — all through a small, dependency-light Python stack.
 - [How each component works](#how-each-component-works)
   - [govee_client.py](#govee_clientpy)
   - [semantic_match.py](#semantic_matchpy)
+  - [speech_to_text.py](#speech_to_textpy)
   - [agent.py](#agentpy)
   - [app.py](#apppy)
   - [Tests and CLI utilities](#tests-and-cli-utilities)
@@ -67,6 +68,14 @@ figure out what that means. This project adds that layer, entirely locally:
   model resolves descriptive or approximate names when an exact match
   isn't found, and stays conservative when a request is genuinely
   ambiguous rather than guessing.
+- **Multilingual** — the embedding model is multilingual (50+ languages),
+  so a request in French, Spanish, German, etc. can still resolve to a
+  device named in English, and the LLM is instructed to reply in whatever
+  language the user wrote in.
+- **Speech-to-text** — a mic button next to the chat box transcribes what
+  you say (via a local, multilingual Whisper model covering the same
+  languages as the semantic matcher) into the textbox for review before you
+  send it, so voice control works in the same languages as typed control.
 - **Automatic unit correction** — Govee's sensor API reports temperature
   in Fahrenheit with no unit field; this is normalized to Celsius once, at
   the source.
@@ -84,6 +93,7 @@ flowchart LR
     subgraph UI["app.py — Gradio UI"]
         Dash[Device dashboard]
         Chat[Chat panel]
+        Mic[Mic button]
     end
 
     subgraph Agent["agent.py"]
@@ -93,10 +103,13 @@ flowchart LR
     end
 
     SM[semantic_match.py]
+    STT[speech_to_text.py]
     GC[govee_client.py<br/>GoveeClient]
     API[(Govee Open API<br/>openapi.api.govee.com)]
 
     Dash -- direct control calls --> GC
+    Mic -- transcribe --> STT
+    STT -- fills textbox --> Chat
     Chat --> GA
     GA --> MB
     GA --> GT
@@ -192,9 +205,14 @@ Fuzzy name matching. A small, dependency-isolated module used as a
 elsewhere in the project.
 
 - Uses [`sentence-transformers`](https://www.sbert.net/)'
-  `all-MiniLM-L6-v2` (~90MB) on CPU — this is orders of magnitude smaller
-  than the reasoning model, so it doesn't need the CUDA/OpenVINO fallback
-  chain; it's loaded once, lazily, on first use.
+  `paraphrase-multilingual-MiniLM-L12-v2` (~470MB, 50+ languages) on CPU —
+  still orders of magnitude smaller than the reasoning model, so it doesn't
+  need the CUDA/OpenVINO fallback chain; it's loaded once, lazily, on first
+  use. Being multilingual means a query in, say, French or Spanish embeds
+  close to its English equivalent, so it can resolve device/scene names
+  that are only ever stored in English. Override the model via the
+  `GOVEE_EMBEDDING_MODEL` env var (e.g. back to the smaller English-only
+  `all-MiniLM-L6-v2` if you only ever need English).
 - **`best_match(query, candidates, threshold=0.45, margin=0.03)`** embeds
   the query and every candidate string, and returns the closest match only
   if it clears the similarity threshold *and* beats the runner-up by a
@@ -203,6 +221,32 @@ elsewhere in the project.
   expected to fall through to an error asking for clarification.
 - `encode_fn` is injectable, which is what makes this fully unit-testable
   without downloading the real model (see [Testing](#testing)).
+
+### speech_to_text.py
+
+Local speech-to-text, wired into the mic button next to the chat box in
+`app.py`. Deliberately the same shape as `semantic_match.py`: one lazily
+loaded model, one small public function, one injectable hook for offline
+tests.
+
+- Uses `transformers`' `automatic-speech-recognition` pipeline with
+  **Whisper** (`openai/whisper-small` by default, ~500MB) — no new pip
+  dependency, since `transformers`/`torch` are already required by
+  `agent.py`. Requires the `ffmpeg` binary on `PATH` for audio decoding.
+- Whisper auto-detects the spoken language across ~99 languages (a superset
+  of the 50+ languages `semantic_match.py`'s embedding model covers), so
+  voice input works in whatever language the rest of the pipeline
+  understands, with no language selector needed. Override the model via
+  `GOVEE_STT_MODEL`, e.g. `openai/whisper-base` (smaller/faster) or
+  `openai/whisper-large-v3` (most accurate).
+- **`transcribe(audio_path, transcribe_fn=None)`** never raises — a
+  missing model, empty recording, or decode failure all just log and
+  return `""`, the same conservative-by-default contract
+  `semantic_match.best_match` uses, so a flaky mic can't crash the chat UI.
+- In `app.py`, the transcribed text fills the textbox rather than
+  auto-submitting, so you always confirm what was heard before it reaches
+  a device — consistent with the project's general stance of asking rather
+  than guessing when a request is ambiguous.
 
 ### agent.py
 
@@ -280,7 +324,10 @@ The Gradio dashboard and chat UI. A two-column
   for quick manual control.
 - **Right column — chat.** A standard chatbot wired to `GoveeAgent.chat`,
   with the tool-aware conversation history kept in `gr.State` separately
-  from the display-only chat log.
+  from the display-only chat log. A `gr.Audio` mic button sits next to the
+  textbox; stopping a recording calls `speech_to_text.transcribe` and fills
+  the textbox with the result (clearing the recorder), rather than
+  submitting automatically — you still hit Enter/send as normal.
 - State refreshes on page load, on a manual refresh click, after any
   dashboard control action, and after every chat turn — deliberately not
   on a timer, to stay well under Govee's daily rate limit.
@@ -312,6 +359,7 @@ waiting for the model to load.
 Govee AI Assistant/
 ├── govee_client.py         # Govee Open API wrapper
 ├── semantic_match.py        # Embedding-based fuzzy name matching
+├── speech_to_text.py        # Whisper-based speech-to-text
 ├── agent.py                 # ModelBackend, GoveeTools, GoveeAgent
 ├── app.py                   # Gradio dashboard + chat UI
 │
@@ -347,6 +395,13 @@ If you have an NVIDIA GPU, install the CUDA build of `torch` matching your
 driver instead of the default CPU build — see the comment at the top of
 `requirements-agent.txt`.
 
+**Speech-to-text also needs `ffmpeg` on your `PATH`** (used by the
+`transformers` audio pipeline to decode microphone recordings) — no
+additional Python packages, since it reuses the `torch`/`transformers`
+already installed for the agent. Install via your OS package manager (e.g.
+`apt install ffmpeg`, `brew install ffmpeg`, or the
+[Windows builds](https://ffmpeg.org/download.html)).
+
 ## Configuration
 
 ```bash
@@ -357,6 +412,14 @@ Then edit `.env` and add your key:
 
 ```
 GOVEE_API_KEY=your-govee-api-key-here
+
+# Optional: override the semantic-matching embedding model
+# (default is multilingual; see semantic_match.py)
+GOVEE_EMBEDDING_MODEL=sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+
+# Optional: override the speech-to-text model (default is multilingual
+# Whisper; see speech_to_text.py)
+GOVEE_STT_MODEL=openai/whisper-small
 ```
 
 Get one from the **Govee Home app → Profile → Settings (gear icon) → Apply
@@ -414,8 +477,9 @@ These use fake `GoveeClient`/agent stand-ins (`FakeGoveeClient`,
 `DummyAgent`) built against the same `Protocol` interfaces the real classes
 satisfy, so they validate real logic — device resolution, capability
 checks, value clamping, fan-speed schema handling, semantic-match
-fallbacks, and the entire Gradio wiring — without ever touching the
-network or loading a multi-gigabyte model.
+fallbacks, speech-to-text's fail-safe return-`""` behavior, and the entire
+Gradio wiring — without ever touching the network or loading a
+multi-gigabyte model.
 
 If you have [`pyright`](https://github.com/microsoft/pyright) installed
 (the engine behind VS Code's Pylance), you can type-check the whole project
@@ -442,6 +506,10 @@ pyright *.py
   `get_device_state` first, or run `test_govee.py`, to confirm the device
   is online and check its exact capability list; not every device supports
   every control.
+- **Mic button transcribes to nothing** — check `ffmpeg` is installed and
+  on `PATH` (required to decode the recording); also check the app logs for
+  a `speech_to_text` warning/exception, and confirm your browser actually
+  granted microphone permission to the Gradio page.
 
 ## Roadmap
 
