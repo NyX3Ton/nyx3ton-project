@@ -576,7 +576,7 @@ pyright *.py
 
 ## Cheatsheet
 
-![Cheatsheet](govee_ai_assistant_slide.png)
+![Cheatsheet](images/govee_ai_assistant_slide.png)
 
 ## License
 
