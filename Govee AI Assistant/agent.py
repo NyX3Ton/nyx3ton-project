@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json, logging, re, torch
+import json, logging, os, re, torch
 from pathlib import Path
 from typing import Any, Callable, Optional, Protocol
 
@@ -12,10 +12,14 @@ from govee_client import Device, GoveeAPIError
 logger = logging.getLogger("agent")
 
 #MODEL_ID = "unsloth/Qwen3-4B-Instruct-2507"
-MODEL_ID = "Qwen/Qwen3.5-2B"
+CUDA_MODEL_ID = os.getenv("GOVEE_CUDA_MODEL_ID", os.getenv("GOVEE_MODEL_ID", "unsloth/Qwen3.5-2B"))
+FALLBACK_MODEL_ID = os.getenv("GOVEE_FALLBACK_MODEL_ID", "unsloth/Qwen3-1.7B")
+MODEL_ID = CUDA_MODEL_ID
 OV_CACHE_DIR = Path("ov_cache")
 
 TOOL_CALL_RE = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL)
+FUNCTION_TOOL_CALL_RE = re.compile(r"<tool_call>\s*<function=([A-Za-z_][\w]*)>\s*(.*?)\s*</function>\s*</tool_call>",re.DOTALL,)
+TOOL_PARAMETER_RE = re.compile(r"<parameter=([A-Za-z_][\w]*)>\s*(.*?)\s*</parameter>", re.DOTALL)
 
 SYSTEM_PROMPT = (
                     "You are a home assistant that controls Govee smart home devices through "
@@ -34,26 +38,69 @@ SYSTEM_PROMPT = (
 
 class DeviceNotFoundError(Exception):
     pass
+
+def _coerce_tool_value(value: str) -> Any:
+    value = value.strip()
+    lowered = value.lower()
+    if lowered == "true":
+        return True
+    if lowered == "false":
+        return False
+    if lowered == "null":
+        return None
+
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError:
+        return value
+
+def parse_tool_calls(reply: str) -> list[dict[str, Any]]:
+    calls: list[dict[str, Any]] = []
+
+    for raw_call in TOOL_CALL_RE.findall(reply):
+        try:
+            call = json.loads(raw_call)
+        except json.JSONDecodeError:
+            logger.warning("Malformed JSON tool call from model: %s", raw_call)
+            continue
+        if isinstance(call, dict) and isinstance(call.get("name"), str):
+            calls.append(call)
+
+    for name, body in FUNCTION_TOOL_CALL_RE.findall(reply):
+        arguments = {
+                    parameter_name: _coerce_tool_value(raw_value)
+                    for parameter_name, raw_value in TOOL_PARAMETER_RE.findall(body)
+                    }
+        calls.append({"name": name, "arguments": arguments})
+
+    return calls
 # ---------------------------------------------------------------------------
 # Backend loading: CUDA -> OpenVINO -> CPU
 # ---------------------------------------------------------------------------
 class ModelBackend:
-    def __init__(self, model_id: str = MODEL_ID, int8: bool = False):
-        self.model_id = model_id
+    def __init__(self, model_id: Optional[str] = None, fallback_model_id: str = FALLBACK_MODEL_ID, int8: bool = False):
+        self.cuda_model_id = model_id or CUDA_MODEL_ID
+        self.fallback_model_id = fallback_model_id
+        self.model_id = self.cuda_model_id
         self.int8 = int8
         self.backend_name, self.model, self.tokenizer = self._load()
-        logger.info("Loaded %s on backend=%s", model_id, self.backend_name)
+        logger.info("Loaded %s on backend=%s", self.model_id, self.backend_name)
 
     def _load(self) -> tuple[str, Any, Any]:
         # 1. CUDA
         try:
             if torch.cuda.is_available():
                 from transformers import AutoModelForCausalLM, AutoTokenizer
+                self.model_id = self.cuda_model_id
                 tokenizer = AutoTokenizer.from_pretrained(self.model_id)
                 model = AutoModelForCausalLM.from_pretrained(self.model_id, torch_dtype="auto", device_map="cuda")
                 return "cuda", model, tokenizer
         except Exception:
             logger.exception("CUDA load failed, falling back to OpenVINO")
+
+        self.model_id = self.fallback_model_id
+        if self.cuda_model_id != self.fallback_model_id:
+            logger.info("CUDA unavailable; using fallback model %s for OpenVINO/CPU", self.model_id)
 
         # 2. OpenVINO
         try:
@@ -154,17 +201,6 @@ class GoveeTools:
         return {"ok": True, "device": d.device_name, "power": "on" if on else "off"}
 
     def set_power_all(self, on: bool, device_type: Optional[str] = None, name_contains: Optional[str] = None) -> dict:
-        """Turn every matching device on/off in one call ('turn off everything').
-
-        Optional filters combine with AND:
-          device_type   - only devices of this type, e.g. 'light', 'fan', 'socket'
-          name_contains - only devices whose name contains this text (case-insensitive),
-                          e.g. 'bedroom' to target a single room
-
-        Devices that can't be powered (sensors, etc.) are skipped rather than
-        errored, and one device failing doesn't abort the rest - each is tried
-        independently and the outcome is reported per device.
-        """
         devices = self.client.list_devices()
         type_l = device_type.strip().lower() if device_type else None
         name_l = name_contains.strip().lower() if name_contains else None
@@ -199,13 +235,7 @@ class GoveeTools:
             known = ", ".join(d.device_name for d in devices)
             return {"error": f"No devices matched {where}. Known devices: {known}"}
 
-        return {
-            "ok": not errors,
-            "power": "on" if on else "off",
-            "changed": changed,
-            "skipped": skipped,
-            "errors": errors,
-        }
+        return {"ok": not errors,"power": "on" if on else "off","changed": changed,"skipped": skipped,"errors": errors}
 
     def set_brightness(self, device_name: str, percent: int) -> dict:
         d = self._find_device(device_name)
@@ -292,10 +322,7 @@ class GoveeTools:
             speed_options = [{"value": v} for v in range(lo, hi + 1)]
         else:
             raw_options = mode_value_field.get("options", [])
-            nested = next(
-                (o for o in raw_options if o.get("name", "").lower() == gear_option.get("name", "").lower()),
-                None,
-            )
+            nested = next((o for o in raw_options if o.get("name", "").lower() == gear_option.get("name", "").lower()),None)
             if nested and "options" in nested:
                 speed_options = nested["options"]
             elif raw_options and all("value" in o for o in raw_options):
@@ -474,18 +501,17 @@ class GoveeAgent:
         for _ in range(self.max_tool_iters):
             chat_text = self.backend.tokenizer.apply_chat_template(messages, tools=self.tool_schema, add_generation_prompt=True, tokenize=False)
             reply = self.backend.generate(chat_text)
-            calls = TOOL_CALL_RE.findall(reply)
+            calls = parse_tool_calls(reply)
 
             if not calls:
                 messages.append({"role": "assistant", "content": reply})
                 return reply, messages[1:]
 
             messages.append({"role": "assistant", "content": reply})
-            for raw_call in calls:
+            for call in calls:
                 try:
-                    call = json.loads(raw_call)
                     name, args = call["name"], call.get("arguments", {})
-                except (json.JSONDecodeError, KeyError):
+                except KeyError:
                     name, result = "unknown", {"error": "Malformed tool call from model"}
                 else:
                     result = self._call_tool(name, args)

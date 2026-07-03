@@ -422,6 +422,11 @@ Govee AI Assistant/
 ├── requirements.txt          # Core deps (Govee client only)
 ├── requirements-agent.txt    # + local LLM / embedding deps
 ├── requirements-app.txt      # + Gradio
+├── requirements-docker.txt   # Docker-specific Qwen3.5/Transformers deps
+├── requirements-openvino.txt # OpenVINO-compatible Transformers profile
+├── Dockerfile
+├── docker-compose.yml
+├── docker-compose.openvino.yml
 ├── .env.example              # GOVEE_API_KEY template
 └── README.md
 ```
@@ -446,6 +451,13 @@ If you have an NVIDIA GPU, install the CUDA build of `torch` matching your
 driver instead of the default CPU build — see the comment at the top of
 `requirements-agent.txt`.
 
+Qwen3.5 support moves faster than the regular release cycle. The default
+Docker image installs Transformers from the upstream `main` branch, matching
+the Qwen3.5 model-card guidance. The OpenVINO profile uses the compatible
+Transformers 4.x lane and falls back to `unsloth/Qwen3-1.7B`, since
+Qwen3.5 is not currently a good OpenVINO target here. The backend order
+remains CUDA first, OpenVINO second, plain CPU last.
+
 **`ffmpeg` is optional for speech-to-text.** Microphone recordings are
 decoded in-process (stdlib `wave` + numpy), so voice normally works with no
 extra setup. `ffmpeg` is only used as a fallback for audio the built-in
@@ -464,6 +476,12 @@ Then edit `.env` and add your key:
 
 ```
 GOVEE_API_KEY=your-govee-api-key-here
+
+# Optional: override the local LLM
+GOVEE_MODEL_ID=unsloth/Qwen3.5-2B
+
+# Optional: override the non-CUDA fallback model
+GOVEE_FALLBACK_MODEL_ID=unsloth/Qwen3-1.7B
 
 # Optional: override the semantic-matching embedding model
 # (default is multilingual; see semantic_match.py)
@@ -499,9 +517,72 @@ python app.py
 ```
 
 `app.py` prints a local URL (typically `http://127.0.0.1:7860`) once it's
-ready. **First run will be slow** — it downloads the ~4B-parameter model
-(a few GB) and, if no CUDA GPU is available, exports it to OpenVINO IR
+ready. **First run will be slow** — it downloads the configured local model
+(usually a few GB) and, if no CUDA GPU is available, exports it to OpenVINO IR
 (cached under `ov_cache/` for every run after that).
+
+## Running with Docker Compose
+
+This path is meant for Qwen3.5 on NVIDIA GPUs. It keeps your Windows Python
+install clean and runs the model in a Linux CUDA container with current
+Qwen3.5-ready Transformers.
+
+Prerequisites:
+
+- Docker Desktop with WSL2 integration enabled.
+- NVIDIA driver + NVIDIA Container Toolkit support working in Docker.
+- A populated `.env` file with `GOVEE_API_KEY`.
+
+Build and run:
+
+```bash
+docker compose up --build
+```
+
+Then open:
+
+```text
+http://127.0.0.1:7860
+```
+
+The Compose stack mounts persistent named volumes for Hugging Face downloads
+and OpenVINO exports:
+
+- `huggingface-cache` -> `/cache/huggingface`
+- `openvino-cache` -> `/app/ov_cache`
+
+The optional Qwen3.5 fast-path packages (`flash-linear-attention[cuda]` and
+`causal-conv1d`) can be tried as an opt-in build. They are intentionally off
+by default because they compile CUDA extensions and can fail on a given
+CUDA/PyTorch/GPU-architecture combination:
+
+```bash
+docker compose build --build-arg INSTALL_QWEN_FAST=1
+docker compose up
+```
+
+The default build still uses CUDA via PyTorch, then OpenVINO, then CPU. If
+the fast-kernel build fails, rebuild with the default `INSTALL_QWEN_FAST=0`
+and keep using the working CUDA container.
+
+### OpenVINO / No-CUDA Docker
+
+When CUDA is not available, use the OpenVINO compose file. It builds with
+`requirements-openvino.txt`, pins Transformers to the Optimum-compatible 4.x
+line, and uses the fallback model by default:
+
+```bash
+docker compose -f docker-compose.openvino.yml up --build
+```
+
+This profile intentionally avoids Qwen3.5 and uses:
+
+```text
+GOVEE_FALLBACK_MODEL_ID=unsloth/Qwen3-1.7B
+```
+
+You can still override that value in `.env` if you want to test a different
+OpenVINO-compatible Qwen3 model.
 
 ## Supported controls
 

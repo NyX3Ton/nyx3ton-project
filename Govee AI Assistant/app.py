@@ -169,7 +169,14 @@ def _blocks_kwargs() -> dict:
     return kw
 
 def _launch_kwargs() -> dict:
-    return {"theme": THEME, "css": CSS} if _GMAJOR >= 6 else {}
+    kw: dict = {"theme": THEME, "css": CSS} if _GMAJOR >= 6 else {}
+    server_name = os.getenv("GRADIO_SERVER_NAME")
+    server_port = os.getenv("GRADIO_SERVER_PORT")
+    if server_name:
+        kw["server_name"] = server_name
+    if server_port:
+        kw["server_port"] = int(server_port)
+    return kw
 
 def _chatbot_kwargs() -> dict:
     kw: dict = {"elem_id": "gv-chat","height": 800,"show_label": False,"placeholder": "Ask me to check or control your devices — in any language."}

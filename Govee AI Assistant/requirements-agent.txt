@@ -1,0 +1,11 @@
+-r requirements.txt
+
+accelerate>=1.0
+numpy>=2.0
+openvino>=2026.2
+optimum-intel>=1.27
+safetensors>=0.5
+scipy>=1.14
+sentence-transformers>=5.0
+torch>=2.7
+transformers>=4.51

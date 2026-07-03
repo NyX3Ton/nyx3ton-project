@@ -2,7 +2,7 @@ import json
 
 import semantic_match
 import speech_to_text
-from agent import GoveeTools, TOOL_CALL_RE, DeviceNotFoundError
+from agent import GoveeTools, ModelBackend, TOOL_CALL_RE, DeviceNotFoundError, parse_tool_calls
 from govee_client import Capability, Device
 
 class FakeGoveeClient:
@@ -238,6 +238,33 @@ def main():
     parsed = json.loads(matches[0])
     assert parsed["name"] == "set_power"
     print(f"OK: parsed {parsed}")
+
+    print("\n== Qwen3.5 <tool_call> function parsing ==")
+    qwen35_reply = """I'll check that first.
+<tool_call>
+<function=set_power>
+<parameter=device_name>
+Bedroom Light 2
+</parameter>
+<parameter=on>
+true
+</parameter>
+</function>
+</tool_call>"""
+    calls = parse_tool_calls(qwen35_reply)
+    assert calls == [{"name": "set_power", "arguments": {"device_name": "Bedroom Light 2", "on": True}}]
+    print(f"OK: parsed {calls[0]}")
+
+    print("\n== ModelBackend fallback model selection ==")
+    class DummyBackend(ModelBackend):
+        def _load(self):
+            self.model_id = self.fallback_model_id
+            return "openvino", object(), object()
+
+    backend = DummyBackend(model_id="unsloth/Qwen3.5-2B", fallback_model_id="unsloth/Qwen3-1.7B")
+    assert backend.model_id == "unsloth/Qwen3-1.7B"
+    assert backend.backend_name == "openvino"
+    print(f"OK: {backend.backend_name} uses {backend.model_id}")
 
     print("\n== semantic device matching (fake embedding model, no network) ==")
     semantic_match._model = FakeEmbeddingModel()

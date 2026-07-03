@@ -1,0 +1,31 @@
+name: govee-ai-assistant
+
+services:
+  app:
+    image: govee-ai-assistant:latest
+    build:
+      context: .
+      args:
+        BASE_IMAGE: nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04
+        RUNTIME_PROFILE: cuda
+        INSTALL_QWEN_FAST: "0"
+    env_file:
+      - .env
+    environment:
+      GOVEE_MODEL_ID: ${GOVEE_MODEL_ID:-unsloth/Qwen3.5-2B}
+      GOVEE_FALLBACK_MODEL_ID: ${GOVEE_FALLBACK_MODEL_ID:-unsloth/Qwen3-1.7B}
+      GRADIO_SERVER_NAME: 0.0.0.0
+      GRADIO_SERVER_PORT: 7860
+      HF_HOME: /cache/huggingface
+    ports:
+      - "7860:7860"
+    volumes:
+      - huggingface-cache:/cache/huggingface
+      - openvino-cache:/app/ov_cache
+    shm_size: "16gb"
+    gpus: all
+    restart: unless-stopped
+
+volumes:
+  huggingface-cache:
+  openvino-cache:

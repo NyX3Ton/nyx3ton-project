@@ -64,6 +64,8 @@ Thumbs.db
 *.sqlite3
 *.sqlite
 *.db
+!requirements.txt
+!requirements-*.txt
 # =====================
 # Project-specific
 # =====================
