@@ -573,10 +573,6 @@ pyright *.py
 - [ ] Even richer device cards (color swatches, scene pickers) in the dashboard.
 - [ ] Packaging for easier distribution.
 
-## Cheatsheet
-
-![slide](images/govee_ai_assistant_slide.png)
-
 ## License
 
 No license has been chosen for this project yet — add a `LICENSE` file
