@@ -2,6 +2,7 @@ ARG BASE_IMAGE=nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04
 FROM ${BASE_IMAGE}
 
 ARG INSTALL_QWEN_FAST=0
+ARG INSTALL_CAUSAL_CONV1D=0
 ARG RUNTIME_PROFILE=cuda
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -20,6 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     ninja-build \
     python3 \
+    python3-dev \
     python3-pip \
     python3-venv \
     && rm -rf /var/lib/apt/lists/*
@@ -46,7 +48,10 @@ RUN if [ "${RUNTIME_PROFILE}" = "openvino" ]; then \
     fi
 
 RUN if [ "${RUNTIME_PROFILE}" != "openvino" ] && [ "${INSTALL_QWEN_FAST}" = "1" ]; then \
-        pip install "flash-linear-attention[cuda]" && \
+        pip install "flash-linear-attention[cuda]"; \
+    fi
+
+RUN if [ "${RUNTIME_PROFILE}" != "openvino" ] && [ "${INSTALL_CAUSAL_CONV1D}" = "1" ]; then \
         pip install --no-build-isolation causal-conv1d; \
     fi
 

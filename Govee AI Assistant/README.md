@@ -551,19 +551,26 @@ and OpenVINO exports:
 - `huggingface-cache` -> `/cache/huggingface`
 - `openvino-cache` -> `/app/ov_cache`
 
-The optional Qwen3.5 fast-path packages (`flash-linear-attention[cuda]` and
-`causal-conv1d`) can be tried as an opt-in build. They are intentionally off
-by default because they compile CUDA extensions and can fail on a given
-CUDA/PyTorch/GPU-architecture combination:
+The optional Qwen3.5 fast-path package `flash-linear-attention[cuda]` can be
+tried as an opt-in build. It is intentionally off by default because it
+compiles CUDA extensions and can fail on a given CUDA/PyTorch/GPU-architecture
+combination:
 
 ```bash
 docker compose build --build-arg INSTALL_QWEN_FAST=1
 docker compose up
 ```
 
+`causal-conv1d` is a separate, more fragile opt-in. If you want to test it,
+add the second build arg:
+
+```bash
+docker compose build --build-arg INSTALL_QWEN_FAST=1 --build-arg INSTALL_CAUSAL_CONV1D=1
+```
+
 The default build still uses CUDA via PyTorch, then OpenVINO, then CPU. If
-the fast-kernel build fails, rebuild with the default `INSTALL_QWEN_FAST=0`
-and keep using the working CUDA container.
+the causal-conv1d build fails, rebuild without `INSTALL_CAUSAL_CONV1D=1` and
+keep using the working CUDA container.
 
 ### OpenVINO / No-CUDA Docker
 
