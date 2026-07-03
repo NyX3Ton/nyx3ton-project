@@ -35,6 +35,7 @@ directly — all through a small, dependency-light Python stack.
 - [Testing](#testing)
 - [Troubleshooting](#troubleshooting)
 - [Roadmap](#roadmap)
+- [Cheatsheet](#cheatsheet)
 - [License](#license)
 
 ## Why this exists
@@ -572,6 +573,10 @@ pyright *.py
 - [x] Themed UI with device cards, status pills, and an expand-chat toggle.
 - [ ] Even richer device cards (color swatches, scene pickers) in the dashboard.
 - [ ] Packaging for easier distribution.
+
+## Cheatsheet
+
+![cheatsheet](images/govee_ai_assistant_slide.png)
 
 ## License
 
