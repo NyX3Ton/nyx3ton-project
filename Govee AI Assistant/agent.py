@@ -12,7 +12,7 @@ from govee_client import Device, GoveeAPIError
 logger = logging.getLogger("agent")
 
 #MODEL_ID = "unsloth/Qwen3-4B-Instruct-2507"
-MODEL_ID = "unsloth/Qwen3-1.7B"
+MODEL_ID = "Qwen/Qwen3.5-2B"
 OV_CACHE_DIR = Path("ov_cache")
 
 TOOL_CALL_RE = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL)
