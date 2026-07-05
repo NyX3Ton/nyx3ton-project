@@ -23,6 +23,8 @@ logger = logging.getLogger("speech_to_text")
 # "openai/whisper-large-v3" (most accurate, slowest - and heavy on CPU).
 _MODEL_NAME = os.getenv("GOVEE_STT_MODEL", "openai/whisper-base")
 _DEVICE_SETTING = os.getenv("GOVEE_STT_DEVICE", "auto").strip().lower()
+_LANGUAGE = os.getenv("GOVEE_STT_LANGUAGE", "").strip()
+_SILENCE_RMS = float(os.getenv("GOVEE_STT_SILENCE_RMS", "0.002"))
 _TARGET_SR = 16000  # Whisper's expected sample rate.
 _pipeline: Any = None
 
@@ -115,6 +117,13 @@ def _result_to_text(result: Any) -> str:
     return ""
 
 
+def _generate_kwargs() -> dict[str, str]:
+    kwargs = {"task": "transcribe"}
+    if _LANGUAGE:
+        kwargs["language"] = _LANGUAGE
+    return kwargs
+
+
 def _default_transcribe(audio_path: str) -> str:
     global _pipeline
     if _pipeline is None:
@@ -139,9 +148,19 @@ def _default_transcribe(audio_path: str) -> str:
     # "produces nothing" on a fresh machine. Anything we can't decode this way
     # falls back to the ffmpeg path if ffmpeg is present, else a clear error.
     decoded = _decode_wav_pcm(audio_path)
+    duration = 0.0
     if decoded is not None:
         samples, sr = decoded
-        logger.info("Decoded voice recording %s: %.2fs at %s Hz", os.path.basename(audio_path), samples.size / float(sr or _TARGET_SR), sr)
+        duration = samples.size / float(sr or _TARGET_SR)
+        peak = float(np.max(np.abs(samples))) if samples.size else 0.0
+        rms = float(np.sqrt(np.mean(np.square(samples)))) if samples.size else 0.0
+        logger.info(
+                    "Decoded voice recording %s: %.2fs at %s Hz, peak=%.4f, rms=%.4f",
+                    os.path.basename(audio_path), duration, sr, peak, rms,
+                    )
+        if samples.size and rms < _SILENCE_RMS:
+            logger.warning("Voice recording is silent or very quiet; skipping transcription")
+            return ""
         pipe_input: Any = {"raw": _resample_to_16k(samples, sr), "sampling_rate": _TARGET_SR}
     elif ffmpeg_available():
         logger.info("Using ffmpeg-backed decode for voice recording %s", os.path.basename(audio_path))
@@ -153,10 +172,12 @@ def _default_transcribe(audio_path: str) -> str:
                             "`brew install ffmpeg`; Linux: `apt install ffmpeg`) and restart the app."
                             )
 
-    # chunk_length_s enables Whisper's chunked long-form algorithm so recordings
-    # longer than its 30s receptive field still transcribe. No "language" kwarg
-    # -> Whisper auto-detects the spoken language.
-    result = _pipeline(pipe_input, chunk_length_s=30, generate_kwargs={"task": "transcribe"})
+    # Whisper only needs chunked long-form mode for recordings over its 30s
+    # receptive field. Short command clips are more reliable on the normal path.
+    kwargs = {"generate_kwargs": _generate_kwargs()}
+    if duration > 30:
+        kwargs["chunk_length_s"] = 30
+    result = _pipeline(pipe_input, **kwargs)
     text = _result_to_text(result).strip()
     if text:
         logger.info("Speech-to-text transcript: %s", text)

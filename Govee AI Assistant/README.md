@@ -82,7 +82,8 @@ figure out what that means. This project adds that layer, entirely locally:
 - **Speech-to-text** — a mic button next to the chat box transcribes what
   you say (via a local, multilingual Whisper model covering the same
   languages as the semantic matcher) and sends the transcript through the
-  same chat/tool path as typed control.
+  same chat/tool path as typed control. The UI shows a small `Heard: ...`
+  status so you can see exactly what Whisper understood.
   Recordings are decoded in-process (stdlib `wave` + numpy), so voice works
   **without ffmpeg installed** in the common case.
 - **Automatic unit correction** — Govee's sensor API reports temperature
@@ -261,10 +262,15 @@ tests.
   understands, with no language selector needed. Override the model via
   `GOVEE_STT_MODEL`, e.g. `openai/whisper-base` (smaller/faster) or
   `openai/whisper-large-v3` (most accurate, but heavy on CPU).
+- If short commands are repeatedly misheard, force the language with
+  `GOVEE_STT_LANGUAGE`, e.g. `english`, `slovak`, `en`, or `sk`. Leave it
+  empty for Whisper's automatic language detection.
 - Speech-to-text device is controlled by `GOVEE_STT_DEVICE`: `auto`, `cpu`,
   or `cuda`. Docker defaults this to `cpu` so Whisper does not compete with
   Qwen for GPU memory; set it to `cuda` only if you have spare VRAM and want
   faster transcription.
+- Recordings below `GOVEE_STT_SILENCE_RMS` are treated as silent before they
+  reach Whisper, which avoids hallucinated transcripts from all-zero audio.
 - **`transcribe(audio_path, transcribe_fn=None)`** never raises — a
   missing model, empty recording, or decode failure all just log and
   return `""`, the same conservative-by-default contract
@@ -371,8 +377,8 @@ The Gradio dashboard and chat UI. A themed two-column
   `GoveeAgent.chat`, with the tool-aware conversation history kept in
   `gr.State` separately from the display-only chat log. Below it: a text box
   with a **Send** button, a `gr.Audio` mic button (stopping a recording calls
-  `speech_to_text.transcribe` and sends the transcript through chat), and a
-  row of clickable **example prompts**. An
+  `speech_to_text.transcribe`, shows `Heard: ...`, and sends the transcript
+  through chat), and a row of clickable **example prompts**. An
   **Expand chat** button grows the chat in-page — taller, and full-width by
   hiding the devices column — via a Gradio state toggle (no browser Fullscreen
   API, so nothing can trap the window); the same button reverses it. The chat
@@ -497,6 +503,13 @@ GOVEE_STT_MODEL=openai/whisper-small
 # Optional: choose speech-to-text device: auto, cpu, or cuda.
 # Docker defaults to cpu so Whisper does not compete with Qwen for VRAM.
 GOVEE_STT_DEVICE=cpu
+
+# Optional: force Whisper language, e.g. english, slovak, sk, en.
+# Leave empty for automatic language detection.
+GOVEE_STT_LANGUAGE=
+
+# Optional: recordings below this RMS are treated as silent.
+GOVEE_STT_SILENCE_RMS=0.002
 
 # Optional: host port exposed by Docker Compose.
 # The container still listens on GRADIO_SERVER_PORT=7860 internally.
@@ -671,9 +684,14 @@ pyright *.py
   so `ffmpeg` usually isn't needed; the UI shows a warning if it *is* needed
   and missing. First confirm your browser granted microphone permission to
   the Gradio page, then check the app logs for a `speech_to_text`
-  warning/exception. If the log points at ffmpeg (a non-PCM-WAV recording),
-  install `ffmpeg` and restart. If the log points at CUDA or memory, set
-  `GOVEE_STT_DEVICE=cpu`; Docker uses that safer default already.
+  warning/exception. If the log says `peak=0.0000, rms=0.0000`, the browser
+  sent a silent WAV: check the browser's selected microphone, Windows input
+  level, headset mute switch, and whether another app can record from the
+  same device. If the log points at ffmpeg (a non-PCM-WAV recording), install
+  `ffmpeg` and restart. If the log points at CUDA or memory, set
+  `GOVEE_STT_DEVICE=cpu`; Docker uses that safer default already. If the UI
+  shows a tiny wrong transcript such as `Heard: you` from non-silent audio,
+  try a longer phrase or set `GOVEE_STT_LANGUAGE=english` / `slovak` in `.env`.
 
 ## Roadmap
 

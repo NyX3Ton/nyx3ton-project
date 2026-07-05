@@ -299,7 +299,7 @@ def build_ui(client: ClientLike, agent: AgentLike) -> gr.Blocks:
             chat_display = chat_display + [{"role": "user", "content": user_message},{"role": "assistant", "content": reply}]
             return chat_display, history, ""
 
-        def transcribe_audio(audio_path):
+        def respond_voice(audio_path, chat_display: list, history: list):
 
             logger.info("Voice recording received: %r", audio_path)
             text = speech_to_text.transcribe(audio_path)
@@ -308,11 +308,14 @@ def build_ui(client: ClientLike, agent: AgentLike) -> gr.Blocks:
                 if not speech_to_text.ffmpeg_available():
                     gr.Warning("Couldn't transcribe the audio. ffmpeg wasn't found on PATH - install it and restart (see the README), or record in WAV format.")
                 else:
-                    gr.Warning("Didn't catch that - please try recording again.")
-                return "", "No usable speech detected."
+                    gr.Warning("The recording was silent or too quiet. Check the selected microphone and mute switch, then try again.")
+                return chat_display, history, "", "Recording was silent or too quiet."
             if not text:
-                return "", "No recording received."
-            return text, f"Heard: {html.escape(text)}"
+                return chat_display, history, "", "No recording received."
+
+            status = f"Heard: {html.escape(text)}"
+            chat_display, history, msg_value = respond(text, chat_display, history)
+            return chat_display, history, msg_value, status
 
         all_state_outputs = [state_boxes[d.device_id] for d in devices]
 
@@ -334,7 +337,8 @@ def build_ui(client: ClientLike, agent: AgentLike) -> gr.Blocks:
         msg_box.submit(respond, inputs=chat_inputs, outputs=chat_outputs).then(refresh_all, outputs=all_state_outputs)
         send_btn.click(respond, inputs=chat_inputs, outputs=chat_outputs).then(refresh_all, outputs=all_state_outputs)
 
-        mic.stop_recording(transcribe_audio, inputs=mic, outputs=[msg_box, voice_status]).then(respond, inputs=chat_inputs, outputs=chat_outputs).then(refresh_all, outputs=all_state_outputs).then(lambda: None, outputs=mic)
+        voice_outputs = [chatbot, agent_history, msg_box, voice_status]
+        mic.stop_recording(respond_voice, inputs=[mic, chatbot, agent_history], outputs=voice_outputs).then(refresh_all, outputs=all_state_outputs).then(lambda: None, outputs=mic)
         def toggle_zoom(zoomed: bool):
             zoomed = not zoomed
             return (
