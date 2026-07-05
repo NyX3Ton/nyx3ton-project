@@ -497,6 +497,10 @@ GOVEE_STT_MODEL=openai/whisper-small
 # Optional: choose speech-to-text device: auto, cpu, or cuda.
 # Docker defaults to cpu so Whisper does not compete with Qwen for VRAM.
 GOVEE_STT_DEVICE=cpu
+
+# Optional: host port exposed by Docker Compose.
+# The container still listens on GRADIO_SERVER_PORT=7860 internally.
+GRADIO_HOST_PORT=17861
 ```
 
 Get one from the **Govee Home app → Profile → Settings (gear icon) → Apply
@@ -549,8 +553,13 @@ docker compose up --build
 Then open:
 
 ```text
-http://127.0.0.1:7860
+http://127.0.0.1:17861
 ```
+
+The app still listens on port `7860` inside the container. Compose exposes it
+on host port `17861` by default because Windows can reserve or forbid common
+Gradio ports such as `7860` and `7861`. Override the host port with
+`GRADIO_HOST_PORT`, e.g. `GRADIO_HOST_PORT=17862` if `17861` is also busy.
 
 The Compose stack mounts persistent named volumes for Hugging Face downloads
 and OpenVINO exports:
@@ -649,6 +658,11 @@ pyright *.py
 - **First launch is slow / seems to hang** — expected on the very first
   run while the model downloads and (on non-CUDA machines) exports to
   OpenVINO; subsequent runs use the cache and are much faster.
+- **Docker says the Gradio port is forbidden or unavailable** — Windows can
+  reserve common Gradio ports such as `7860` and `7861`. Compose defaults to
+  host port `17861`; open `http://127.0.0.1:17861`. If needed, set
+  `GRADIO_HOST_PORT=17862` or another free port in `.env` and run
+  `docker compose up` again.
 - **A device won't respond to a control command** — ask the agent to
   `get_device_state` first, or run `test_govee.py`, to confirm the device
   is online and check its exact capability list; not every device supports

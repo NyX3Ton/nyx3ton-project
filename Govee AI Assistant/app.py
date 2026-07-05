@@ -256,6 +256,7 @@ def build_ui(client: ClientLike, agent: AgentLike) -> gr.Blocks:
                     send_btn = gr.Button("Send", variant="primary", scale=0, min_width=90)
                 with gr.Row():
                     mic = gr.Audio(sources=["microphone"], type="filepath", show_label=False, scale=1)
+                voice_status = gr.Markdown("", elem_classes="gv-note")
                 gr.Examples(examples=EXAMPLE_PROMPTS, inputs=msg_box)
 
                 agent_history = gr.State([])  # tool-call-aware history fed back into agent.chat
@@ -298,8 +299,9 @@ def build_ui(client: ClientLike, agent: AgentLike) -> gr.Blocks:
             chat_display = chat_display + [{"role": "user", "content": user_message},{"role": "assistant", "content": reply}]
             return chat_display, history, ""
 
-        def respond_voice(audio_path: str | None, chat_display: list, history: list):
+        def transcribe_audio(audio_path):
 
+            logger.info("Voice recording received: %r", audio_path)
             text = speech_to_text.transcribe(audio_path)
             if audio_path and not text:
                 logger.warning("Speech-to-text produced no usable transcription")
@@ -307,8 +309,10 @@ def build_ui(client: ClientLike, agent: AgentLike) -> gr.Blocks:
                     gr.Warning("Couldn't transcribe the audio. ffmpeg wasn't found on PATH - install it and restart (see the README), or record in WAV format.")
                 else:
                     gr.Warning("Didn't catch that - please try recording again.")
-                return chat_display, history, ""
-            return respond(text, chat_display, history)
+                return "", "No usable speech detected."
+            if not text:
+                return "", "No recording received."
+            return text, f"Heard: {html.escape(text)}"
 
         all_state_outputs = [state_boxes[d.device_id] for d in devices]
 
@@ -330,7 +334,7 @@ def build_ui(client: ClientLike, agent: AgentLike) -> gr.Blocks:
         msg_box.submit(respond, inputs=chat_inputs, outputs=chat_outputs).then(refresh_all, outputs=all_state_outputs)
         send_btn.click(respond, inputs=chat_inputs, outputs=chat_outputs).then(refresh_all, outputs=all_state_outputs)
 
-        mic.stop_recording(respond_voice, inputs=[mic, chatbot, agent_history], outputs=chat_outputs).then(refresh_all, outputs=all_state_outputs).then(lambda: None, outputs=mic)
+        mic.stop_recording(transcribe_audio, inputs=mic, outputs=[msg_box, voice_status]).then(respond, inputs=chat_inputs, outputs=chat_outputs).then(refresh_all, outputs=all_state_outputs).then(lambda: None, outputs=mic)
         def toggle_zoom(zoomed: bool):
             zoomed = not zoomed
             return (
@@ -349,6 +353,9 @@ def main():
     logger.info("Loading local LLM agent (first run can take a while)")
     agent = GoveeAgent(client)
     demo = build_ui(client, agent)
+    host_port = os.getenv("GRADIO_HOST_PORT")
+    if host_port:
+        logger.info("Open the app at http://127.0.0.1:%s (Docker host port)", host_port)
     demo.launch(**_launch_kwargs())
 
 if __name__ == "__main__":

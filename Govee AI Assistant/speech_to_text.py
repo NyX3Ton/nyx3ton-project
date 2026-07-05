@@ -21,10 +21,23 @@ logger = logging.getLogger("speech_to_text")
 # comparable to the multilingual embedding model); override via
 # GOVEE_STT_MODEL, e.g. "openai/whisper-base" (~150MB, lighter/faster) or
 # "openai/whisper-large-v3" (most accurate, slowest - and heavy on CPU).
-_MODEL_NAME = os.getenv("GOVEE_STT_MODEL", "openai/whisper-small")
+_MODEL_NAME = os.getenv("GOVEE_STT_MODEL", "openai/whisper-base")
 _DEVICE_SETTING = os.getenv("GOVEE_STT_DEVICE", "auto").strip().lower()
 _TARGET_SR = 16000  # Whisper's expected sample rate.
 _pipeline: Any = None
+
+
+def _audio_path_value(audio_path: Any) -> Optional[str]:
+    if isinstance(audio_path, str):
+        return audio_path
+    if isinstance(audio_path, dict):
+        for key in ("path", "name"):
+            value = audio_path.get(key)
+            if isinstance(value, str):
+                return value
+    if isinstance(audio_path, (list, tuple)) and audio_path:
+        return _audio_path_value(audio_path[0])
+    return None
 
 
 def ffmpeg_available() -> bool:
@@ -128,8 +141,10 @@ def _default_transcribe(audio_path: str) -> str:
     decoded = _decode_wav_pcm(audio_path)
     if decoded is not None:
         samples, sr = decoded
+        logger.info("Decoded voice recording %s: %.2fs at %s Hz", os.path.basename(audio_path), samples.size / float(sr or _TARGET_SR), sr)
         pipe_input: Any = {"raw": _resample_to_16k(samples, sr), "sampling_rate": _TARGET_SR}
     elif ffmpeg_available():
+        logger.info("Using ffmpeg-backed decode for voice recording %s", os.path.basename(audio_path))
         pipe_input = audio_path  # let transformers decode via ffmpeg
     else:
         raise RuntimeError(
@@ -142,11 +157,18 @@ def _default_transcribe(audio_path: str) -> str:
     # longer than its 30s receptive field still transcribe. No "language" kwarg
     # -> Whisper auto-detects the spoken language.
     result = _pipeline(pipe_input, chunk_length_s=30, generate_kwargs={"task": "transcribe"})
-    return _result_to_text(result)
+    text = _result_to_text(result).strip()
+    if text:
+        logger.info("Speech-to-text transcript: %s", text)
+    else:
+        logger.warning("Speech-to-text returned an empty transcript for %s", os.path.basename(audio_path))
+    return text
 
 
-def transcribe(audio_path: Optional[str], transcribe_fn: Optional[Callable[[str], str]] = None) -> str:
+def transcribe(audio_path: Any, transcribe_fn: Optional[Callable[[str], str]] = None) -> str:
+    audio_path = _audio_path_value(audio_path)
     if not audio_path:
+        logger.warning("Speech-to-text received no audio file path")
         return ""
 
     fn = transcribe_fn or _default_transcribe

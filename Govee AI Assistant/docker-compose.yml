@@ -16,11 +16,12 @@ services:
       GOVEE_MODEL_ID: ${GOVEE_MODEL_ID:-unsloth/Qwen3.5-2B}
       GOVEE_FALLBACK_MODEL_ID: ${GOVEE_FALLBACK_MODEL_ID:-unsloth/Qwen3-1.7B}
       GOVEE_STT_DEVICE: ${GOVEE_STT_DEVICE:-cpu}
+      GRADIO_HOST_PORT: ${GRADIO_HOST_PORT:-17861}
       GRADIO_SERVER_NAME: 0.0.0.0
       GRADIO_SERVER_PORT: 7860
       HF_HOME: /cache/huggingface
     ports:
-      - "7860:7860"
+      - "127.0.0.1:${GRADIO_HOST_PORT:-17861}:7860"
     volumes:
       - huggingface-cache:/cache/huggingface
       - openvino-cache:/app/ov_cache
