@@ -81,8 +81,8 @@ figure out what that means. This project adds that layer, entirely locally:
   language the user wrote in.
 - **Speech-to-text** — a mic button next to the chat box transcribes what
   you say (via a local, multilingual Whisper model covering the same
-  languages as the semantic matcher) into the textbox for review before you
-  send it, so voice control works in the same languages as typed control.
+  languages as the semantic matcher) and sends the transcript through the
+  same chat/tool path as typed control.
   Recordings are decoded in-process (stdlib `wave` + numpy), so voice works
   **without ffmpeg installed** in the common case.
 - **Automatic unit correction** — Govee's sensor API reports temperature
@@ -118,7 +118,7 @@ flowchart LR
 
     Dash -- direct control calls --> GC
     Mic -- transcribe --> STT
-    STT -- fills textbox --> Chat
+    STT -- sends transcript --> Chat
     Chat --> GA
     GA --> MB
     GA --> GT
@@ -261,14 +261,17 @@ tests.
   understands, with no language selector needed. Override the model via
   `GOVEE_STT_MODEL`, e.g. `openai/whisper-base` (smaller/faster) or
   `openai/whisper-large-v3` (most accurate, but heavy on CPU).
+- Speech-to-text device is controlled by `GOVEE_STT_DEVICE`: `auto`, `cpu`,
+  or `cuda`. Docker defaults this to `cpu` so Whisper does not compete with
+  Qwen for GPU memory; set it to `cuda` only if you have spare VRAM and want
+  faster transcription.
 - **`transcribe(audio_path, transcribe_fn=None)`** never raises — a
   missing model, empty recording, or decode failure all just log and
   return `""`, the same conservative-by-default contract
   `semantic_match.best_match` uses, so a flaky mic can't crash the chat UI.
-- In `app.py`, the transcribed text fills the textbox rather than
-  auto-submitting, so you always confirm what was heard before it reaches
-  a device — consistent with the project's general stance of asking rather
-  than guessing when a request is ambiguous.
+- In `app.py`, the transcribed text is submitted through the same `respond`
+  path as typed chat, then device cards refresh so successful voice commands
+  are visible immediately.
 
 ### agent.py
 
@@ -368,8 +371,8 @@ The Gradio dashboard and chat UI. A themed two-column
   `GoveeAgent.chat`, with the tool-aware conversation history kept in
   `gr.State` separately from the display-only chat log. Below it: a text box
   with a **Send** button, a `gr.Audio` mic button (stopping a recording calls
-  `speech_to_text.transcribe` and fills the textbox for review rather than
-  auto-submitting), and a row of clickable **example prompts**. An
+  `speech_to_text.transcribe` and sends the transcript through chat), and a
+  row of clickable **example prompts**. An
   **Expand chat** button grows the chat in-page — taller, and full-width by
   hiding the devices column — via a Gradio state toggle (no browser Fullscreen
   API, so nothing can trap the window); the same button reverses it. The chat
@@ -490,6 +493,10 @@ GOVEE_EMBEDDING_MODEL=sentence-transformers/paraphrase-multilingual-MiniLM-L12-v
 # Optional: override the speech-to-text model (default is multilingual
 # Whisper; see speech_to_text.py)
 GOVEE_STT_MODEL=openai/whisper-small
+
+# Optional: choose speech-to-text device: auto, cpu, or cuda.
+# Docker defaults to cpu so Whisper does not compete with Qwen for VRAM.
+GOVEE_STT_DEVICE=cpu
 ```
 
 Get one from the **Govee Home app → Profile → Settings (gear icon) → Apply
@@ -651,7 +658,8 @@ pyright *.py
   and missing. First confirm your browser granted microphone permission to
   the Gradio page, then check the app logs for a `speech_to_text`
   warning/exception. If the log points at ffmpeg (a non-PCM-WAV recording),
-  install `ffmpeg` and restart.
+  install `ffmpeg` and restart. If the log points at CUDA or memory, set
+  `GOVEE_STT_DEVICE=cpu`; Docker uses that safer default already.
 
 ## Roadmap
 

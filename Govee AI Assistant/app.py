@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
-import html, logging, os
+import html, logging, os, warnings
 os.environ.setdefault("GRADIO_ANALYTICS_ENABLED", "False")
+warnings.filterwarnings(
+                    "ignore",
+                    message="'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated.*",
+                    category=Warning,
+                    )
 
 import gradio as gr
 from gradio.themes import Soft as SoftTheme, GoogleFont
@@ -293,7 +298,7 @@ def build_ui(client: ClientLike, agent: AgentLike) -> gr.Blocks:
             chat_display = chat_display + [{"role": "user", "content": user_message},{"role": "assistant", "content": reply}]
             return chat_display, history, ""
 
-        def transcribe_audio(audio_path: str | None):
+        def respond_voice(audio_path: str | None, chat_display: list, history: list):
 
             text = speech_to_text.transcribe(audio_path)
             if audio_path and not text:
@@ -302,7 +307,8 @@ def build_ui(client: ClientLike, agent: AgentLike) -> gr.Blocks:
                     gr.Warning("Couldn't transcribe the audio. ffmpeg wasn't found on PATH - install it and restart (see the README), or record in WAV format.")
                 else:
                     gr.Warning("Didn't catch that - please try recording again.")
-            return text
+                return chat_display, history, ""
+            return respond(text, chat_display, history)
 
         all_state_outputs = [state_boxes[d.device_id] for d in devices]
 
@@ -324,7 +330,7 @@ def build_ui(client: ClientLike, agent: AgentLike) -> gr.Blocks:
         msg_box.submit(respond, inputs=chat_inputs, outputs=chat_outputs).then(refresh_all, outputs=all_state_outputs)
         send_btn.click(respond, inputs=chat_inputs, outputs=chat_outputs).then(refresh_all, outputs=all_state_outputs)
 
-        mic.stop_recording(transcribe_audio, inputs=mic, outputs=msg_box).then(lambda: None, outputs=mic)
+        mic.stop_recording(respond_voice, inputs=[mic, chatbot, agent_history], outputs=chat_outputs).then(refresh_all, outputs=all_state_outputs).then(lambda: None, outputs=mic)
         def toggle_zoom(zoomed: bool):
             zoomed = not zoomed
             return (

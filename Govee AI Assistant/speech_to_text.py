@@ -22,24 +22,33 @@ logger = logging.getLogger("speech_to_text")
 # GOVEE_STT_MODEL, e.g. "openai/whisper-base" (~150MB, lighter/faster) or
 # "openai/whisper-large-v3" (most accurate, slowest - and heavy on CPU).
 _MODEL_NAME = os.getenv("GOVEE_STT_MODEL", "openai/whisper-small")
+_DEVICE_SETTING = os.getenv("GOVEE_STT_DEVICE", "auto").strip().lower()
 _TARGET_SR = 16000  # Whisper's expected sample rate.
 _pipeline: Any = None
 
 
 def ffmpeg_available() -> bool:
-    """True if the ffmpeg binary is on PATH (transformers needs it to decode
-    audio *files*; we avoid that dependency when we can, see below)."""
     return shutil.which("ffmpeg") is not None
 
 
-def _decode_wav_pcm(path: str) -> Optional[tuple[np.ndarray, int]]:
-    """Best-effort decode of a PCM WAV using only the stdlib + numpy.
+def _pipeline_device() -> int:
+    if _DEVICE_SETTING in {"cpu", "-1"}:
+        return -1
 
-    Returns (mono float32 samples in [-1, 1], sample_rate), or None if the file
-    isn't a PCM WAV this can read - in which case the caller falls back to
-    letting transformers decode it via ffmpeg. Gradio saves microphone input as
-    PCM WAV, so this path normally succeeds and no ffmpeg is required.
-    """
+    import torch
+
+    if _DEVICE_SETTING in {"cuda", "gpu", "0"}:
+        if torch.cuda.is_available():
+            return 0
+        logger.warning("GOVEE_STT_DEVICE=%s requested, but CUDA is unavailable; using CPU", _DEVICE_SETTING)
+        return -1
+
+    if _DEVICE_SETTING != "auto":
+        logger.warning("Unknown GOVEE_STT_DEVICE=%s; expected auto, cpu, or cuda", _DEVICE_SETTING)
+    return 0 if torch.cuda.is_available() else -1
+
+
+def _decode_wav_pcm(path: str) -> Optional[tuple[np.ndarray, int]]:
     try:
         with wave.open(path, "rb") as wf:
             n_channels = wf.getnchannels()
@@ -64,9 +73,6 @@ def _decode_wav_pcm(path: str) -> Optional[tuple[np.ndarray, int]]:
 
 
 def _resample_to_16k(samples: np.ndarray, sr: int) -> np.ndarray:
-    """Resample to 16 kHz. Uses scipy's polyphase resampler when available
-    (proper anti-aliasing); otherwise falls back to dependency-free linear
-    interpolation, which is fine for short spoken commands."""
     if sr == _TARGET_SR or samples.size == 0:
         return samples.astype(np.float32, copy=False)
     try:
@@ -85,12 +91,6 @@ def _resample_to_16k(samples: np.ndarray, sr: int) -> np.ndarray:
 
 
 def _result_to_text(result: Any) -> str:
-    """Pull the transcript string out of whatever shape the ASR pipeline returns.
-
-    For a single input the pipeline returns {"text": ...} (plus "chunks" when
-    timestamps are on); for a list of inputs it returns a list of such dicts.
-    Handle both, plus a bare string, so a shape change can't crash the caller.
-    """
     if isinstance(result, dict):
         return str(result.get("text", ""))
     if isinstance(result, list) and result:
@@ -105,11 +105,11 @@ def _result_to_text(result: Any) -> str:
 def _default_transcribe(audio_path: str) -> str:
     global _pipeline
     if _pipeline is None:
-        import torch
         from transformers import pipeline
 
-        device = 0 if torch.cuda.is_available() else -1
-        logger.info("Loading speech-to-text model %s (first call only)...", _MODEL_NAME)
+        device = _pipeline_device()
+        device_name = "cuda" if device >= 0 else "cpu"
+        logger.info("Loading speech-to-text model %s on %s (first call only)...", _MODEL_NAME, device_name)
         _pipeline = pipeline("automatic-speech-recognition", model=_MODEL_NAME, device=device)
 
         # Whisper-via-transformers prints several advisory warnings on every
@@ -133,10 +133,10 @@ def _default_transcribe(audio_path: str) -> str:
         pipe_input = audio_path  # let transformers decode via ffmpeg
     else:
         raise RuntimeError(
-            "Couldn't decode the recording without ffmpeg, and ffmpeg wasn't found "
-            "on PATH. Install ffmpeg (Windows: `winget install Gyan.FFmpeg`; macOS: "
-            "`brew install ffmpeg`; Linux: `apt install ffmpeg`) and restart the app."
-        )
+                            "Couldn't decode the recording without ffmpeg, and ffmpeg wasn't found "
+                            "on PATH. Install ffmpeg (Windows: `winget install Gyan.FFmpeg`; macOS: "
+                            "`brew install ffmpeg`; Linux: `apt install ffmpeg`) and restart the app."
+                            )
 
     # chunk_length_s enables Whisper's chunked long-form algorithm so recordings
     # longer than its 30s receptive field still transcribe. No "language" kwarg
