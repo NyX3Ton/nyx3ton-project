@@ -1,4 +1,4 @@
 -r requirements-agent.txt
 
-gradio>=5.0
+gradio>=6.0
 python-dotenv>=1.0,<2

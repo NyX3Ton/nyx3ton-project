@@ -11,6 +11,8 @@ from typing import Any, Callable, Optional
 
 import numpy as np
 
+from . import config
+
 logger = logging.getLogger("speech_to_text")
 
 # Whisper is multilingual with automatic language detection across ~99
@@ -21,10 +23,10 @@ logger = logging.getLogger("speech_to_text")
 # comparable to the multilingual embedding model); override via
 # GOVEE_STT_MODEL, e.g. "openai/whisper-base" (~150MB, lighter/faster) or
 # "openai/whisper-large-v3" (most accurate, slowest - and heavy on CPU).
-_MODEL_NAME = os.getenv("GOVEE_STT_MODEL", "openai/whisper-base")
-_DEVICE_SETTING = os.getenv("GOVEE_STT_DEVICE", "auto").strip().lower()
-_LANGUAGE = os.getenv("GOVEE_STT_LANGUAGE", "").strip()
-_SILENCE_RMS = float(os.getenv("GOVEE_STT_SILENCE_RMS", "0.002"))
+_MODEL_NAME = config.GOVEE_STT_MODEL
+_DEVICE_SETTING = config.GOVEE_STT_DEVICE
+_LANGUAGE = config.GOVEE_STT_LANGUAGE
+_SILENCE_RMS = config.GOVEE_STT_SILENCE_RMS
 _TARGET_SR = 16000  # Whisper's expected sample rate.
 _pipeline: Any = None
 

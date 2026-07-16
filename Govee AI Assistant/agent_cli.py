@@ -1,12 +1,9 @@
 import logging
 
-from dotenv import load_dotenv
-
-from agent import GoveeAgent
-from govee_client import GoveeClient
+from govee_assistant.agent import GoveeAgent
+from govee_assistant.govee_client import GoveeClient
 
 logging.basicConfig(level=logging.INFO)
-load_dotenv()
 
 
 def main():

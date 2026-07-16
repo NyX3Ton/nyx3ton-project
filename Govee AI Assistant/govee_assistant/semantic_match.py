@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import logging
-import os
 from typing import Callable, Optional, Sequence
 import numpy as np
+
+from . import config
 
 logger = logging.getLogger("semantic_match")
 
@@ -17,7 +18,7 @@ logger = logging.getLogger("semantic_match")
 # translation step. Override with the GOVEE_EMBEDDING_MODEL env var, e.g.
 # to fall back to the smaller English-only "all-MiniLM-L6-v2" (~90MB) or to
 # swap in a different multilingual model.
-_MODEL_NAME = os.getenv("GOVEE_EMBEDDING_MODEL", "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
+_MODEL_NAME = config.GOVEE_EMBEDDING_MODEL
 _model = None
 
 def _default_encode(texts: Sequence[str]) -> np.ndarray:
@@ -27,6 +28,15 @@ def _default_encode(texts: Sequence[str]) -> np.ndarray:
         logger.info("Loading embedding model %s (first call only)...", _MODEL_NAME)
         _model = SentenceTransformer(_MODEL_NAME, device="cpu")
     return np.asarray(_model.encode(list(texts), normalize_embeddings=True))
+
+def encode(texts: Sequence[str]) -> np.ndarray:
+    """Embed texts with the shared multilingual model (lazily loaded once).
+
+    Public entry point so other modules (e.g. memory_store.py) reuse the same
+    loaded model instead of each loading their own copy into memory.
+    """
+    return _default_encode(texts)
+
 
 def best_match(query: str,candidates: list[str],threshold: float = 0.45,margin: float = 0.03,encode_fn: Optional[Callable[[Sequence[str]], np.ndarray]] = None) -> Optional[tuple[str, float]]:
 

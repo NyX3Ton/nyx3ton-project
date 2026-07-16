@@ -1,8 +1,4 @@
-from dotenv import load_dotenv
-
-from govee_client import GoveeClient, GoveeAPIError
-
-load_dotenv()
+from govee_assistant.govee_client import GoveeClient, GoveeAPIError
 
 def main():
     client = GoveeClient()

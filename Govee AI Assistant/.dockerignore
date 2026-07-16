@@ -1,10 +1,38 @@
-.git/
-.venv/
-venv/
+# Build context exclusions — keeps the image lean and avoids leaking secrets
+
+# Python artifacts
 __pycache__/
-*.py[cod]
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.Python
+dist/
+build/
+
+# Local environment & secrets — never bake these into the image
 .env
-ov_cache/
-.pytest_cache/
-.mypy_cache/
-.pyright/
+*.env.*
+
+# Model / vector-store caches — populated via Docker volume at runtime, not baked in
+.cache/
+*.cache/
+chroma_memory/
+
+# Version control
+.git/
+.gitignore
+.gitattributes
+
+# Development files
+*.log
+*.md
+tests/
+docs/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+Thumbs.db

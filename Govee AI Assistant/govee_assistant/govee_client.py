@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import os
 import uuid
 import logging
 from dataclasses import dataclass, field
 from typing import Any, Optional, Union
 
 import requests
+
+from . import config
 
 logger = logging.getLogger("govee_client")
 
@@ -63,7 +64,7 @@ class Device:
 class GoveeClient:
     def __init__(self,api_key: Optional[str] = None,timeout: float = 10.0,verify: Union[bool, str] = True):
 
-        self.api_key = api_key or os.environ.get("GOVEE_API_KEY")
+        self.api_key = api_key or config.GOVEE_API_KEY
         if not self.api_key:
             raise ValueError("Govee API key not provided (arg or GOVEE_API_KEY env var)")
         self.timeout = timeout

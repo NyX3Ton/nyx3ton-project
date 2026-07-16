@@ -72,6 +72,7 @@ Thumbs.db
 /Output/
 /Input/
 /chromastore/
+/chroma_memory/
 /__temp__/
 Keyword tokenizer/RAG_store/
 *.sqlite3
@@ -84,6 +85,7 @@ Keyword tokenizer/RAG_store/
 *.pt
 *.pth
 *.gguf
+.claude
 
 # =====================
 # Secrets

@@ -1,9 +1,8 @@
 import json
 
-import semantic_match
-import speech_to_text
-from agent import GoveeTools, ModelBackend, TOOL_CALL_RE, DeviceNotFoundError, parse_tool_calls
-from govee_client import Capability, Device
+from govee_assistant import semantic_match, speech_to_text
+from govee_assistant.agent import GoveeTools, ModelBackend, TOOL_CALL_RE, DeviceNotFoundError, parse_tool_calls
+from govee_assistant.govee_client import Capability, Device
 
 class FakeGoveeClient:
     def __init__(self, devices):

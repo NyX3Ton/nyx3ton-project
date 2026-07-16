@@ -1,34 +1,76 @@
-name: govee-ai-assistant
+# ---------------------------------------------------------------------------
+# Govee AI Assistant — docker-compose for google/gemma-4-E4B-it
+#
+# Prerequisites:
+#   1. NVIDIA Container Toolkit installed on the host.
+#      https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html
+#   2. .env file containing GOVEE_API_KEY (copy from .env.example).
+#
+# Commands:
+#   docker compose build          # build the image (first time or after code changes)
+#   docker compose up             # start; Ctrl-C to stop
+#   docker compose up -d          # start detached
+#   docker compose logs -f        # tail logs
+#   docker compose down           # stop and remove containers
+#   docker compose down -v        # also wipe the model cache volume
+# ---------------------------------------------------------------------------
 
 services:
-  app:
-    image: govee-ai-assistant:latest
+  govee-assistant:
     build:
       context: .
-      args:
-        BASE_IMAGE: nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04
-        RUNTIME_PROFILE: cuda
-        INSTALL_QWEN_FAST: "0"
-        INSTALL_CAUSAL_CONV1D: "0"
-    env_file:
-      - .env
-    environment:
-      GOVEE_MODEL_ID: ${GOVEE_MODEL_ID:-unsloth/Qwen3.5-2B}
-      GOVEE_FALLBACK_MODEL_ID: ${GOVEE_FALLBACK_MODEL_ID:-unsloth/Qwen3-1.7B}
-      GOVEE_STT_DEVICE: ${GOVEE_STT_DEVICE:-cpu}
-      GRADIO_HOST_PORT: ${GRADIO_HOST_PORT:-17861}
-      GRADIO_SERVER_NAME: 0.0.0.0
-      GRADIO_SERVER_PORT: 7860
-      HF_HOME: /cache/huggingface
-    ports:
-      - "127.0.0.1:${GRADIO_HOST_PORT:-17861}:7860"
-    volumes:
-      - huggingface-cache:/cache/huggingface
-      - openvino-cache:/app/ov_cache
-    shm_size: "16gb"
-    gpus: all
+      dockerfile: Dockerfile
+    image: govee-ai-assistant:latest
+    container_name: govee-assistant
     restart: unless-stopped
 
+    # ── GPU passthrough ─────────────────────────────────────────────────
+    # Requires NVIDIA Container Toolkit on the host.
+    # Remove this section entirely to run on CPU (slow; expect high RAM usage).
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1          # set to "all" for multi-GPU
+              capabilities: [gpu]
+
+    # ── Networking ──────────────────────────────────────────────────────
+    ports:
+      - "7860:7860"             # Gradio dashboard → http://localhost:7860
+
+    # ── Volumes ─────────────────────────────────────────────────────────
+    volumes:
+      # Named volume keeps the ~16 GB model weights across rebuilds.
+      # First run downloads from HuggingFace; subsequent starts load from disk.
+      - hf_cache:/app/.cache/huggingface
+
+    # ── Configuration ───────────────────────────────────────────────────
+    env_file:
+      - .env                    # must contain GOVEE_API_KEY=your-key-here
+
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      GRADIO_SERVER_NAME: "0.0.0.0"
+      GRADIO_SERVER_PORT: "7860"
+
+      # ── Model selection ──────────────────────────────────────────────
+      # Change GOVEE_LLM_MODEL here without rebuilding the image.
+      GOVEE_LLM_MODEL: "google/gemma-4-E4B-it"
+
+      # ── Quantization ─────────────────────────────────────────────────
+      # 4  → 4-bit NF4  (~5 GB VRAM)  — good for 8 GB cards (RTX 3070 etc.)
+      # 8  → 8-bit      (~9 GB VRAM)  — better quality, needs 12 GB+
+      # 0  → full bf16  (~16 GB VRAM) — best quality, needs 24 GB+
+      QUANTIZE_BITS: "4"
+
+      # ── Optional overrides ────────────────────────────────────────────
+      # GOVEE_EMBEDDING_MODEL: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+      # GOVEE_STT_MODEL: openai/whisper-small
+      # LOGLEVEL: DEBUG   # set to DEBUG to see raw model output in logs
+
 volumes:
-  huggingface-cache:
-  openvino-cache:
+  # Persistent storage for HuggingFace model weights.
+  # Location on host: docker volume inspect govee_hf_cache
+  hf_cache:
+    driver: local

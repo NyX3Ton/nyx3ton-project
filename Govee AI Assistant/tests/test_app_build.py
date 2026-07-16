@@ -1,7 +1,7 @@
-# python test_app_build.py
+# python -m tests.test_app_build
 
 from app import build_ui
-from test_tools_offline import FakeGoveeClient, build_devices
+from .test_tools_offline import FakeGoveeClient, build_devices
 class DummyBackend:
     backend_name = "cpu (stub)"
 

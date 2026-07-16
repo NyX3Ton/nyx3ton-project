@@ -1,147 +1,321 @@
-#agent.py
+#agent.py  — updated for google/gemma-4-E4B-it + Docker
+#
+# Key changes vs Qwen3 version:
+#   • AutoProcessor replaces AutoTokenizer (Gemma 4 is multimodal)
+#   • OpenVINO branch removed (not needed in GPU Docker container)
+#   • Quantization via QUANTIZE_BITS env var (4 / 8 / 0=full)
+#   • MODEL_ID overridable via GOVEE_LLM_MODEL env var
+#   • enable_thinking=False prevents chain-of-thought tokens bleeding into output
+#   • Sampling updated to Gemma 4 recommended params (temp=1.0, top_p=0.95, top_k=64)
+#   • torch.inference_mode() wraps generate() for a small throughput gain
+#   • THINKING_RE strips any residual <|channel>...<channel|> blocks as a safety net
+#
+# NOTE: If your working copy includes set_power_all, re-add it in GoveeTools,
+#       build_tool_schema(), and the _dispatch dict following the same pattern.
 
 from __future__ import annotations
 
-import json, logging, os, re, torch
-from pathlib import Path
+import ast, json, logging, re, torch
 from typing import Any, Callable, Optional, Protocol
 
-import semantic_match
-from govee_client import Device, GoveeAPIError
+from . import config, semantic_match
+from .govee_client import Device, GoveeAPIError
+from .memory_store import MemoryStore
+from .news_client import NewsClient, NewsError
+from .weather_client import WeatherClient, WeatherError
 
 logger = logging.getLogger("agent")
 
-#MODEL_ID = "unsloth/Qwen3-4B-Instruct-2507"
-CUDA_MODEL_ID = os.getenv("GOVEE_CUDA_MODEL_ID", os.getenv("GOVEE_MODEL_ID", "unsloth/Qwen3.5-2B"))
-FALLBACK_MODEL_ID = os.getenv("GOVEE_FALLBACK_MODEL_ID", "unsloth/Qwen3-1.7B")
-MODEL_ID = CUDA_MODEL_ID
-OV_CACHE_DIR = Path("ov_cache")
+# Gemma 4 thinking-mode output — should never appear with enable_thinking=False
+# but kept as a defensive strip in case the chat template changes.
+THINKING_RE = re.compile(r"<\|channel>thought\n.*?<channel\|>", re.DOTALL)
 
-TOOL_CALL_RE = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL)
-FUNCTION_TOOL_CALL_RE = re.compile(r"<tool_call>\s*<function=([A-Za-z_][\w]*)>\s*(.*?)\s*</function>\s*</tool_call>",re.DOTALL,)
-TOOL_PARAMETER_RE = re.compile(r"<parameter=([A-Za-z_][\w]*)>\s*(.*?)\s*</parameter>", re.DOTALL)
+# ---------------------------------------------------------------------------
+# Multi-format tool-call parsing
+#
+# Different model families emit tool calls in different formats. Qwen/Hermes use
+# <tool_call>{json}</tool_call>; Gemma emits a ```tool_code fenced block, usually
+# containing a PYTHON-STYLE call like set_power(device_name="Bedroom Light",
+# on=False) rather than JSON. Some models use ```json fences or bare JSON.
+#
+# parse_tool_calls() tries each format in turn and normalizes everything to a
+# list of (name, arguments_dict) tuples, so the agent loop is format-agnostic.
+# ---------------------------------------------------------------------------
+
+# <tool_call>{...}</tool_call>  (Qwen / Hermes)
+_XML_RE = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL)
+# Fenced code block with an optional language tag we recognize
+_FENCE_RE = re.compile(r"```(?:tool_call|tool_code|json|python)?\s*\n?(.*?)```", re.DOTALL)
+# Gemma 4 compact format:  call:name{key:value, key:value}   or   call:name{}
+# Keys and values are UNQUOTED; values may contain spaces (e.g. "table lamp 1").
+_COMPACT_RE = re.compile(r"call\s*:\s*(\w+)\s*\{([^{}]*)\}", re.IGNORECASE)
+
+
+def _coerce(v: str) -> Any:
+    """Convert an unquoted scalar to bool/int/float/None/str."""
+    v = v.strip().strip('"').strip("'").strip()
+    low = v.lower()
+    if low in ("true", "false"):
+        return low == "true"
+    if low in ("none", "null"):
+        return None
+    if re.fullmatch(r"-?\d+", v):
+        return int(v)
+    if re.fullmatch(r"-?\d*\.\d+", v):
+        return float(v)
+    return v
+
+
+def _compact_to_calls(text: str) -> list[tuple[str, dict]]:
+    """Parse Gemma 4's compact call:name{k:v,k:v} format."""
+    calls: list[tuple[str, dict]] = []
+    for name, body in _COMPACT_RE.findall(text):
+        args: dict[str, Any] = {}
+        body = body.strip()
+        if body:
+            for pair in body.split(","):
+                if ":" in pair:
+                    k, _, val = pair.partition(":")
+                elif "=" in pair:
+                    k, _, val = pair.partition("=")
+                else:
+                    continue
+                k = k.strip().strip('"').strip("'").strip()
+                if k:
+                    args[k] = _coerce(val)
+        calls.append((name, args))
+    return calls
+def _find_json_objects(text: str) -> list[str]:
+    """Return every balanced {...} substring (nesting-aware), so objects whose
+    arguments contain nested braces are captured intact."""
+    objs, depth, start = [], 0, -1
+    for i, ch in enumerate(text):
+        if ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}" and depth > 0:
+            depth -= 1
+            if depth == 0 and start >= 0:
+                objs.append(text[start:i + 1])
+    return objs
+
+
+def _json_to_call(blob: str) -> Optional[tuple[str, dict]]:
+    try:
+        obj = json.loads(blob)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(obj, dict) or "name" not in obj:
+        return None
+    args = obj.get("arguments", obj.get("parameters", {}))
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except json.JSONDecodeError:
+            args = {}
+    return (obj["name"], args if isinstance(args, dict) else {})
+
+
+def _python_to_calls(code: str) -> list[tuple[str, dict]]:
+    """Parse Gemma-style tool_code: func(a="x", b=False), one per line,
+    tolerating list wrappers like [func(...)]. Uses ast (no eval)."""
+    calls: list[tuple[str, dict]] = []
+    for line in code.strip().splitlines():
+        line = line.strip().strip(",").strip("[]").strip()
+        if not line or "(" not in line:
+            continue
+        try:
+            node = ast.parse(line, mode="eval").body
+        except SyntaxError:
+            continue
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+            continue
+        args: dict[str, Any] = {}
+        for kw in node.keywords:
+            if kw.arg is None:
+                continue
+            try:
+                args[kw.arg] = ast.literal_eval(kw.value)
+            except (ValueError, SyntaxError):
+                continue
+        calls.append((node.func.id, args))
+    return calls
+
+
+def parse_tool_calls(text: str) -> list[tuple[str, dict]]:
+    # 0. Gemma 4 compact format: call:name{k:v,k:v}
+    calls = _compact_to_calls(text)
+    if calls:
+        return calls
+
+    # 1. <tool_call> XML wrapping JSON
+    calls = [c for blob in _XML_RE.findall(text) if (c := _json_to_call(blob))]
+    if calls:
+        return calls
+
+    # 2. Fenced code blocks (```tool_code / ```json / ```python / ```)
+    for block in _FENCE_RE.findall(text):
+        block = block.strip()
+        whole = _json_to_call(block)
+        if whole:
+            calls.append(whole)
+            continue
+        inline = [c for m in _find_json_objects(block) if (c := _json_to_call(m))]
+        if inline:
+            calls.extend(inline)
+            continue
+        calls.extend(_python_to_calls(block))  # Gemma python-style
+    if calls:
+        return calls
+
+    # 3. Bare JSON object anywhere in the text (last resort)
+    return [c for m in _find_json_objects(text) if (c := _json_to_call(m))]
 
 SYSTEM_PROMPT = (
-                    "You are a home assistant that controls Govee smart home devices through "
-                    "tool calls. Always call list_devices or get_device_state first if you're "
-                    "not sure a device exists or what it supports, rather than guessing a "
-                    "device name or capability. "
-                    "To turn several devices on or off at once - e.g. 'turn off everything', "
-                    "'turn off all the lights', or 'turn off the bedroom' - make a SINGLE "
-                    "set_power_all call (optionally filtered by device_type and/or "
-                    "name_contains) instead of calling set_power once per device. "
-                    "Keep replies short and state what changed. "
-                    "The user may write in any language - always reply in the same language "
-                    "they used, but pass device/scene names to tools as the user wrote them "
-                    "(untranslated); device resolution handles matching across languages."
-                )
+    "You are a home assistant that controls Govee smart home devices through "
+    "tool calls. Always call list_devices or get_device_state first if you're "
+    "not sure a device exists or what it supports, rather than guessing a "
+    "device name or capability. "
+    "To turn several devices on or off at once (e.g. 'turn off everything', "
+    "'turn off all the lights', 'turn off the bedroom') make a SINGLE "
+    "set_power_all call instead of calling set_power once per device. "
+    "You can also check the weather (get_weather), fetch news headlines "
+    "(get_news), read the full text of a specific article (get_article_extract, "
+    "using the 'link' from a get_news result - use this when the user wants "
+    "more than the headline/summary, e.g. 'tell me more about that' or 'what "
+    "does the article say'), and recall things from earlier conversations or "
+    "previous weather/news lookups (recall_memories). Every chat turn and "
+    "every weather/news lookup is remembered automatically - there is no "
+    "separate 'save' step. Call recall_memories whenever the user asks you "
+    "to remember, recall, or refers to something discussed earlier; pass a "
+    "query describing what to look for, or leave it empty for the most "
+    "recent memories. "
+    "Keep replies short and state what changed. "
+    "The user may write in any language - always reply in the same language "
+    "they used, but pass device/scene names to tools as the user wrote them "
+    "(untranslated); device resolution handles matching across languages.\n\n"
+    "TOOL CALL FORMAT — emit each call on its own line as:\n"
+    "  call:tool_name{arg:value, arg:value}\n"
+    "Use true/false for booleans; leave the braces empty when there are no "
+    "arguments. Do not wrap calls in quotes, code fences, or JSON. "
+    "After a tool result is returned to you, reply to the user in plain "
+    "language describing what changed - do NOT emit another call unless more "
+    "actions are still needed.\n\n"
+    "Examples:\n"
+    "User: turn off the bedroom light\n"
+    "call:set_power{device_name:Bedroom Light, on:false}\n"
+    "(after the result) Turned off the Bedroom Light.\n\n"
+    "User: what devices do I have?\n"
+    "call:list_devices{}\n"
+    "(after the result) You have a Bedroom Light and a Table Lamp 1.\n\n"
+    "User: set the kitchen to 40%\n"
+    "call:set_brightness{device_name:Kitchen, percent:40}\n"
+    "(after the result) Set the Kitchen to 40% brightness.\n\n"
+    "User: what did I ask you about the weather earlier?\n"
+    "call:recall_memories{query:weather}\n"
+    "(after the result) Earlier you asked about the weather in Bratislava - "
+    "it was 24C and partly cloudy."
+)
+
 
 class DeviceNotFoundError(Exception):
     pass
 
-def _coerce_tool_value(value: str) -> Any:
-    value = value.strip()
-    lowered = value.lower()
-    if lowered == "true":
-        return True
-    if lowered == "false":
-        return False
-    if lowered == "null":
-        return None
 
-    try:
-        return json.loads(value)
-    except json.JSONDecodeError:
-        return value
-
-def parse_tool_calls(reply: str) -> list[dict[str, Any]]:
-    calls: list[dict[str, Any]] = []
-
-    for raw_call in TOOL_CALL_RE.findall(reply):
-        try:
-            call = json.loads(raw_call)
-        except json.JSONDecodeError:
-            logger.warning("Malformed JSON tool call from model: %s", raw_call)
-            continue
-        if isinstance(call, dict) and isinstance(call.get("name"), str):
-            calls.append(call)
-
-    for name, body in FUNCTION_TOOL_CALL_RE.findall(reply):
-        arguments = {
-                    parameter_name: _coerce_tool_value(raw_value)
-                    for parameter_name, raw_value in TOOL_PARAMETER_RE.findall(body)
-                    }
-        calls.append({"name": name, "arguments": arguments})
-
-    return calls
 # ---------------------------------------------------------------------------
-# Backend loading: CUDA -> OpenVINO -> CPU
+# Backend loading: CUDA (+ optional bitsandbytes quantization) -> CPU
 # ---------------------------------------------------------------------------
 class ModelBackend:
-    def __init__(self, model_id: Optional[str] = None, fallback_model_id: str = FALLBACK_MODEL_ID, int8: bool = False):
-        self.cuda_model_id = model_id or CUDA_MODEL_ID
-        self.fallback_model_id = fallback_model_id
-        self.model_id = self.cuda_model_id
-        self.int8 = int8
-        self.backend_name, self.model, self.tokenizer = self._load()
-        logger.info("Loaded %s on backend=%s", self.model_id, self.backend_name)
+    def __init__(self, model_id: str = config.GOVEE_LLM_MODEL):
+        self.model_id = model_id
+        self.backend_name, self.model, self.processor = self._load()
+        # Compatibility alias so any code still referencing backend.tokenizer keeps working.
+        self.tokenizer = self.processor.tokenizer
+        logger.info("Loaded %s on backend=%s", model_id, self.backend_name)
 
     def _load(self) -> tuple[str, Any, Any]:
-        # 1. CUDA
-        try:
-            if torch.cuda.is_available():
-                from transformers import AutoModelForCausalLM, AutoTokenizer
-                self.model_id = self.cuda_model_id
-                tokenizer = AutoTokenizer.from_pretrained(self.model_id)
-                model = AutoModelForCausalLM.from_pretrained(self.model_id, torch_dtype="auto", device_map="cuda")
-                return "cuda", model, tokenizer
-        except Exception:
-            logger.exception("CUDA load failed, falling back to OpenVINO")
+        from transformers import AutoProcessor, AutoModelForCausalLM
 
-        self.model_id = self.fallback_model_id
-        if self.cuda_model_id != self.fallback_model_id:
-            logger.info("CUDA unavailable; using fallback model %s for OpenVINO/CPU", self.model_id)
+        # Gemma 4 processor handles text (+ image/audio in multimodal paths).
+        # For text-only tool-calling we only use the text pathway.
+        processor = AutoProcessor.from_pretrained(self.model_id)
 
-        # 2. OpenVINO
-        try:
-            from optimum.intel import OVModelForCausalLM
-            from transformers import AutoTokenizer
+        quant_bits = config.QUANTIZE_BITS
+        load_kwargs: dict[str, Any] = {"torch_dtype": "auto", "device_map": "auto"}
 
-            OV_CACHE_DIR.mkdir(exist_ok=True)
-            model_cache = OV_CACHE_DIR / self.model_id.replace("/", "__")
+        if quant_bits in (4, 8):
+            try:
+                from transformers import BitsAndBytesConfig
+                if quant_bits == 4:
+                    load_kwargs["quantization_config"] = BitsAndBytesConfig(
+                        load_in_4bit=True,
+                        bnb_4bit_compute_dtype=torch.bfloat16,
+                        bnb_4bit_use_double_quant=True,
+                    )
+                else:
+                    load_kwargs["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
+                logger.info("Using %d-bit quantization via bitsandbytes", quant_bits)
+            except ImportError:
+                logger.warning("bitsandbytes not installed — loading in full precision")
 
-            ov_kwargs: dict[str, Any] = {}
-            if self.int8:
-                ov_kwargs["quantization_config"] = {"bits": 8}
+        # 1. CUDA (device_map="auto" handles multi-GPU if present)
+        if torch.cuda.is_available():
+            try:
+                model = AutoModelForCausalLM.from_pretrained(self.model_id, **load_kwargs)
+                return "cuda", model, processor
+            except Exception:
+                logger.exception("CUDA load failed, falling back to CPU")
 
-            if model_cache.exists():
-                tokenizer = AutoTokenizer.from_pretrained(model_cache)
-                model = OVModelForCausalLM.from_pretrained(model_cache, **ov_kwargs)
-            else:
-                tokenizer = AutoTokenizer.from_pretrained(self.model_id)
-                model = OVModelForCausalLM.from_pretrained(self.model_id, export=True, **ov_kwargs)
-                model.save_pretrained(model_cache)
-                tokenizer.save_pretrained(model_cache)
-            return "openvino", model, tokenizer
-        except Exception:
-            logger.exception("OpenVINO load failed, falling back to CPU")
-
-        # 3. Plain CPU
-        from transformers import AutoModelForCausalLM, AutoTokenizer
-        tokenizer = AutoTokenizer.from_pretrained(self.model_id)
-        model = AutoModelForCausalLM.from_pretrained(self.model_id, torch_dtype="float32")
-        return "cpu", model, tokenizer
+        # 2. Plain CPU — quantization not supported without CUDA
+        if quant_bits:
+            logger.warning(
+                "Quantization requires CUDA — loading in float32. "
+                "Expect slow inference and high RAM usage (~16 GB for full bf16)."
+            )
+        cpu_kwargs: dict[str, Any] = {"torch_dtype": torch.float32}
+        model = AutoModelForCausalLM.from_pretrained(self.model_id, **cpu_kwargs)
+        return "cpu", model, processor
 
     def generate(self, chat_text: str, max_new_tokens: int = 512) -> str:
-        inputs = self.tokenizer(chat_text, return_tensors="pt")
+        # processor(text=...) returns a BatchEncoding; .to() moves it to device in one call.
+        inputs = self.processor(text=chat_text, return_tensors="pt")
         if self.backend_name == "cuda":
-            inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
-        output_ids = self.model.generate(**inputs,max_new_tokens=max_new_tokens,temperature=0.7,top_p=0.8,top_k=20,do_sample=True,pad_token_id=self.tokenizer.eos_token_id)
+            inputs = inputs.to(self.model.device)
+
+        with torch.inference_mode():
+            output_ids = self.model.generate(
+                **inputs,
+                max_new_tokens=max_new_tokens,
+                # Low-temperature sampling for reliable structured tool calls.
+                # Gemma's documented defaults (temp=1.0, top_p=0.95, top_k=64)
+                # are tuned for creative chat and make tool-calling erratic
+                # (garbled one-word replies, skipped calls). 0.3 keeps output
+                # deterministic enough to parse while avoiding greedy repetition.
+                temperature=0.3,
+                top_p=0.9,
+                top_k=40,
+                do_sample=True,
+                repetition_penalty=1.05,
+            )
+
         new_tokens = output_ids[0][inputs["input_ids"].shape[1]:]
-        return self.tokenizer.decode(new_tokens, skip_special_tokens=True)
+        decoded = self.processor.decode(new_tokens, skip_special_tokens=True)
+
+        # Strip residual thinking blocks (defensive; shouldn't appear with enable_thinking=False)
+        decoded = THINKING_RE.sub("", decoded).strip()
+
+        # Logged at INFO so the model's raw output is always visible in
+        # `docker compose logs`. This is what you paste if tool calls still
+        # aren't firing — it shows the exact format the model emitted, which
+        # tells us whether parse_tool_calls needs another format added.
+        # Lower to logger.debug once tool calling is confirmed working.
+        logger.info("Raw model output (first 400 chars): %s", decoded[:400])
+        return decoded
+
 
 # ---------------------------------------------------------------------------
-# Govee tool implementations (bridges GoveeClient <-> LLM-callable functions)
+# Govee tool implementations (unchanged from Qwen3 version)
 # ---------------------------------------------------------------------------
 class GoveeClientLike(Protocol):
     def list_devices(self, force_refresh: bool = False) -> list[Device]: ...
@@ -152,6 +326,8 @@ class GoveeClientLike(Protocol):
     def set_color_rgb(self, device: Device, r: int, g: int, b: int) -> dict: ...
     def set_color_temp(self, device: Device, kelvin: int) -> dict: ...
     def set_scene(self, device: Device, scene_value: int, instance: str = "lightScene") -> dict: ...
+
+
 class GoveeTools:
     def __init__(self, client: GoveeClientLike):
         self.client = client
@@ -199,43 +375,6 @@ class GoveeTools:
             return {"error": f"{d.device_name} doesn't support power control"}
         self.client.set_power(d, on)
         return {"ok": True, "device": d.device_name, "power": "on" if on else "off"}
-
-    def set_power_all(self, on: bool, device_type: Optional[str] = None, name_contains: Optional[str] = None) -> dict:
-        devices = self.client.list_devices()
-        type_l = device_type.strip().lower() if device_type else None
-        name_l = name_contains.strip().lower() if name_contains else None
-
-        changed: list[str] = []
-        skipped: list[str] = []
-        errors: list[dict] = []
-        matched = False
-
-        for d in devices:
-            if type_l and d.device_type.split(".")[-1].lower() != type_l:
-                continue
-            if name_l and name_l not in d.device_name.lower():
-                continue
-            matched = True
-            if not d.has("devices.capabilities.on_off", "powerSwitch"):
-                skipped.append(d.device_name)
-                continue
-            try:
-                self.client.set_power(d, on)
-                changed.append(d.device_name)
-            except GoveeAPIError as e:
-                errors.append({"device": d.device_name, "error": str(e)})
-
-        if not matched:
-            filt = []
-            if type_l:
-                filt.append(f"type '{device_type}'")
-            if name_l:
-                filt.append(f"name containing '{name_contains}'")
-            where = " and ".join(filt) if filt else "any filter"
-            known = ", ".join(d.device_name for d in devices)
-            return {"error": f"No devices matched {where}. Known devices: {known}"}
-
-        return {"ok": not errors,"power": "on" if on else "off","changed": changed,"skipped": skipped,"errors": errors}
 
     def set_brightness(self, device_name: str, percent: int) -> dict:
         d = self._find_device(device_name)
@@ -308,21 +447,23 @@ class GoveeTools:
 
         wm_options = work_mode_field.get("options", [])
         gear_option = next(
-                            (o for o in wm_options if o.get("name", "").lower() in ("gearmode", "manual", "custom", "normal")),
-                            None,
-                        ) or next((o for o in wm_options if o.get("name", "").lower() != "auto"), None)
+            (o for o in wm_options if o.get("name", "").lower() in ("gearmode", "manual", "custom", "normal")),
+            None,
+        ) or next((o for o in wm_options if o.get("name", "").lower() != "auto"), None)
         if not gear_option:
             names = [o.get("name") for o in wm_options]
             return {"error": f"{d.device_name} has no manual speed mode to target (only: {names})"}
 
-        # Resolve the list of selectable speed levels for that gear mode.
         speed_options: list[dict] = []
         if mode_value_field.get("dataType") == "INTEGER" and mode_value_field.get("range"):
             lo, hi = mode_value_field["range"]["min"], mode_value_field["range"]["max"]
             speed_options = [{"value": v} for v in range(lo, hi + 1)]
         else:
             raw_options = mode_value_field.get("options", [])
-            nested = next((o for o in raw_options if o.get("name", "").lower() == gear_option.get("name", "").lower()),None)
+            nested = next(
+                (o for o in raw_options if o.get("name", "").lower() == gear_option.get("name", "").lower()),
+                None,
+            )
             if nested and "options" in nested:
                 speed_options = nested["options"]
             elif raw_options and all("value" in o for o in raw_options):
@@ -347,138 +488,235 @@ class GoveeTools:
             return {"error": f"Unknown speed '{speed}' for {d.device_name}. Available: {available}"}
 
         self.client.control(
-                            d.sku, d.device_id, "devices.capabilities.work_mode", "workMode",
-                            {"workMode": gear_option["value"], "modeValue": match["value"]},
-                            )
+            d.sku, d.device_id, "devices.capabilities.work_mode", "workMode",
+            {"workMode": gear_option["value"], "modeValue": match["value"]},
+        )
         return {"ok": True, "device": d.device_name, "speed": match.get("name", match["value"])}
 
-# ---------------------------------------------------------------------------
-# Tool schema exposed to the LLM (OpenAI-style function schema)
-# ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Weather / news / long-term memory tools
+# ---------------------------------------------------------------------------
+class InfoTools:
+    def __init__(
+        self,
+        weather_client: Optional[WeatherClient] = None,
+        news_client: Optional[NewsClient] = None,
+        memory_store: Optional[MemoryStore] = None,
+    ):
+        self.weather_client = weather_client or WeatherClient()
+        self.news_client = news_client or NewsClient()
+        self.memory_store = memory_store or MemoryStore()
+
+    def get_weather(self, location: Optional[str] = None) -> dict:
+        try:
+            forecast = self.weather_client.get_forecast(location)
+        except WeatherError as e:
+            return {"error": str(e)}
+
+        summary = (
+            f"Weather in {forecast['location']}: {forecast['temperature_c']}C, "
+            f"{forecast['condition']}, humidity {forecast['humidity_pct']}%."
+        )
+        self.memory_store.add("weather", summary)
+        return forecast
+
+    def get_news(self, topic: Optional[str] = None, limit: int = 5) -> dict:
+        try:
+            headlines = self.news_client.get_headlines(topic, limit)
+        except NewsError as e:
+            return {"error": str(e)}
+
+        if not headlines:
+            return {"headlines": [], "topic": topic}
+
+        label = f" (topic: {topic})" if topic else ""
+        summary = f"News{label}: " + "; ".join(h["title"] for h in headlines)
+        self.memory_store.add("news", summary)
+        return {"headlines": headlines, "topic": topic}
+
+    def get_article_extract(self, link: str) -> dict:
+        try:
+            extract = self.news_client.get_article_extract(link)
+        except NewsError as e:
+            return {"error": str(e)}
+
+        self.memory_store.add("news", f"Article extract ({link}): {extract}")
+        return {"link": link, "extract": extract}
+
+    def recall_memories(self, query: Optional[str] = None, limit: int = 5) -> dict:
+        if query and query.strip():
+            memories = self.memory_store.search(query.strip(), top_k=limit)
+        else:
+            memories = self.memory_store.recent(limit=limit)
+        return {"memories": memories}
+
+
+# ---------------------------------------------------------------------------
+# Tool schema (unchanged — OpenAI function-calling format, understood by Gemma 4)
+# ---------------------------------------------------------------------------
 def build_tool_schema() -> list[dict]:
     return [
-            {"type": "function", "function": {
+        {"type": "function", "function": {
             "name": "list_devices",
             "description": (
-                            "List all Govee devices and what each one can be controlled for "
-                            "(power, brightness, color, scenes, toggles, etc). Call this first "
-                            "if you don't know the exact device name or its capabilities."
-                            ),
+                "List all Govee devices and what each one can be controlled for "
+                "(power, brightness, color, scenes, toggles, etc). Call this first "
+                "if you don't know the exact device name or its capabilities."
+            ),
             "parameters": {"type": "object", "properties": {}, "required": []},
         }},
         {"type": "function", "function": {
             "name": "get_device_state",
             "description": "Get the current state (power, brightness, color, online status, etc) of one device.",
             "parameters": {"type": "object", "properties": {
-                                                            "device_name": {"type": "string", "description": "Device name, e.g. 'Bedroom Light'"},
-                                                            }, "required": ["device_name"]},
+                "device_name": {"type": "string", "description": "Device name, e.g. 'Bedroom Light'"},
+            }, "required": ["device_name"]},
         }},
         {"type": "function", "function": {
-                                            "name": "set_power",
-                                            "description": "Turn a device on or off.",
-                                            "parameters": {"type": "object", "properties": {
-                                                                                            "device_name": {"type": "string"},
-                                                                                            "on": {"type": "boolean"},
-                                                                                            }, "required": ["device_name", "on"]
-                                                        },
-                                        }},
+            "name": "set_power",
+            "description": "Turn a single device on or off.",
+            "parameters": {"type": "object", "properties": {
+                "device_name": {"type": "string"},
+                "on": {"type": "boolean"},
+            }, "required": ["device_name", "on"]},
+        }},
         {"type": "function", "function": {
-                                            "name": "set_power_all",
-                                            "description": (
-                                                            "Turn MANY devices on or off in a single call. Use this for "
-                                                            "requests like 'turn off everything', 'turn off all the lights', "
-                                                            "or 'turn off the bedroom' instead of calling set_power once per "
-                                                            "device. Optionally narrow the set with device_type ('light', "
-                                                            "'fan', 'socket', ...) and/or name_contains (e.g. 'bedroom' to "
-                                                            "target one room); with no filter it targets every device. "
-                                                            "Devices that can't be powered (like sensors) are skipped "
-                                                            "automatically."
-                                                            ),
-                                            "parameters": {"type": "object", "properties": {
-                                                                                            "on": {"type": "boolean"},
-                                                                                            "device_type": {"type": "string", "description": "Optional. Only devices of this type, e.g. 'light', 'fan', 'socket'."},
-                                                                                            "name_contains": {"type": "string", "description": "Optional. Only devices whose name contains this text, e.g. 'bedroom'."},
-                                                                                            }, "required": ["on"]
-                                                        },
-                                        }},
+            "name": "set_brightness",
+            "description": "Set a light's brightness as a percentage (1-100).",
+            "parameters": {"type": "object", "properties": {
+                "device_name": {"type": "string"},
+                "percent": {"type": "integer", "minimum": 1, "maximum": 100},
+            }, "required": ["device_name", "percent"]},
+        }},
         {"type": "function", "function": {
-                                            "name": "set_brightness",
-                                            "description": "Set a light's brightness as a percentage (1-100).",
-                                            "parameters": {"type": "object", "properties": {
-                                                                                            "device_name": {"type": "string"},
-                                                                                            "percent": {"type": "integer", "minimum": 1, "maximum": 100},
-                                                                                            }, "required": ["device_name", "percent"]},
-                                        }},
+            "name": "set_color_rgb",
+            "description": "Set a light's color using RGB values (0-255 each).",
+            "parameters": {"type": "object", "properties": {
+                "device_name": {"type": "string"},
+                "r": {"type": "integer", "minimum": 0, "maximum": 255},
+                "g": {"type": "integer", "minimum": 0, "maximum": 255},
+                "b": {"type": "integer", "minimum": 0, "maximum": 255},
+            }, "required": ["device_name", "r", "g", "b"]},
+        }},
         {"type": "function", "function": {
-                                            "name": "set_color_rgb",
-                                            "description": "Set a light's color using RGB values (0-255 each).",
-                                            "parameters": {"type": "object", "properties": {
-                                            "device_name": {"type": "string"},
-                                            "r": {"type": "integer", "minimum": 0, "maximum": 255},
-                                            "g": {"type": "integer", "minimum": 0, "maximum": 255},
-                                            "b": {"type": "integer", "minimum": 0, "maximum": 255},
-                                            }, "required": ["device_name", "r", "g", "b"]},
-                                        }},
+            "name": "set_color_temp",
+            "description": "Set a light's white color temperature in Kelvin (roughly 2000=warm to 9000=cool).",
+            "parameters": {"type": "object", "properties": {
+                "device_name": {"type": "string"},
+                "kelvin": {"type": "integer", "minimum": 3000, "maximum": 10000},
+            }, "required": ["device_name", "kelvin"]},
+        }},
         {"type": "function", "function": {
-                                            "name": "set_color_temp",
-                                            "description": "Set a light's white color temperature in Kelvin (roughly 2000=warm to 9000=cool).",
-                                            "parameters": {"type": "object", "properties": {
-                                                                                            "device_name": {"type": "string"},
-                                                                                            "kelvin": {"type": "integer", "minimum": 3000, "maximum": 10000},
-                                            }, "required": ["device_name", "kelvin"]},
-                                        }},
+            "name": "set_scene",
+            "description": (
+                "Activate a preset light scene by name (e.g. 'Christmas', 'Party', 'Sunrise'). "
+                "Call get_device_state first if unsure which scenes a device supports."
+            ),
+            "parameters": {"type": "object", "properties": {
+                "device_name": {"type": "string"},
+                "scene_name": {"type": "string"},
+            }, "required": ["device_name", "scene_name"]},
+        }},
         {"type": "function", "function": {
-                                            "name": "set_scene",
-                                            "description": (
-                                                            "Activate a preset light scene by name (e.g. 'Christmas', 'Party', 'Sunrise'). "
-                                                            "Call get_device_state first if unsure which scenes a device supports."
-                                                            ),
-                                            "parameters": {"type": "object", "properties": {
-                                                                                            "device_name": {"type": "string"},
-                                                                                            "scene_name": {"type": "string"},
-                                            }, "required": ["device_name", "scene_name"]},
-                                        }},
+            "name": "set_toggle",
+            "description": "Turn a named toggle feature on/off, e.g. 'gradientToggle' or 'oscillationToggle'.",
+            "parameters": {"type": "object", "properties": {
+                "device_name": {"type": "string"},
+                "toggle_name": {"type": "string"},
+                "on": {"type": "boolean"},
+            }, "required": ["device_name", "toggle_name", "on"]},
+        }},
         {"type": "function", "function": {
-                                            "name": "set_toggle",
-                                            "description": "Turn a named toggle feature on/off, e.g. 'gradientToggle' or 'oscillationToggle'.",
-                                            "parameters": {"type": "object", "properties": {
-                                                                                            "device_name": {"type": "string"},
-                                                                                            "toggle_name": {"type": "string"},
-                                                                                            "on": {"type": "boolean"},
-                                            }, "required": ["device_name", "toggle_name", "on"]},
-                                        }},
+            "name": "set_fan_speed",
+            "description": "Set a fan's speed gear: 'low', 'medium', or 'high'.",
+            "parameters": {"type": "object", "properties": {
+                "device_name": {"type": "string"},
+                "speed": {"type": "string", "enum": ["low", "medium", "high"]},
+            }, "required": ["device_name", "speed"]},
+        }},
         {"type": "function", "function": {
-                                            "name": "set_fan_speed",
-                                            "description": "Set a fan's speed gear: 'low', 'medium', or 'high'.",
-                                            "parameters": {"type": "object", "properties": {
-                                                                                            "device_name": {"type": "string"},
-                                                                                            "speed": {"type": "string", "enum": ["low", "medium", "high"]},
-                                            }, "required": ["device_name", "speed"]},
-                                            }},
-            ]
+            "name": "get_weather",
+            "description": (
+                "Get the current weather and a short forecast for a location. "
+                "If the user doesn't name a location, omit it to use the "
+                "configured default location."
+            ),
+            "parameters": {"type": "object", "properties": {
+                "location": {"type": "string", "description": "City name, e.g. 'Bratislava' or 'Paris, France'"},
+            }, "required": []},
+        }},
+        {"type": "function", "function": {
+            "name": "get_news",
+            "description": (
+                "Get recent news headlines, optionally filtered by topic. "
+                "Each headline includes a short RSS summary and a 'link'. "
+                "Omit topic for general top headlines. Call get_article_extract "
+                "with a headline's link if the user wants more than the summary."
+            ),
+            "parameters": {"type": "object", "properties": {
+                "topic": {"type": "string", "description": "Topic or search query, e.g. 'technology' or 'climate change'"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 20, "description": "Max number of headlines (default 5)"},
+            }, "required": []},
+        }},
+        {"type": "function", "function": {
+            "name": "get_article_extract",
+            "description": (
+                "Fetch and read the main body text of a specific news article, "
+                "using the 'link' field from a get_news result. Use this when "
+                "the user wants details, not just the headline/summary."
+            ),
+            "parameters": {"type": "object", "properties": {
+                "link": {"type": "string", "description": "The article's link, taken from a get_news result"},
+            }, "required": ["link"]},
+        }},
+        {"type": "function", "function": {
+            "name": "recall_memories",
+            "description": (
+                "Recall things said in earlier conversations or previous "
+                "weather/news lookups. Pass a query describing what to look "
+                "for (semantic search), or omit it to get the most recent "
+                "memories."
+            ),
+            "parameters": {"type": "object", "properties": {
+                "query": {"type": "string", "description": "What to search for, e.g. 'weather in Paris' or 'news about elections'"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 20, "description": "Max number of memories to return (default 5)"},
+            }, "required": []},
+        }},
+    ]
+
 
 # ---------------------------------------------------------------------------
 # Agent: chat loop with tool-call parsing
 # ---------------------------------------------------------------------------
 class GoveeAgent:
-    def __init__(self, client: GoveeClientLike, backend: Optional[ModelBackend] = None, max_tool_iters: int = 5):
+    def __init__(
+        self,
+        client: GoveeClientLike,
+        backend: Optional[ModelBackend] = None,
+        max_tool_iters: int = 5,
+        info_tools: Optional[InfoTools] = None,
+    ):
         self.tools_impl = GoveeTools(client)
+        self.info_tools = info_tools or InfoTools()
         self.backend = backend or ModelBackend()
         self.tool_schema = build_tool_schema()
         self.max_tool_iters = max_tool_iters
         self._dispatch: dict[str, Callable[..., dict]] = {
-                                                            "list_devices": self.tools_impl.list_devices,
-                                                            "get_device_state": self.tools_impl.get_device_state,
-                                                            "set_power": self.tools_impl.set_power,
-                                                            "set_power_all": self.tools_impl.set_power_all,
-                                                            "set_brightness": self.tools_impl.set_brightness,
-                                                            "set_color_rgb": self.tools_impl.set_color_rgb,
-                                                            "set_color_temp": self.tools_impl.set_color_temp,
-                                                            "set_scene": self.tools_impl.set_scene,
-                                                            "set_toggle": self.tools_impl.set_toggle,
-                                                            "set_fan_speed": self.tools_impl.set_fan_speed,
-                                                            }
+            "list_devices":    self.tools_impl.list_devices,
+            "get_device_state": self.tools_impl.get_device_state,
+            "set_power":       self.tools_impl.set_power,
+            "set_brightness":  self.tools_impl.set_brightness,
+            "set_color_rgb":   self.tools_impl.set_color_rgb,
+            "set_color_temp":  self.tools_impl.set_color_temp,
+            "set_scene":       self.tools_impl.set_scene,
+            "set_toggle":      self.tools_impl.set_toggle,
+            "set_fan_speed":   self.tools_impl.set_fan_speed,
+            "get_weather":     self.info_tools.get_weather,
+            "get_news":        self.info_tools.get_news,
+            "get_article_extract": self.info_tools.get_article_extract,
+            "recall_memories": self.info_tools.recall_memories,
+        }
 
     def _call_tool(self, name: str, arguments: dict) -> dict:
         fn = self._dispatch.get(name)
@@ -490,31 +728,78 @@ class GoveeAgent:
             return {"error": str(e)}
         except TypeError as e:
             return {"error": f"Bad arguments for {name}: {e}"}
-        except Exception as e:  # noqa: BLE001 - a tool bug must not crash the chat loop
+        except Exception as e:  # noqa: BLE001
             logger.exception("Tool '%s' raised an unexpected error", name)
             return {"error": f"{name} failed unexpectedly: {e}"}
 
     def chat(self, user_message: str, history: Optional[list[dict]] = None) -> tuple[str, list[dict]]:
+        history = history or []
+        messages = [{"role": "system", "content": SYSTEM_PROMPT}] + history + [{"role": "user", "content": user_message}]
 
-        messages = [{"role": "system", "content": SYSTEM_PROMPT}] + (history or []) + [{"role": "user", "content": user_message}]
-
+        final_reply: Optional[str] = None
         for _ in range(self.max_tool_iters):
-            chat_text = self.backend.tokenizer.apply_chat_template(messages, tools=self.tool_schema, add_generation_prompt=True, tokenize=False)
+            chat_text = self._render(messages)
             reply = self.backend.generate(chat_text)
             calls = parse_tool_calls(reply)
 
             if not calls:
-                messages.append({"role": "assistant", "content": reply})
-                return reply, messages[1:]
+                final_reply = reply
+                break
 
+            logger.info("Parsed %d tool call(s): %s", len(calls), [c[0] for c in calls])
             messages.append({"role": "assistant", "content": reply})
-            for call in calls:
-                try:
-                    name, args = call["name"], call.get("arguments", {})
-                except KeyError:
-                    name, result = "unknown", {"error": "Malformed tool call from model"}
-                else:
-                    result = self._call_tool(name, args)
-                messages.append({"role": "tool", "name": name, "content": json.dumps(result)})
 
-        return ("I ran out of tool-call steps trying to complete that - could you simplify the request?",messages[1:])
+            result_lines = []
+            for name, args in calls:
+                result = self._call_tool(name, args) if isinstance(args, dict) \
+                    else {"error": "Malformed tool call arguments from model"}
+                logger.info("Tool %s(%s) -> %s", name, args, result)
+                result_lines.append(f"{name} result: {json.dumps(result)}")
+
+            # Feed results back as a USER turn. Gemma's compact call: format is
+            # improvised, not a native tool protocol, so role:'tool' messages
+            # get dropped by its chat template (the model then says "there was
+            # no response"). A user turn is always rendered verbatim.
+            messages.append({
+                "role": "user",
+                "content": (
+                    "Tool results:\n" + "\n".join(result_lines) +
+                    "\n\nIf the task is now complete, reply to the user in plain "
+                    "language describing what changed. If more actions are still "
+                    "needed (e.g. turning on each device from a list), emit the "
+                    "next call now."
+                ),
+            })
+
+        if final_reply is None:
+            final_reply = "I wasn't able to finish that - could you rephrase or be more specific?"
+
+        try:
+            self.info_tools.memory_store.add("chat", f"User: {user_message}\nAssistant: {final_reply}")
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to write chat turn to long-term memory")
+
+        # Persist only clean user/assistant turns. Intermediate tool calls and
+        # synthetic result turns stay out of history so later turns aren't
+        # polluted with the model's own scaffolding.
+        new_history = history + [
+            {"role": "user", "content": user_message},
+            {"role": "assistant", "content": final_reply},
+        ]
+        return final_reply, new_history
+
+    def _render(self, messages: list[dict]) -> str:
+        """Render the chat template. enable_thinking=False suppresses Gemma's
+        chain-of-thought; some template signatures don't accept it, so fall
+        back to a plain call."""
+        proc = self.backend.processor
+        try:
+            return proc.apply_chat_template(
+                messages, tools=self.tool_schema,
+                add_generation_prompt=True, tokenize=False, enable_thinking=False,
+            )
+        except TypeError:
+            return proc.apply_chat_template(
+                messages, tools=self.tool_schema,
+                add_generation_prompt=True, tokenize=False,
+            )

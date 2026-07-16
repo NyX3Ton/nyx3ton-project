@@ -1,6 +1,0 @@
--r requirements-app.txt
-
-# OpenVINO/Optimum currently expects the pre-Transformers-5 ONNX helpers.
-# Use this profile when running without CUDA and relying on the Qwen3 fallback.
-transformers>=4.51,<4.58
-safetensors>=0.5,<0.8

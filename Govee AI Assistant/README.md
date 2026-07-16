@@ -25,6 +25,7 @@ directly — all through a small, dependency-light Python stack.
   - [semantic_match.py](#semantic_matchpy)
   - [speech_to_text.py](#speech_to_textpy)
   - [agent.py](#agentpy)
+  - [Weather, news & memory](#weather-news--memory)
   - [app.py](#apppy)
   - [Tests and CLI utilities](#tests-and-cli-utilities)
 - [Project structure](#project-structure)
@@ -61,10 +62,11 @@ figure out what that means. This project adds that layer, entirely locally:
   (power / brightness / color temp / online status / sensor readings),
   refreshed on load, on demand, and after each chat turn.
 - **Polished, themed UI** — a `Soft` theme (light/dark aware) with device
-  cards, colored status pills, and metric chips. The chat panel has a Send
-  button, clickable example prompts, and an **Expand chat** toggle that grows
-  the chat in-page (and hides the devices column for full width) — reversible
-  with the same button, no browser-fullscreen trap. Runs on Gradio 5 and 6.
+  cards, colored status pills, and metric chips, plus a **"Show offline
+  devices" toggle** to declutter the dashboard down to what's actually
+  reachable. The chat panel has an **Expand chat** toggle that grows the
+  chat in-page — reversible with the same button, no browser-fullscreen
+  trap.
 - **Natural-language control** — a local LLM plans and executes Govee API
   calls via a small, explicit tool set (power, bulk on/off for many devices
   at once, brightness, RGB color, color temperature, scenes, toggles, fan
@@ -313,6 +315,10 @@ wrapping `GoveeClient` with device resolution and capability checking:
 | `set_scene` | Activate a named preset scene |
 | `set_toggle` | Turn a named toggle feature on/off (e.g. oscillation) |
 | `set_fan_speed` | Set a fan to low/medium/high |
+| `get_weather` | Current weather + short forecast for a location (or a configured default) |
+| `get_news` | Recent headlines, optionally filtered by topic |
+| `get_article_extract` | Full body-text extract of one article, given a headline's link |
+| `recall_memories` | Semantic (RAG) recall of earlier chat turns, weather lookups, and news lookups |
 
 Device names are resolved in three stages inside `_find_device`: **exact
 match → unique substring match → semantic match** (via `semantic_match.py`).
@@ -354,6 +360,47 @@ plain-text reply or the iteration budget runs out. `_call_tool` catches
 into an error message for the model, so a bug in one tool can't take down
 the whole conversation.
 
+### Weather, news & memory
+
+Three modules add general-assistant capabilities alongside device control,
+wired into `agent.py` via an `InfoTools` class (parallel to `GoveeTools`)
+and four more tools in `build_tool_schema()`: `get_weather`, `get_news`,
+`get_article_extract`, `recall_memories`.
+
+- **`weather_client.py`** — `WeatherClient` calls
+  [Open-Meteo](https://open-meteo.com/) (free, no API key). A location name
+  is geocoded once (and cached in-memory for the session) to lat/lon, then
+  the current conditions and a 3-day forecast are fetched and mapped from
+  Open-Meteo's numeric WMO weather codes to short human-readable conditions
+  ("Slight rain", "Partly cloudy", etc). If no location is given, it falls
+  back to `GOVEE_DEFAULT_LOCATION`.
+- **`news_client.py`** — `NewsClient` pulls headlines from RSS (also no API
+  key): Google News' search feed when a topic is given, otherwise either
+  `GOVEE_NEWS_FEEDS` (comma-separated feed URLs) or Google News' top
+  stories. Parsed with the stdlib `xml.etree.ElementTree` — no `feedparser`
+  dependency — and HTML-stripped/truncated into short summaries. The model
+  itself does the actual summarizing when it replies, rather than depending
+  on a third-party summarization API. When the user wants more than a
+  headline, the model calls `get_article_extract` with that headline's
+  `link`: `NewsClient.get_article_extract()` fetches the article's page and
+  pulls out just the body text with [trafilatura](https://trafilatura.readthedocs.io/)
+  (strips nav/ads/footers/boilerplate rather than a raw text dump),
+  truncated to a few thousand characters.
+- **`memory_store.py`** — `MemoryStore` is a small RAG layer on
+  [ChromaDB](https://www.trychroma.com/), run embedded/local (no server
+  process, no extra services). It reuses the *same* multilingual embedding
+  model `semantic_match.py` already loads for device-name matching (via a
+  new public `semantic_match.encode()`), so there's one shared model
+  instead of Chroma downloading its own default one. `GoveeAgent.chat()`
+  automatically writes every turn (`user_message` + `final_reply`) to
+  memory, and `InfoTools.get_weather`/`get_news`/`get_article_extract`
+  automatically write a short summary of whatever they fetch — there's no
+  explicit "remember" step. `recall_memories` then does a semantic search
+  over everything stored (or a recency listing when the model calls it
+  with no query),
+  which is how the assistant can answer "what did I ask about earlier?" or
+  "what was that weather in Paris again?" days later.
+
 ### app.py
 
 The Gradio dashboard and chat UI. A themed two-column
@@ -372,21 +419,20 @@ The Gradio dashboard and chat UI. A themed two-column
   °C, humidity, oscillation). Power toggle and/or brightness controls call
   `GoveeClient` **directly** — bypassing the LLM entirely for quick manual
   control. A section header shows the device count and a compact refresh
-  button.
+  button, and a **"Show offline devices" checkbox** hides offline device
+  cards without an extra API call — it re-filters the same cached
+  online/offline map (a `gr.State(dict)` populated by the last refresh)
+  rather than re-fetching state.
 - **Right column — chat.** A `gr.Chatbot` (messages format) wired to
   `GoveeAgent.chat`, with the tool-aware conversation history kept in
   `gr.State` separately from the display-only chat log. Below it: a text box
-  with a **Send** button, a `gr.Audio` mic button (stopping a recording calls
-  `speech_to_text.transcribe`, shows `Heard: ...`, and sends the transcript
-  through chat), and a row of clickable **example prompts**. An
-  **Expand chat** button grows the chat in-page — taller, and full-width by
-  hiding the devices column — via a Gradio state toggle (no browser Fullscreen
-  API, so nothing can trap the window); the same button reverses it. The chat
-  window height is a single value in `_chatbot_kwargs()`.
-- **Gradio 5 & 6 compatible.** A one-line major-version gate (`_GMAJOR`)
-  routes the handful of APIs that moved between versions — `theme`/`css`
-  (Blocks in 5, `launch()` in 6) and the `Chatbot` `type`/`show_copy_button`
-  args (dropped in 6) — so the same file runs on both.
+  (Enter to send) and a `gr.Audio` mic button (stopping a recording calls
+  `speech_to_text.transcribe` and fills the text box with the transcript for
+  review before sending). An **Expand chat** button grows the chat in-page —
+  taller — via a Gradio state toggle (no browser Fullscreen API, so nothing
+  can trap the window); the same button reverses it.
+- Targets **Gradio 6**, where `theme`/`css` are passed to `.launch()` rather
+  than the `Blocks()` constructor (that moved between Gradio 5 and 6).
 - State refreshes on page load, on a manual refresh click, after any
   dashboard control action, and after every chat turn — deliberately not
   on a timer, to stay well under Govee's daily rate limit.
@@ -407,9 +453,10 @@ no-model stand-ins and still pass static type checking.
 | `test_govee.py` | Lists your real devices, capabilities, and state | Yes (Govee API only) |
 | `agent_cli.py` | Interactive terminal chat loop against the real agent | Yes (Govee API + local model) |
 | `test_tools_offline.py` | Exercises device resolution, capability checks, clamping, fan-speed schema handling, and semantic matching against **fake** devices | No |
+| `test_memory_news_weather_offline.py` | Exercises `WeatherClient`/`NewsClient` parsing and `MemoryStore`/`InfoTools` RAG recall against **fake** HTTP responses and a fake embedding function | No |
 | `test_app_build.py` | Builds the entire Gradio `Blocks` graph against a fake client and a stub agent, without launching a server | No |
 
-The two offline test files are the fast feedback loop — run them after any
+The offline test files are the fast feedback loop — run them after any
 change to `agent.py` or `app.py` before touching the real account or
 waiting for the model to load.
 
@@ -417,26 +464,31 @@ waiting for the model to load.
 
 ```
 Govee AI Assistant/
-├── govee_client.py         # Govee Open API wrapper
-├── semantic_match.py        # Embedding-based fuzzy name matching
-├── speech_to_text.py        # Whisper-based speech-to-text
-├── agent.py                 # ModelBackend, GoveeTools, GoveeAgent
-├── app.py                   # Gradio dashboard + chat UI
+├── app.py                        # entry point: Gradio dashboard + chat UI
+├── agent_cli.py                  # entry point: terminal chat against the real agent
 │
-├── test_govee.py            # Smoke test: list real devices/state
-├── agent_cli.py              # Terminal chat against the real agent
-├── test_tools_offline.py    # Offline logic tests (no network/model)
-├── test_app_build.py        # Offline Gradio build test (no network/model)
+├── govee_assistant/               # library package
+│   ├── config.py                    # single source of truth for every env var
+│   ├── govee_client.py              # Govee Open API wrapper
+│   ├── semantic_match.py            # Embedding-based fuzzy name matching
+│   ├── speech_to_text.py            # Whisper-based speech-to-text
+│   ├── weather_client.py            # Open-Meteo weather/forecast wrapper
+│   ├── news_client.py               # RSS headlines + article-extract fetching
+│   ├── memory_store.py              # ChromaDB-backed long-term memory (RAG)
+│   └── agent.py                     # ModelBackend, GoveeTools, InfoTools, GoveeAgent
+│
+├── tests/                         # test package - run as `python -m tests.<name>`
+│   ├── test_govee.py                 # smoke test: list real devices/state
+│   ├── test_tools_offline.py         # offline logic tests (no network/model)
+│   ├── test_memory_news_weather_offline.py  # offline weather/news/memory tests
+│   └── test_app_build.py             # offline Gradio build test (no network/model)
 │
 ├── requirements.txt          # Core deps (Govee client only)
-├── requirements-agent.txt    # + local LLM / embedding deps
+├── requirements-agent.txt    # + local LLM / embedding / RAG deps
 ├── requirements-app.txt      # + Gradio
-├── requirements-docker.txt   # Docker-specific Qwen3.5/Transformers deps
-├── requirements-openvino.txt # OpenVINO-compatible Transformers profile
 ├── Dockerfile
 ├── docker-compose.yml
-├── docker-compose.openvino.yml
-├── .env.example              # GOVEE_API_KEY template
+├── .env.example              # env var template (see govee_assistant/config.py)
 └── README.md
 ```
 
@@ -460,12 +512,12 @@ If you have an NVIDIA GPU, install the CUDA build of `torch` matching your
 driver instead of the default CPU build — see the comment at the top of
 `requirements-agent.txt`.
 
-Qwen3.5 support moves faster than the regular release cycle. The default
-Docker image installs Transformers from the upstream `main` branch, matching
-the Qwen3.5 model-card guidance. The OpenVINO profile uses the compatible
-Transformers 4.x lane and falls back to `unsloth/Qwen3-1.7B`, since
-Qwen3.5 is not currently a good OpenVINO target here. The backend order
-remains CUDA first, OpenVINO second, plain CPU last.
+Gemma 4 support moves faster than the regular Transformers release cycle —
+the Docker image installs Transformers from the upstream `main` branch if
+the installed release doesn't yet recognize the `gemma4` architecture (see
+the Dockerfile's sanity-check step). Locally (outside Docker), `agent.py`'s
+backend order is CUDA first, then plain CPU — there's no OpenVINO fallback
+path.
 
 **`ffmpeg` is optional for speech-to-text.** Microphone recordings are
 decoded in-process (stdlib `wave` + numpy), so voice normally works with no
@@ -481,27 +533,31 @@ actually needed, the UI says so rather than failing silently.
 cp .env.example .env
 ```
 
-Then edit `.env` and add your key:
+Then edit `.env` and add your key. Every setting below is read exactly
+once, centrally, by `govee_assistant/config.py` — every other module
+imports its constants from there instead of reading environment variables
+itself, so this list and that file are always the same list.
 
 ```
 GOVEE_API_KEY=your-govee-api-key-here
 
-# Optional: override the local LLM
-GOVEE_MODEL_ID=unsloth/Qwen3.5-2B
+# Optional: override the local LLM.
+GOVEE_LLM_MODEL=google/gemma-4-E4B-it
 
-# Optional: override the non-CUDA fallback model
-GOVEE_FALLBACK_MODEL_ID=unsloth/Qwen3-1.7B
+# Optional: quantization for the local LLM: 4 (NF4, ~5GB VRAM), 8 (~9GB),
+# or 0 for full bf16 (~16GB). Requires CUDA; ignored on CPU.
+QUANTIZE_BITS=0
 
 # Optional: override the semantic-matching embedding model
-# (default is multilingual; see semantic_match.py)
+# (default is multilingual; see govee_assistant/semantic_match.py)
 GOVEE_EMBEDDING_MODEL=sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
 
 # Optional: override the speech-to-text model (default is multilingual
-# Whisper; see speech_to_text.py)
+# Whisper; see govee_assistant/speech_to_text.py)
 GOVEE_STT_MODEL=openai/whisper-small
 
 # Optional: choose speech-to-text device: auto, cpu, or cuda.
-# Docker defaults to cpu so Whisper does not compete with Qwen for VRAM.
+# Docker defaults to cpu so Whisper does not compete with the LLM for VRAM.
 GOVEE_STT_DEVICE=cpu
 
 # Optional: force Whisper language, e.g. english, slovak, sk, en.
@@ -511,8 +567,24 @@ GOVEE_STT_LANGUAGE=
 # Optional: recordings below this RMS are treated as silent.
 GOVEE_STT_SILENCE_RMS=0.002
 
-# Optional: host port exposed by Docker Compose.
-# The container still listens on GRADIO_SERVER_PORT=7860 internally.
+# Optional: default location for the get_weather tool when the user
+# doesn't specify one, e.g. "Bratislava" or "Paris, France".
+GOVEE_DEFAULT_LOCATION=
+
+# Optional: comma-separated RSS feed URLs for the get_news tool when no
+# topic is given. Defaults to Google News' top-stories RSS if unset.
+GOVEE_NEWS_FEEDS=
+
+# Optional: directory for the local ChromaDB long-term memory store.
+GOVEE_MEMORY_DB=./chroma_memory
+
+# Optional: address/port app.py's Gradio server binds to.
+# The Dockerfile sets GRADIO_SERVER_NAME=0.0.0.0 so the container is reachable.
+GRADIO_SERVER_NAME=127.0.0.1
+GRADIO_SERVER_PORT=7860
+
+# Optional: HOST port exposed by Docker Compose (compose-only - not read by
+# Python/config.py). The container still listens on 7860 internally.
 GRADIO_HOST_PORT=17861
 ```
 
@@ -531,7 +603,7 @@ or set the `REQUESTS_CA_BUNDLE` environment variable.
 
 ```bash
 # 1. Confirm the API key and list your devices
-python test_govee.py
+python -m tests.test_govee
 
 # 2. Try the agent from a terminal (no UI)
 python agent_cli.py
@@ -540,21 +612,30 @@ python agent_cli.py
 python app.py
 ```
 
+`test_govee.py` and `agent_cli.py` live in different places deliberately:
+`app.py`/`agent_cli.py` are entry points and stay at the project root;
+everything else — the library code (`govee_assistant/`) and every
+`test_*.py` (`tests/`) — lives in a package, run with `python -m` from the
+project root.
+
 `app.py` prints a local URL (typically `http://127.0.0.1:7860`) once it's
 ready. **First run will be slow** — it downloads the configured local model
-(usually a few GB) and, if no CUDA GPU is available, exports it to OpenVINO IR
-(cached under `ov_cache/` for every run after that).
+(several GB); without a CUDA GPU it falls back to plain CPU inference, which
+works but is much slower.
 
 ## Running with Docker Compose
 
-This path is meant for Qwen3.5 on NVIDIA GPUs. It keeps your Windows Python
-install clean and runs the model in a Linux CUDA container with current
-Qwen3.5-ready Transformers.
+This path runs the assistant in a Linux CUDA container for
+`google/gemma-4-E4B-it`, so your host Python install stays clean. It
+**requires an NVIDIA GPU** — the `Dockerfile` builds `FROM
+nvidia/cuda:12.6.1-cudnn-devel-ubuntu22.04` unconditionally; there is no
+CPU/OpenVINO container path anymore (see the comment block at the top of
+the `Dockerfile` for why the OpenVINO stack was removed from the build).
 
 Prerequisites:
 
 - Docker Desktop with WSL2 integration enabled.
-- NVIDIA driver + NVIDIA Container Toolkit support working in Docker.
+- NVIDIA driver >= 560.28 + NVIDIA Container Toolkit support working in Docker.
 - A populated `.env` file with `GOVEE_API_KEY`.
 
 Build and run:
@@ -566,59 +647,17 @@ docker compose up --build
 Then open:
 
 ```text
-http://127.0.0.1:17861
+http://127.0.0.1:7860
 ```
 
-The app still listens on port `7860` inside the container. Compose exposes it
-on host port `17861` by default because Windows can reserve or forbid common
-Gradio ports such as `7860` and `7861`. Override the host port with
-`GRADIO_HOST_PORT`, e.g. `GRADIO_HOST_PORT=17862` if `17861` is also busy.
+`QUANTIZE_BITS` (set in `docker-compose.yml`, default `4`) controls VRAM
+usage: `4` for 4-bit NF4 (~5 GB, good for 8 GB cards), `8` for 8-bit
+(~9 GB), or `0` for full bf16 (~16 GB, needs 24 GB+). `GOVEE_LLM_MODEL` can
+also be overridden there without rebuilding the image.
 
-The Compose stack mounts persistent named volumes for Hugging Face downloads
-and OpenVINO exports:
-
-- `huggingface-cache` -> `/cache/huggingface`
-- `openvino-cache` -> `/app/ov_cache`
-
-The optional Qwen3.5 fast-path package `flash-linear-attention[cuda]` can be
-tried as an opt-in build. It is intentionally off by default because it
-compiles CUDA extensions and can fail on a given CUDA/PyTorch/GPU-architecture
-combination:
-
-```bash
-docker compose build --build-arg INSTALL_QWEN_FAST=1
-docker compose up
-```
-
-`causal-conv1d` is a separate, more fragile opt-in. If you want to test it,
-add the second build arg:
-
-```bash
-docker compose build --build-arg INSTALL_QWEN_FAST=1 --build-arg INSTALL_CAUSAL_CONV1D=1
-```
-
-The default build still uses CUDA via PyTorch, then OpenVINO, then CPU. If
-the causal-conv1d build fails, rebuild without `INSTALL_CAUSAL_CONV1D=1` and
-keep using the working CUDA container.
-
-### OpenVINO / No-CUDA Docker
-
-When CUDA is not available, use the OpenVINO compose file. It builds with
-`requirements-openvino.txt`, pins Transformers to the Optimum-compatible 4.x
-line, and uses the fallback model by default:
-
-```bash
-docker compose -f docker-compose.openvino.yml up --build
-```
-
-This profile intentionally avoids Qwen3.5 and uses:
-
-```text
-GOVEE_FALLBACK_MODEL_ID=unsloth/Qwen3-1.7B
-```
-
-You can still override that value in `.env` if you want to test a different
-OpenVINO-compatible Qwen3 model.
+The Compose stack mounts one persistent named volume, `hf_cache`, for the
+~16 GB of downloaded model weights — the first run downloads them,
+subsequent starts load from the cached volume instead.
 
 ## Supported controls
 
@@ -637,9 +676,10 @@ Typical capabilities across common Govee device types:
 ## Testing
 
 ```bash
-# Fast, offline, no model or network required:
-python test_tools_offline.py
-python test_app_build.py
+# Fast, offline, no model or network required (run from the project root):
+python -m tests.test_tools_offline
+python -m tests.test_memory_news_weather_offline
+python -m tests.test_app_build
 ```
 
 These use fake `GoveeClient`/agent stand-ins (`FakeGoveeClient`,
@@ -656,7 +696,7 @@ the same way an editor would:
 
 ```bash
 pip install pyright
-pyright *.py
+pyright .
 ```
 
 ## Troubleshooting
@@ -677,8 +717,8 @@ pyright *.py
   `GRADIO_HOST_PORT=17862` or another free port in `.env` and run
   `docker compose up` again.
 - **A device won't respond to a control command** — ask the agent to
-  `get_device_state` first, or run `test_govee.py`, to confirm the device
-  is online and check its exact capability list; not every device supports
+  `get_device_state` first, or run `python -m tests.test_govee`, to confirm
+  the device is online and check its exact capability list; not every device supports
   every control.
 - **Mic button transcribes to nothing** — recordings are decoded in-process,
   so `ffmpeg` usually isn't needed; the UI shows a warning if it *is* needed
