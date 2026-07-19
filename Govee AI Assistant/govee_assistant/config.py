@@ -35,13 +35,13 @@ QUANTIZE_BITS = int(os.getenv("QUANTIZE_BITS", "0"))
 # "workflow" = the LlamaIndex multi-agent AgentWorkflow (orchestrator.py).
 # Single is the default because multi-agent ReAct is less reliable on a small
 # local model; the workflow is opt-in. See orchestrator.py.
-GOVEE_AGENT_MODE = os.getenv("GOVEE_AGENT_MODE", "single").strip().lower()
+GOVEE_AGENT_MODE = os.getenv("GOVEE_AGENT_MODE", "workflow").strip().lower()
 
 # Optional bounded writer--critic refinement.  The critic shares the already
 # loaded local model and can only review/rewrite the final natural-language
 # answer; it cannot call device or information tools.  This keeps a critique
 # pass from repeating a side-effecting action such as turning a light on.
-GOVEE_CRITIQUE_ENABLED = os.getenv("GOVEE_CRITIQUE_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+GOVEE_CRITIQUE_ENABLED = os.getenv("GOVEE_CRITIQUE_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
 GOVEE_CRITIQUE_MAX_PASSES = max(0, int(os.getenv("GOVEE_CRITIQUE_MAX_PASSES", "1")))
 
 # ── Semantic device/scene matching (semantic_match.py) ──────────────────

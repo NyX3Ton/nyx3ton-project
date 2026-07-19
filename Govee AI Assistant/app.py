@@ -327,10 +327,10 @@ def build_ui(client: ClientLike, agent: AgentLike) -> gr.Blocks:
             open_chat_overlay,
             inputs=[chatbot],
             outputs=[overlay_chatbot],
-            js="(chat) => { document.getElementById('gv-chat-overlay')?.classList.add('gv-overlay-open'); document.body.classList.add('gv-overlay-active'); return chat; }",
+            js="(chat) => { document.querySelectorAll('#gv-chat-overlay').forEach((element) => element.classList.add('gv-overlay-open')); document.body.classList.add('gv-overlay-active'); return chat; }",
         )
         close_overlay_btn.click(
-            js="() => { document.getElementById('gv-chat-overlay')?.classList.remove('gv-overlay-open'); document.body.classList.remove('gv-overlay-active'); }",
+            js="() => { document.querySelectorAll('#gv-chat-overlay').forEach((element) => element.classList.remove('gv-overlay-open')); document.body.classList.remove('gv-overlay-active'); }",
         )
 
         mic.stop_recording(transcribe_audio, inputs=mic, outputs=msg_box).then(lambda: None, outputs=mic)
