@@ -553,9 +553,10 @@ The Gradio operations dashboard. A themed, responsive
   map held in `gr.State(dict)`; it does not make another API request.
 - **Operations assistant.** The compact `gr.Chatbot` uses display history
   separately from tool-aware `agent_history`. Operators can type and submit
-  with Enter, clear the conversation, or reveal the optional **Voice input**
-  accordion. Stopping a recording calls `speech_to_text.transcribe` and puts
-  the transcript into the composer for review.
+  with Enter, clear the conversation, use **Zoom chat** for a taller inline
+  view, or reveal the optional **Voice input** accordion. Stopping a recording
+  calls `speech_to_text.transcribe` and puts the transcript into the composer
+  for review.
 - **Expanded overlay.** **Open overlay** shows a large, CSS-backed chat
   workspace with its own composer and close control. Both chat views share
   the same conversation and agent history, so a message sent in either view

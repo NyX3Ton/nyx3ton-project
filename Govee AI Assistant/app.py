@@ -282,6 +282,12 @@ def build_ui(client: ClientLike, agent: AgentLike) -> gr.Blocks:
         def open_chat_overlay(chat_display: list):
             return list(chat_display or [])
 
+        def close_chat_overlay(chat_display: list):
+            # Keep the hidden overlay's copy of the transcript synchronized.
+            # Supplying an input/output also ensures Gradio runs the client-side
+            # close hook on versions that skip JavaScript-only click handlers.
+            return list(chat_display or [])
+
         def toggle_chat_zoom(zoomed: bool):
             expanded = not zoomed
             return (
@@ -330,7 +336,10 @@ def build_ui(client: ClientLike, agent: AgentLike) -> gr.Blocks:
             js="(chat) => { document.querySelectorAll('#gv-chat-overlay').forEach((element) => element.classList.add('gv-overlay-open')); document.body.classList.add('gv-overlay-active'); return chat; }",
         )
         close_overlay_btn.click(
-            js="() => { document.querySelectorAll('#gv-chat-overlay').forEach((element) => element.classList.remove('gv-overlay-open')); document.body.classList.remove('gv-overlay-active'); }",
+            close_chat_overlay,
+            inputs=[chatbot],
+            outputs=[overlay_chatbot],
+            js="(chat) => { document.querySelectorAll('#gv-chat-overlay').forEach((element) => element.classList.remove('gv-overlay-open')); document.body.classList.remove('gv-overlay-active'); return chat; }",
         )
 
         mic.stop_recording(transcribe_audio, inputs=mic, outputs=msg_box).then(lambda: None, outputs=mic)
