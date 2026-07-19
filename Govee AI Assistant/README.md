@@ -684,6 +684,16 @@ GOVEE_API_KEY=your-govee-api-key-here
 # Optional: override the local LLM.
 GOVEE_LLM_MODEL=unsloth/gemma-4-E4B-it
 
+# Model-loading implementation. `transformers` is the supported runtime.
+# `nemo` is reserved for a future NVIDIA NeMo AutoModel backend; selecting it
+# today produces a clear startup error instead of silently using another loader.
+GOVEE_MODEL_RUNTIME=transformers
+
+# Optional: per-GPU VRAM cap for model placement (Transformers/Accelerate
+# notation). Empty uses available VRAM. A tight cap can offload layers to CPU
+# and reduce inference speed.
+GOVEE_MAX_GPU_MEMORY=
+
 # Optional: fallback model, loaded only if the primary fails to load.
 GOVEE_FALLBACK_MODEL_ID=unsloth/Qwen3.5-2B
 

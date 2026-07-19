@@ -57,6 +57,12 @@ services:
       # ── Model selection ──────────────────────────────────────────────
       # Change GOVEE_LLM_MODEL here without rebuilding the image.
       GOVEE_LLM_MODEL: "unsloth/gemma-4-E4B-it"
+      # Current production loader. `nemo` is reserved until the optional
+      # NVIDIA NeMo AutoModel backend and its dedicated image are added.
+      GOVEE_MODEL_RUNTIME: "transformers"
+      # Optional per-GPU VRAM placement cap, e.g. "10GiB". Leave commented
+      # unless you need to reserve VRAM for another workload.
+      # GOVEE_MAX_GPU_MEMORY: "10GiB"
 
       # ── Quantization ─────────────────────────────────────────────────
       # 4  → 4-bit NF4  (~5 GB VRAM)  — good for 8 GB cards (RTX 3070 etc.)

@@ -7,8 +7,7 @@
 
 from __future__ import annotations
 
-import os
-
+import os, re
 from dotenv import load_dotenv
 
 # Must run before anything below reads os.environ, and before app.py's
@@ -21,11 +20,27 @@ os.environ.setdefault("GRADIO_ANALYTICS_ENABLED", "False")
 GOVEE_API_KEY = os.environ.get("GOVEE_API_KEY")
 
 # ── LLM backend (agent.py) ──────────────────────────────────────────────
+
 # GOVEE_MODEL_ID is the legacy name (pre Qwen->Gemma migration). It's honored
 # as a fallback so existing .env files that still use it aren't silently
 # ignored - otherwise the app would quietly load the default model instead of
 # the one the user configured. Prefer GOVEE_LLM_MODEL going forward.
 GOVEE_LLM_MODEL = (os.getenv("GOVEE_LLM_MODEL") or os.getenv("GOVEE_MODEL_ID") or "unsloth/gemma-4-E4B-it")
+
+# Selects the model-loading implementation.  `transformers` is the current
+# production backend; `nemo` is accepted as an explicit future-facing option
+# so configuration can be shared before the NeMo backend is introduced.
+GOVEE_MODEL_RUNTIME = os.getenv("GOVEE_MODEL_RUNTIME", "transformers").strip().lower()
+if GOVEE_MODEL_RUNTIME not in {"transformers", "nemo"}:
+    raise ValueError("GOVEE_MODEL_RUNTIME must be either 'transformers' or 'nemo'")
+
+# Optional per-GPU cap passed to Transformers/Accelerate's `max_memory` map,
+# e.g. "10GiB" or "12288MiB". Empty lets the loader use available VRAM.
+_max_gpu_memory = os.getenv("GOVEE_MAX_GPU_MEMORY", "").strip()
+if _max_gpu_memory and not re.fullmatch(r"[1-9]\d*(?:MiB|GiB|MB|GB)", _max_gpu_memory):
+    raise ValueError("GOVEE_MAX_GPU_MEMORY must look like '10GiB' or '12288MiB'")
+GOVEE_MAX_GPU_MEMORY: str | None = _max_gpu_memory or None
+
 # Optional secondary model tried only if the primary fails to load (e.g. the
 # primary is too large for the available VRAM). Empty = no fallback.
 GOVEE_FALLBACK_MODEL = os.getenv("GOVEE_FALLBACK_MODEL_ID", "").strip()

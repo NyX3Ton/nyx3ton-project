@@ -211,6 +211,12 @@ class ModelBackend:
         model_id: str = config.GOVEE_LLM_MODEL,
         fallback_model_id: str = config.GOVEE_FALLBACK_MODEL,
     ):
+        if config.GOVEE_MODEL_RUNTIME != "transformers":
+            raise RuntimeError(
+                "GOVEE_MODEL_RUNTIME=nemo was requested, but the NeMo AutoModel "
+                "backend has not been implemented in this build. Set "
+                "GOVEE_MODEL_RUNTIME=transformers."
+            )
         self.model_id = model_id
         self.fallback_model_id = fallback_model_id
         self.backend_name, self.model, self.processor = self._load()
@@ -262,6 +268,15 @@ class ModelBackend:
         # 1. CUDA (device_map="auto" handles multi-GPU if present)
         if torch.cuda.is_available():
             try:
+                if config.GOVEE_MAX_GPU_MEMORY:
+                    load_kwargs["max_memory"] = {
+                        index: config.GOVEE_MAX_GPU_MEMORY
+                        for index in range(torch.cuda.device_count())
+                    }
+                    logger.info(
+                        "Capping model placement at %s per GPU",
+                        config.GOVEE_MAX_GPU_MEMORY,
+                    )
                 model = AutoModelForCausalLM.from_pretrained(model_id, **load_kwargs)
                 return "cuda", model, processor
             except Exception:
