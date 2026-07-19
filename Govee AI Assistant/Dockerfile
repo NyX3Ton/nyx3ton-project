@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # ---------------------------------------------------------------------------
-# Govee AI Assistant — GPU image for google/gemma-4-E4B-it
+# Govee AI Assistant — GPU image for unsloth/gemma-4-E4B-it
 #
 # Requirements on the HOST (not inside the container):
 #   • NVIDIA driver >= 560.28  (minimum for CUDA 12.6 runtime)
@@ -38,7 +38,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     GRADIO_SERVER_NAME=0.0.0.0 \
     GRADIO_SERVER_PORT=7860 \
     GRADIO_ANALYTICS_ENABLED=False \
-    GOVEE_LLM_MODEL=google/gemma-4-E4B-it \
+    GOVEE_LLM_MODEL=unsloth/gemma-4-E4B-it \
     QUANTIZE_BITS=4
 
 # ── System packages ────────────────────────────────────────────────────────

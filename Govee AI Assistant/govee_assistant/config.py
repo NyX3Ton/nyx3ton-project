@@ -21,13 +21,31 @@ os.environ.setdefault("GRADIO_ANALYTICS_ENABLED", "False")
 GOVEE_API_KEY = os.environ.get("GOVEE_API_KEY")
 
 # ── LLM backend (agent.py) ──────────────────────────────────────────────
-GOVEE_LLM_MODEL = os.getenv("GOVEE_LLM_MODEL", "google/gemma-4-E4B-it")
+# GOVEE_MODEL_ID is the legacy name (pre Qwen->Gemma migration). It's honored
+# as a fallback so existing .env files that still use it aren't silently
+# ignored - otherwise the app would quietly load the default model instead of
+# the one the user configured. Prefer GOVEE_LLM_MODEL going forward.
+GOVEE_LLM_MODEL = (os.getenv("GOVEE_LLM_MODEL") or os.getenv("GOVEE_MODEL_ID") or "unsloth/gemma-4-E4B-it")
+# Optional secondary model tried only if the primary fails to load (e.g. the
+# primary is too large for the available VRAM). Empty = no fallback.
+GOVEE_FALLBACK_MODEL = os.getenv("GOVEE_FALLBACK_MODEL_ID", "").strip()
 QUANTIZE_BITS = int(os.getenv("QUANTIZE_BITS", "0"))
 
+# Agent architecture: "single" = the built-in tool-calling loop (GoveeAgent);
+# "workflow" = the LlamaIndex multi-agent AgentWorkflow (orchestrator.py).
+# Single is the default because multi-agent ReAct is less reliable on a small
+# local model; the workflow is opt-in. See orchestrator.py.
+GOVEE_AGENT_MODE = os.getenv("GOVEE_AGENT_MODE", "single").strip().lower()
+
+# Optional bounded writer--critic refinement.  The critic shares the already
+# loaded local model and can only review/rewrite the final natural-language
+# answer; it cannot call device or information tools.  This keeps a critique
+# pass from repeating a side-effecting action such as turning a light on.
+GOVEE_CRITIQUE_ENABLED = os.getenv("GOVEE_CRITIQUE_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+GOVEE_CRITIQUE_MAX_PASSES = max(0, int(os.getenv("GOVEE_CRITIQUE_MAX_PASSES", "1")))
+
 # ── Semantic device/scene matching (semantic_match.py) ──────────────────
-GOVEE_EMBEDDING_MODEL = os.getenv(
-    "GOVEE_EMBEDDING_MODEL", "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
-)
+GOVEE_EMBEDDING_MODEL = os.getenv("GOVEE_EMBEDDING_MODEL", "sentence-transformers/paraphrase-multilingual-mpnet-base-v2")
 
 # ── Speech-to-text (speech_to_text.py) ───────────────────────────────────
 GOVEE_STT_MODEL = os.getenv("GOVEE_STT_MODEL", "openai/whisper-base")

@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import html
-import logging
-import re
+import html, logging, re
 import xml.etree.ElementTree as ET
 from typing import Callable, Optional
 
@@ -23,14 +21,12 @@ _EXTRACT_MAX_CHARS = 2000
 class NewsError(RuntimeError):
     pass
 
-
 def _default_get_text(url: str) -> str:
     import requests
 
     resp = requests.get(url, timeout=10)
     resp.raise_for_status()
     return resp.text
-
 
 def _clean_summary(raw: Optional[str]) -> str:
     if not raw:
@@ -40,7 +36,6 @@ def _clean_summary(raw: Optional[str]) -> str:
     if len(text) > _SUMMARY_MAX_CHARS:
         text = text[:_SUMMARY_MAX_CHARS].rstrip() + "..."
     return text
-
 
 def _parse_feed(xml_text: str, limit: int) -> list[dict]:
     try:
@@ -62,7 +57,6 @@ def _parse_feed(xml_text: str, limit: int) -> list[dict]:
         if len(items) >= limit:
             break
     return items
-
 
 def _default_feeds() -> list[str]:
     configured = config.GOVEE_NEWS_FEEDS
@@ -99,8 +93,6 @@ class NewsClient:
         return items[:limit]
 
     def get_article_extract(self, url: str, max_chars: int = _EXTRACT_MAX_CHARS) -> str:
-        """Fetch an article's page and pull out the main body text (not just
-        the RSS summary), for when the user wants more than a headline."""
         import trafilatura
 
         try:

@@ -2,11 +2,7 @@
 
 from __future__ import annotations
 
-import logging
-import math
-import os
-import shutil
-import wave
+import logging, math, os, shutil, wave
 from typing import Any, Callable, Optional
 
 import numpy as np
@@ -43,10 +39,8 @@ def _audio_path_value(audio_path: Any) -> Optional[str]:
         return _audio_path_value(audio_path[0])
     return None
 
-
 def ffmpeg_available() -> bool:
     return shutil.which("ffmpeg") is not None
-
 
 def _pipeline_device() -> int:
     if _DEVICE_SETTING in {"cpu", "-1"}:
@@ -88,7 +82,6 @@ def _decode_wav_pcm(path: str) -> Optional[tuple[np.ndarray, int]]:
         data = data.reshape(-1, n_channels).mean(axis=1)
     return data, sr
 
-
 def _resample_to_16k(samples: np.ndarray, sr: int) -> np.ndarray:
     if sr == _TARGET_SR or samples.size == 0:
         return samples.astype(np.float32, copy=False)
@@ -106,7 +99,6 @@ def _resample_to_16k(samples: np.ndarray, sr: int) -> np.ndarray:
         x_new = np.linspace(0.0, duration, num=n_target, endpoint=False)
         return np.interp(x_new, x_old, samples).astype(np.float32)
 
-
 def _result_to_text(result: Any) -> str:
     if isinstance(result, dict):
         return str(result.get("text", ""))
@@ -118,13 +110,11 @@ def _result_to_text(result: Any) -> str:
         return result
     return ""
 
-
 def _generate_kwargs() -> dict[str, str]:
     kwargs = {"task": "transcribe"}
     if _LANGUAGE:
         kwargs["language"] = _LANGUAGE
     return kwargs
-
 
 def _default_transcribe(audio_path: str) -> str:
     global _pipeline
@@ -186,7 +176,6 @@ def _default_transcribe(audio_path: str) -> str:
     else:
         logger.warning("Speech-to-text returned an empty transcript for %s", os.path.basename(audio_path))
     return text
-
 
 def transcribe(audio_path: Any, transcribe_fn: Optional[Callable[[str], str]] = None) -> str:
     audio_path = _audio_path_value(audio_path)

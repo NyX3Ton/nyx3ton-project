@@ -16,18 +16,35 @@ FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 # this maps the common codes to a short human-readable condition string.
 # https://open-meteo.com/en/docs#weathervariables
 _WMO_CONDITIONS = {
-    0: "Clear sky", 1: "Mainly clear", 2: "Partly cloudy", 3: "Overcast",
-    45: "Fog", 48: "Depositing rime fog",
-    51: "Light drizzle", 53: "Moderate drizzle", 55: "Dense drizzle",
-    56: "Light freezing drizzle", 57: "Dense freezing drizzle",
-    61: "Slight rain", 63: "Moderate rain", 65: "Heavy rain",
-    66: "Light freezing rain", 67: "Heavy freezing rain",
-    71: "Slight snow fall", 73: "Moderate snow fall", 75: "Heavy snow fall",
-    77: "Snow grains",
-    80: "Slight rain showers", 81: "Moderate rain showers", 82: "Violent rain showers",
-    85: "Slight snow showers", 86: "Heavy snow showers",
-    95: "Thunderstorm", 96: "Thunderstorm with slight hail", 99: "Thunderstorm with heavy hail",
-}
+                    0: "Clear sky", 
+                    1: "Mainly clear", 
+                    2: "Partly cloudy", 
+                    3: "Overcast",
+                    45: "Fog", 
+                    48: "Depositing rime fog",
+                    51: "Light drizzle", 
+                    53: "Moderate drizzle", 
+                    55: "Dense drizzle",
+                    56: "Light freezing drizzle", 
+                    57: "Dense freezing drizzle",
+                    61: "Slight rain", 
+                    63: "Moderate rain", 
+                    65: "Heavy rain",
+                    66: "Light freezing rain", 
+                    67: "Heavy freezing rain",
+                    71: "Slight snow fall", 
+                    73: "Moderate snow fall", 
+                    75: "Heavy snow fall",
+                    77: "Snow grains",
+                    80: "Slight rain showers", 
+                    81: "Moderate rain showers", 
+                    82: "Violent rain showers",
+                    85: "Slight snow showers", 
+                    86: "Heavy snow showers",
+                    95: "Thunderstorm", 
+                    96: "Thunderstorm with slight hail", 
+                    99: "Thunderstorm with heavy hail",
+                    }
 
 
 def _condition_for(code: Optional[int]) -> str:
@@ -35,10 +52,8 @@ def _condition_for(code: Optional[int]) -> str:
         return "Unknown"
     return _WMO_CONDITIONS.get(int(code), f"Unknown (code {code})")
 
-
 class WeatherError(RuntimeError):
     pass
-
 
 def _default_get_json(url: str, params: dict) -> dict:
     import requests
@@ -46,7 +61,6 @@ def _default_get_json(url: str, params: dict) -> dict:
     resp = requests.get(url, params=params, timeout=10)
     resp.raise_for_status()
     return resp.json()
-
 
 class WeatherClient:
     def __init__(self, get_json_fn: Optional[Callable[[str, dict], dict]] = None):
@@ -83,9 +97,9 @@ class WeatherClient:
         location = (location or config.GOVEE_DEFAULT_LOCATION).strip()
         if not location:
             raise WeatherError(
-                "No location given and GOVEE_DEFAULT_LOCATION isn't set - "
-                "specify a city or set a default location."
-            )
+                                "No location given and GOVEE_DEFAULT_LOCATION isn't set - "
+                                "specify a city or set a default location."
+                            )
 
         lat, lon, resolved_name = self._geocode(location)
 
@@ -109,20 +123,20 @@ class WeatherClient:
         codes = daily.get("weather_code", [])
 
         forecast = [
-            {
-                "date": dates[i],
-                "high_c": highs[i] if i < len(highs) else None,
-                "low_c": lows[i] if i < len(lows) else None,
-                "condition": _condition_for(codes[i] if i < len(codes) else None),
-            }
+                    {
+                    "date": dates[i],
+                    "high_c": highs[i] if i < len(highs) else None,
+                    "low_c": lows[i] if i < len(lows) else None,
+                    "condition": _condition_for(codes[i] if i < len(codes) else None),
+                    }
             for i in range(len(dates))
-        ]
+                    ]
 
         return {
-            "location": resolved_name,
-            "temperature_c": current.get("temperature_2m"),
-            "condition": _condition_for(current.get("weather_code")),
-            "humidity_pct": current.get("relative_humidity_2m"),
-            "wind_kph": current.get("wind_speed_10m"),
-            "forecast": forecast,
-        }
+                "location": resolved_name,
+                "temperature_c": current.get("temperature_2m"),
+                "condition": _condition_for(current.get("weather_code")),
+                "humidity_pct": current.get("relative_humidity_2m"),
+                "wind_kph": current.get("wind_speed_10m"),
+                "forecast": forecast,
+                }

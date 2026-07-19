@@ -251,7 +251,7 @@ true
 </function>
 </tool_call>"""
     calls = parse_tool_calls(qwen35_reply)
-    assert calls == [{"name": "set_power", "arguments": {"device_name": "Bedroom Light 2", "on": True}}]
+    assert calls == [("set_power", {"device_name": "Bedroom Light 2", "on": True})]
     print(f"OK: parsed {calls[0]}")
 
     print("\n== ModelBackend fallback model selection ==")

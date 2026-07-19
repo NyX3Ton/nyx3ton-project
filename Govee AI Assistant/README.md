@@ -71,6 +71,12 @@ figure out what that means. This project adds that layer, entirely locally:
   calls via a small, explicit tool set (power, bulk on/off for many devices
   at once, brightness, RGB color, color temperature, scenes, toggles, fan
   speed).
+- **Two agent architectures** — the default single tool-calling agent, or an
+  opt-in **LlamaIndex multi-agent workflow** (`GOVEE_AGENT_MODE=workflow`) with
+  a device-control agent and an information agent that hand off to each other.
+- **Optional writer–critic refinement** — after an answer is complete, a
+  tool-free critic reviews it and the writer can make one bounded revision.
+  It is off by default, so routine device commands stay responsive.
 - **CUDA → OpenVINO → CPU fallback** — automatically loads the model on
   whatever hardware is available, no manual configuration required.
 - **Semantic device/scene matching** — a lightweight local embedding
@@ -286,19 +292,21 @@ tests.
 The local LLM and tool-calling agent — the core of the "AI" part. Three
 main pieces:
 
-**`ModelBackend`** — loads `unsloth/Qwen3-4B-Instruct-2507` with a
-three-step fallback:
+**`ModelBackend`** — loads the configured local model (`GOVEE_LLM_MODEL`,
+default [`unsloth/gemma-4-E4B-it`](https://huggingface.co/unsloth/gemma-4-E4B-it)) via `transformers`:
 
-1. **CUDA**, via `transformers`, if `torch.cuda.is_available()`.
-2. **OpenVINO** (`optimum-intel`'s `OVModelForCausalLM`), exported once and
-   cached on disk under `ov_cache/` — every subsequent run loads the cached
-   IR instead of re-exporting. Optional INT8 weight compression via `nncf`
-   (`ModelBackend(int8=True)`).
-3. **Plain CPU** via `transformers`, as a last resort.
+1. **CUDA** if `torch.cuda.is_available()`, with optional `bitsandbytes`
+   4-bit/8-bit quantization (`QUANTIZE_BITS`) — 4-bit lets the 8B Gemma-4 fit
+   a 12 GB GPU (~5–6 GB vs ~16 GB full precision).
+2. **Plain CPU** (float32) if CUDA loading fails.
+3. **Model-level fallback**: if the primary model can't be loaded at all
+   (e.g. too large for the available VRAM *and* CPU load fails, or the repo
+   is unavailable), `ModelBackend` retries with `GOVEE_FALLBACK_MODEL_ID`
+   (e.g. the smaller `unsloth/Qwen3.5-2B`). `self.model_id` then reflects
+   whatever actually loaded.
 
-   Whichever backend loads, `.generate()` and the tokenizer expose the same
-   interface, so the tool-calling loop below doesn't need to know which one
-   is active.
+`.generate()` and the tokenizer expose the same interface regardless of which
+model/backend loaded, so the tool-calling loop below doesn't need to know.
 
 **`GoveeTools`** — the actual functions the LLM is allowed to call, each
 wrapping `GoveeClient` with device resolution and capability checking:
@@ -344,7 +352,7 @@ device independently so one offline device can't abort the rest — returning
 system prompt explicitly steers the model to this tool for "all"/"everything"
 /room-level requests.
 
-**`build_tool_schema()`** describes all ten tools in OpenAI-style function-schema
+**`build_tool_schema()`** describes the available tools in OpenAI-style function-schema
 JSON. Qwen3's chat template supports this natively — passing `tools=` to
 `tokenizer.apply_chat_template(...)` makes the model emit
 `<tool_call>{"name": ..., "arguments": {...}}</tool_call>` blocks, which
@@ -358,7 +366,55 @@ bounded loop (`max_tool_iters`, default 5): generate → check for tool calls
 plain-text reply or the iteration budget runs out. `_call_tool` catches
 *any* exception a tool raises (not just the expected ones) and turns it
 into an error message for the model, so a bug in one tool can't take down
-the whole conversation.
+the whole conversation. This is the **default** agent — a single agent with
+many tools.
+
+### Writer–critic refinement — optional self-review
+
+The project has room for the advanced ReAct pattern shown in the supplied
+diagram, and implements a safe, bounded version of it. The normal writer
+first completes its existing ReAct/tool loop: it reasons, uses a tool when
+needed, observes the result, and produces a draft. Then `CritiqueAgent`
+reviews that draft for factual accuracy, completeness, clarity, and safety.
+If it finds a material issue, `WriterCriticAgent` asks the writer to revise the
+answer using that feedback.
+
+The critic has **no tools** and runs only after the writer has finished its
+tool calls. That design is intentional: a critique pass must never retry a
+side-effecting operation such as switching a light or changing a fan speed.
+Both roles reuse the one loaded Gemma model, so enabling it does not download
+or keep a second 8B model in VRAM. It is a response-quality loop, not
+autonomous fine-tuning or persistent self-modification.
+
+Enable it with `GOVEE_CRITIQUE_ENABLED=true`; keep
+`GOVEE_CRITIQUE_MAX_PASSES=1` unless you have a measured reason to add more
+latency. Each pass adds one critic generation and, only when feedback is
+needed, one revision generation. It wraps either `single` or `workflow` mode.
+
+### orchestrator.py — optional multi-agent mode
+
+Set `GOVEE_AGENT_MODE=workflow` to swap the single `GoveeAgent` for a
+**LlamaIndex [`AgentWorkflow`](https://docs.llamaindex.ai/)** — two specialist
+[ReAct](https://docs.llamaindex.ai/en/stable/understanding/agent/) agents
+(`DeviceControl` over the Govee tools, `Information` over weather/news/memory)
+that **hand off** to each other, coordinated by the workflow. Both share one
+model in memory.
+
+The catch is that the local Gemma isn't a LlamaIndex function-calling LLM, so
+`orchestrator.py` provides **`GemmaLocalLLM`**, a `CustomLLM` adapter that wraps
+`ModelBackend` (applying Gemma's chat template, then generating) — which lets
+`ReActAgent` (text-based reasoning, no native tool-call API required) drive it.
+The existing `GoveeTools`/`InfoTools` methods are reused verbatim, wrapped as
+LlamaIndex `FunctionTool`s. **`OrchestratedAgent`** exposes the exact same
+`chat(message, history)` interface as `GoveeAgent`, so `app.py` and the CLI are
+drop-in.
+
+**This is opt-in and off by default on purpose.** Multi-agent ReAct is the
+least reliable tool-calling path on a small local model — the model must emit
+clean `Thought/Action/Action Input/Answer` text, and every handoff is another
+slow `generate()`. The wiring is correct and tested; how well Gemma-4-E4B
+actually follows ReAct format is a tuning question. If it underperforms, set
+`GOVEE_AGENT_MODE=single` to fall straight back to the proven loop.
 
 ### Weather, news & memory
 
@@ -485,12 +541,15 @@ Govee AI Assistant/
 │   ├── weather_client.py            # Open-Meteo weather/forecast wrapper
 │   ├── news_client.py               # RSS headlines + article-extract fetching
 │   ├── memory_store.py              # LlamaIndex + ChromaDB long-term memory (RAG)
-│   └── agent.py                     # ModelBackend, GoveeTools, InfoTools, GoveeAgent
+│   ├── agent.py                     # ModelBackend, GoveeTools, InfoTools, GoveeAgent (default)
+│   └── orchestrator.py              # optional LlamaIndex multi-agent workflow (GOVEE_AGENT_MODE=workflow)
 │
 ├── tests/                         # test package - run as `python -m tests.<name>`
 │   ├── test_govee.py                 # smoke test: list real devices/state
 │   ├── test_tools_offline.py         # offline logic tests (no network/model)
 │   ├── test_memory_news_weather_offline.py  # offline weather/news/memory tests
+│   ├── test_orchestrator_offline.py  # offline multi-agent adapter/workflow tests
+│   ├── test_critique_offline.py      # offline writer--critic loop tests
 │   └── test_app_build.py             # offline Gradio build test (no network/model)
 │
 ├── requirements.txt          # Core deps (Govee client only)
@@ -552,11 +611,24 @@ itself, so this list and that file are always the same list.
 GOVEE_API_KEY=your-govee-api-key-here
 
 # Optional: override the local LLM.
-GOVEE_LLM_MODEL=google/gemma-4-E4B-it
+GOVEE_LLM_MODEL=unsloth/gemma-4-E4B-it
+
+# Optional: fallback model, loaded only if the primary fails to load.
+GOVEE_FALLBACK_MODEL_ID=unsloth/Qwen3.5-2B
 
 # Optional: quantization for the local LLM: 4 (NF4, ~5GB VRAM), 8 (~9GB),
-# or 0 for full bf16 (~16GB). Requires CUDA; ignored on CPU.
+# or 0 for full bf16 (~16GB). Requires CUDA + bitsandbytes; ignored on CPU.
 QUANTIZE_BITS=0
+
+# Optional: agent architecture. "single" (default) = built-in tool-calling
+# loop; "workflow" = LlamaIndex multi-agent orchestration (see orchestrator.py).
+# Workflow is opt-in; multi-agent ReAct is less reliable on a small local model.
+GOVEE_AGENT_MODE=single
+
+# Optional: tool-free final-answer review/revision. It is disabled by default
+# because one pass adds a critic generation and possibly a writer revision.
+GOVEE_CRITIQUE_ENABLED=false
+GOVEE_CRITIQUE_MAX_PASSES=1
 
 # Optional: override the semantic-matching embedding model
 # (default is multilingual; see govee_assistant/semantic_match.py)
@@ -641,7 +713,7 @@ works but is much slower.
 ## Running with Docker Compose
 
 This path runs the assistant in a Linux CUDA container for
-`google/gemma-4-E4B-it`, so your host Python install stays clean. It
+[`unsloth/gemma-4-E4B-it`](https://huggingface.co/unsloth/gemma-4-E4B-it), so your host Python install stays clean. It
 **requires an NVIDIA GPU** — the `Dockerfile` builds `FROM
 nvidia/cuda:12.6.1-cudnn-devel-ubuntu22.04` unconditionally; there is no
 CPU/OpenVINO container path anymore (see the comment block at the top of
@@ -670,6 +742,12 @@ usage: `4` for 4-bit NF4 (~5 GB, good for 8 GB cards), `8` for 8-bit
 (~9 GB), or `0` for full bf16 (~16 GB, needs 24 GB+). `GOVEE_LLM_MODEL` can
 also be overridden there without rebuilding the image.
 
+Compose explicitly sets `GOVEE_LLM_MODEL=unsloth/gemma-4-E4B-it`, so the next
+`docker compose up --build` downloads and uses the Unsloth repository (or
+reuses it from `hf_cache` if already present). Set
+`GOVEE_CRITIQUE_ENABLED=true` in `docker-compose.yml` or your environment to
+turn on the optional writer–critic refinement.
+
 The Compose stack mounts one persistent named volume, `hf_cache`, for the
 ~16 GB of downloaded model weights — the first run downloads them,
 subsequent starts load from the cached volume instead.
@@ -694,6 +772,8 @@ Typical capabilities across common Govee device types:
 # Fast, offline, no model or network required (run from the project root):
 python -m tests.test_tools_offline
 python -m tests.test_memory_news_weather_offline
+python -m tests.test_orchestrator_offline
+python -m tests.test_critique_offline
 python -m tests.test_app_build
 ```
 

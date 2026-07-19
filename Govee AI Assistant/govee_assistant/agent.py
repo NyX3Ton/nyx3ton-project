@@ -1,4 +1,4 @@
-#agent.py  — updated for google/gemma-4-E4B-it + Docker
+# agent.py — local Gemma tool-calling and optional writer--critic refinement
 
 from __future__ import annotations
 
@@ -17,6 +17,13 @@ THINKING_RE = re.compile(r"<\|channel>thought\n.*?<channel\|>", re.DOTALL)
 
 # <tool_call>{...}</tool_call>  (Qwen / Hermes)
 _XML_RE = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL)
+# Backwards-compatible public name used by older integrations and offline tests.
+TOOL_CALL_RE = _XML_RE
+# Qwen 3.5 XML function form, e.g. <function=set_power><parameter=on>true
+# </parameter></function>. Keep it supported because Qwen is the documented
+# fallback model even though Gemma's compact call format is the primary path.
+_QWEN_FUNCTION_RE = re.compile(r"<function=([\w-]+)>\s*(.*?)\s*</function>", re.DOTALL)
+_QWEN_PARAMETER_RE = re.compile(r"<parameter=([\w-]+)>\s*(.*?)\s*</parameter>", re.DOTALL)
 # Fenced code block with an optional language tag we recognize
 _FENCE_RE = re.compile(r"```(?:tool_call|tool_code|json|python)?\s*\n?(.*?)```", re.DOTALL)
 # Gemma 4 compact format:  call:name{key:value, key:value}   or   call:name{}
@@ -105,6 +112,13 @@ def _python_to_calls(code: str) -> list[tuple[str, dict]]:
         calls.append((node.func.id, args))
     return calls
 
+def _qwen_xml_to_calls(text: str) -> list[tuple[str, dict]]:
+    calls: list[tuple[str, dict]] = []
+    for name, body in _QWEN_FUNCTION_RE.findall(text):
+        arguments = {key: _coerce(value) for key, value in _QWEN_PARAMETER_RE.findall(body)}
+        calls.append((name, arguments))
+    return calls
+
 def parse_tool_calls(text: str) -> list[tuple[str, dict]]:
     # 0. Gemma 4 compact format: call:name{k:v,k:v}
     calls = _compact_to_calls(text)
@@ -116,7 +130,12 @@ def parse_tool_calls(text: str) -> list[tuple[str, dict]]:
     if calls:
         return calls
 
-    # 2. Fenced code blocks (```tool_code / ```json / ```python / ```)
+    # 2. Qwen's XML function form (also used by the configured fallback).
+    calls = _qwen_xml_to_calls(text)
+    if calls:
+        return calls
+
+    # 3. Fenced code blocks (```tool_code / ```json / ```python / ```)
     for block in _FENCE_RE.findall(text):
         block = block.strip()
         whole = _json_to_call(block)
@@ -131,7 +150,7 @@ def parse_tool_calls(text: str) -> list[tuple[str, dict]]:
     if calls:
         return calls
 
-    # 3. Bare JSON object anywhere in the text (last resort)
+    # 4. Bare JSON object anywhere in the text (last resort)
     return [c for m in _find_json_objects(text) if (c := _json_to_call(m))]
 
 SYSTEM_PROMPT = (
@@ -187,19 +206,40 @@ class DeviceNotFoundError(Exception):
 # Backend loading: CUDA (+ optional bitsandbytes quantization) -> CPU
 # ---------------------------------------------------------------------------
 class ModelBackend:
-    def __init__(self, model_id: str = config.GOVEE_LLM_MODEL):
+    def __init__(
+        self,
+        model_id: str = config.GOVEE_LLM_MODEL,
+        fallback_model_id: str = config.GOVEE_FALLBACK_MODEL,
+    ):
         self.model_id = model_id
+        self.fallback_model_id = fallback_model_id
         self.backend_name, self.model, self.processor = self._load()
         # Compatibility alias so any code still referencing backend.tokenizer keeps working.
-        self.tokenizer = self.processor.tokenizer
-        logger.info("Loaded %s on backend=%s", model_id, self.backend_name)
+        self.tokenizer = getattr(self.processor, "tokenizer", self.processor)
+        # self.model_id reflects whatever actually loaded (may be the fallback).
+        logger.info("Loaded %s on backend=%s", self.model_id, self.backend_name)
 
     def _load(self) -> tuple[str, Any, Any]:
+        # Try the primary model first; if it can't be loaded at all (e.g. too
+        # large for available VRAM and even CPU load fails, or the repo is
+        # unavailable), fall back to the configured secondary model.
+        try:
+            return self._load_model(self.model_id)
+        except Exception:
+            logger.exception("Failed to load primary model %s", self.model_id)
+            if self.fallback_model_id and self.fallback_model_id != self.model_id:
+                logger.warning("Falling back to secondary model %s", self.fallback_model_id)
+                result = self._load_model(self.fallback_model_id)
+                self.model_id = self.fallback_model_id  # report what actually loaded
+                return result
+            raise
+
+    def _load_model(self, model_id: str) -> tuple[str, Any, Any]:
         from transformers import AutoProcessor, AutoModelForCausalLM
 
         # Gemma 4 processor handles text (+ image/audio in multimodal paths).
         # For text-only tool-calling we only use the text pathway.
-        processor = AutoProcessor.from_pretrained(self.model_id)
+        processor = AutoProcessor.from_pretrained(model_id)
 
         quant_bits = config.QUANTIZE_BITS
         load_kwargs: dict[str, Any] = {"torch_dtype": "auto", "device_map": "auto"}
@@ -215,26 +255,26 @@ class ModelBackend:
                     )
                 else:
                     load_kwargs["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
-                logger.info("Using %d-bit quantization via bitsandbytes", quant_bits)
+                logger.info("Using %d-bit quantization via bitsandbytes for %s", quant_bits, model_id)
             except ImportError:
                 logger.warning("bitsandbytes not installed — loading in full precision")
 
         # 1. CUDA (device_map="auto" handles multi-GPU if present)
         if torch.cuda.is_available():
             try:
-                model = AutoModelForCausalLM.from_pretrained(self.model_id, **load_kwargs)
+                model = AutoModelForCausalLM.from_pretrained(model_id, **load_kwargs)
                 return "cuda", model, processor
             except Exception:
-                logger.exception("CUDA load failed, falling back to CPU")
+                logger.exception("CUDA load failed for %s, trying CPU", model_id)
 
         # 2. Plain CPU — quantization not supported without CUDA
         if quant_bits:
             logger.warning(
-                            "Quantization requires CUDA — loading in float32. "
-                            "Expect slow inference and high RAM usage (~16 GB for full bf16)."
+                            "Quantization requires CUDA — loading %s in float32. "
+                            "Expect slow inference and high RAM usage.", model_id,
                             )
         cpu_kwargs: dict[str, Any] = {"torch_dtype": torch.float32}
-        model = AutoModelForCausalLM.from_pretrained(self.model_id, **cpu_kwargs)
+        model = AutoModelForCausalLM.from_pretrained(model_id, **cpu_kwargs)
         return "cpu", model, processor
 
     def generate(self, chat_text: str, max_new_tokens: int = 512) -> str:
@@ -244,7 +284,7 @@ class ModelBackend:
             inputs = inputs.to(self.model.device)
 
         with torch.inference_mode():
-            output_ids = self.model.generate(**inputs,max_new_tokens=max_new_tokens,temperature=0.3,top_p=0.9,top_k=40,do_sample=True,repetition_penalty=1.05)
+            output_ids = self.model.generate(**inputs,max_new_tokens=max_new_tokens,temperature=1.0,top_p=0.95,top_k=64,do_sample=True,repetition_penalty=1.05)
 
         new_tokens = output_ids[0][inputs["input_ids"].shape[1]:]
         decoded = self.processor.decode(new_tokens, skip_special_tokens=True)
@@ -313,6 +353,42 @@ class GoveeTools:
             return {"error": f"{d.device_name} doesn't support power control"}
         self.client.set_power(d, on)
         return {"ok": True, "device": d.device_name, "power": "on" if on else "off"}
+
+    def set_power_all(
+        self,
+        on: bool,
+        device_type: Optional[str] = None,
+        name_contains: Optional[str] = None,
+    ) -> dict:
+        """Set power independently on every matching power-capable device."""
+        type_filter = (device_type or "").strip().lower()
+        name_filter = (name_contains or "").strip().lower()
+        matched = [
+            device for device in self.client.list_devices()
+            if (not type_filter or device.device_type.rsplit(".", 1)[-1].lower() == type_filter)
+            and (not name_filter or name_filter in device.device_name.lower())
+        ]
+        if not matched:
+            filters = ", ".join(part for part in (
+                f"type={device_type!r}" if type_filter else "",
+                f"name_contains={name_contains!r}" if name_filter else "",
+            ) if part)
+            return {"error": f"No devices matched {filters or 'the requested filters'}"}
+
+        changed: list[str] = []
+        skipped: list[str] = []
+        errors: list[dict[str, str]] = []
+        for device in matched:
+            if not device.has("devices.capabilities.on_off", "powerSwitch"):
+                skipped.append(device.device_name)
+                continue
+            try:
+                self.client.set_power(device, on)
+                changed.append(device.device_name)
+            except Exception as exc:  # noqa: BLE001 - one device must not abort the batch
+                logger.exception("Bulk power change failed for %s", device.device_name)
+                errors.append({"device": device.device_name, "error": str(exc)})
+        return {"ok": bool(changed) and not errors, "power": "on" if on else "off", "changed": changed, "skipped": skipped, "errors": errors}
 
     def set_brightness(self, device_name: str, percent: int) -> dict:
         d = self._find_device(device_name)
@@ -512,6 +588,15 @@ def build_tool_schema() -> list[dict]:
             }, "required": ["device_name", "on"]},
         }},
         {"type": "function", "function": {
+            "name": "set_power_all",
+            "description": "Turn every matching power-capable device on or off in one call. Use for requests about all devices, all lights, or a room.",
+            "parameters": {"type": "object", "properties": {
+                "on": {"type": "boolean"},
+                "device_type": {"type": "string", "description": "Optional type filter, e.g. light, fan, socket."},
+                "name_contains": {"type": "string", "description": "Optional case-insensitive name/room filter, e.g. bedroom."},
+            }, "required": ["on"]},
+        }},
+        {"type": "function", "function": {
             "name": "set_brightness",
             "description": "Set a light's brightness as a percentage (1-100).",
             "parameters": {"type": "object", "properties": {
@@ -629,6 +714,7 @@ class GoveeAgent:
                                                             "list_devices":    self.tools_impl.list_devices,
                                                             "get_device_state": self.tools_impl.get_device_state,
                                                             "set_power":       self.tools_impl.set_power,
+                                                            "set_power_all":   self.tools_impl.set_power_all,
                                                             "set_brightness":  self.tools_impl.set_brightness,
                                                             "set_color_rgb":   self.tools_impl.set_color_rgb,
                                                             "set_color_temp":  self.tools_impl.set_color_temp,
@@ -705,3 +791,90 @@ class GoveeAgent:
             return proc.apply_chat_template(messages, tools=self.tool_schema,add_generation_prompt=True, tokenize=False, enable_thinking=False)
         except TypeError:
             return proc.apply_chat_template(messages, tools=self.tool_schema,add_generation_prompt=True, tokenize=False)
+
+
+# ---------------------------------------------------------------------------
+# Optional writer--critic loop
+# ---------------------------------------------------------------------------
+class CritiqueAgent:
+    """Tool-free final-answer reviewer backed by the already-loaded local LLM.
+
+    It deliberately runs *after* the writer has finished all tool calls.  A
+    critic must not be allowed to repeat commands with external side effects.
+    """
+
+    REVIEW_SYSTEM_PROMPT = (
+        "You are CriticAgent in a bounded writer-critic loop for a local smart-home "
+        "assistant. Review the draft answer for accuracy, completeness, clarity, and "
+        "safety. Never assume a device action or a fact happened unless the draft says "
+        "so. Never suggest tool calls. If there is no material issue, reply with exactly "
+        "APPROVE. Otherwise give concise, actionable feedback only."
+    )
+    REVISE_SYSTEM_PROMPT = (
+        "You are WriterAgent revising a completed smart-home assistant response. Return "
+        "only the final answer for the user. Apply useful critic feedback, while preserving "
+        "all facts from the original draft. Do not invent tool results, device actions, or "
+        "new information, and do not mention the critic or this revision process."
+    )
+
+    def __init__(self, backend: ModelBackend, max_passes: int = 1):
+        self.backend = backend
+        self.max_passes = max(0, max_passes)
+
+    def _render(self, messages: list[dict]) -> str:
+        try:
+            return self.backend.processor.apply_chat_template(
+                messages, add_generation_prompt=True, tokenize=False, enable_thinking=False
+            )
+        except TypeError:
+            return self.backend.processor.apply_chat_template(
+                messages, add_generation_prompt=True, tokenize=False
+            )
+        except Exception:
+            # A small compatibility fallback for processors with an unusual
+            # chat template. ModelBackend still handles generation normally.
+            return "\n\n".join(f"{m['role'].upper()}: {m['content']}" for m in messages) + "\n\nASSISTANT:"
+
+    def refine(self, user_message: str, draft: str) -> str:
+        current = draft
+        for _ in range(self.max_passes):
+            feedback = self.backend.generate(self._render([
+                {"role": "system", "content": self.REVIEW_SYSTEM_PROMPT},
+                {"role": "user", "content": f"User request:\n{user_message}\n\nDraft answer:\n{current}"},
+            ]), max_new_tokens=256).strip()
+            if feedback.upper().startswith("APPROVE"):
+                break
+
+            revised = self.backend.generate(self._render([
+                {"role": "system", "content": self.REVISE_SYSTEM_PROMPT},
+                {"role": "user", "content": (
+                    f"User request:\n{user_message}\n\nOriginal draft:\n{current}"
+                    f"\n\nCritic feedback:\n{feedback}"
+                )},
+            ]), max_new_tokens=512).strip()
+            if not revised:
+                logger.warning("Critic revision was empty; retaining the original draft")
+                break
+            current = revised
+        return current
+
+
+class WriterCriticAgent:
+    """Drop-in wrapper that adds a tool-free critique pass to any agent mode."""
+
+    def __init__(self, writer: Any, critic: Optional[CritiqueAgent] = None):
+        self.writer = writer
+        self.backend = writer.backend
+        self.critic = critic or CritiqueAgent(self.backend, config.GOVEE_CRITIQUE_MAX_PASSES)
+
+    def chat(self, user_message: str, history: Optional[list[dict]] = None) -> tuple[str, list[dict]]:
+        draft, new_history = self.writer.chat(user_message, history)
+        try:
+            reply = self.critic.refine(user_message, draft)
+        except Exception:  # noqa: BLE001
+            logger.exception("Critique pass failed; returning the writer draft")
+            return draft, new_history
+
+        if reply != draft and new_history and new_history[-1].get("role") == "assistant":
+            new_history = [*new_history[:-1], {"role": "assistant", "content": reply}]
+        return reply, new_history

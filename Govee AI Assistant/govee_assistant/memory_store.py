@@ -16,12 +16,10 @@
 
 from __future__ import annotations
 
-import logging
-import uuid
+import logging, uuid, chromadb
 from datetime import datetime, timezone
 from typing import Any, Optional, Sequence
 
-import chromadb
 from llama_index.core import VectorStoreIndex
 from llama_index.core.embeddings import BaseEmbedding
 from llama_index.core.schema import TextNode
@@ -39,15 +37,7 @@ DEFAULT_PATH = app_config.GOVEE_MEMORY_DB
 # disabled" distinct from "not passed, fall back to the configured default".
 _USE_CONFIG_CUTOFF = object()
 
-
 class SemanticMatchEmbedding(BaseEmbedding):
-    """LlamaIndex embedding backed by semantic_match.encode.
-
-    Reuses the same multilingual model semantic_match.py already loads for
-    device-name matching, rather than pulling in a second embedding model for
-    the memory store.
-    """
-
     def _get_query_embedding(self, query: str) -> list[float]:
         from . import semantic_match
 
@@ -73,55 +63,43 @@ class SemanticMatchEmbedding(BaseEmbedding):
 def _row(content: str, metadata: Optional[dict]) -> dict:
     metadata = metadata or {}
     return {
-        "when": metadata.get("created_at", ""),
-        "category": metadata.get("category", ""),
-        "content": content,
-    }
+            "when": metadata.get("created_at", ""),
+            "category": metadata.get("category", ""),
+            "content": content,
+            }
 
 
 class MemoryStore:
     def __init__(
-        self,
-        path: Optional[str] = None,
-        embed_model: Optional[BaseEmbedding] = None,
-        client: Optional[Any] = None,
-        similarity_cutoff: Any = _USE_CONFIG_CUTOFF,
-    ):
-        """
-        similarity_cutoff: if set, search() drops retrieved memories whose
-        relevance score is below this value. Left off by default because the
-        score scale depends on the embedding model, and a too-aggressive cutoff
-        would silently hide legitimate recalls; enable it deliberately once
-        tuned for your model. When not passed, falls back to
-        config.GOVEE_MEMORY_SIMILARITY_CUTOFF (env var GOVEE_MEMORY_SIMILARITY_CUTOFF);
-        pass an explicit None to force it off regardless of config.
-        """
+                    self,
+                    path: Optional[str] = None,
+                    embed_model: Optional[BaseEmbedding] = None,
+                    client: Optional[Any] = None,
+                    similarity_cutoff: Any = _USE_CONFIG_CUTOFF,
+                ):
+
         self.path = path or DEFAULT_PATH
         self._embed_model = embed_model or SemanticMatchEmbedding()
         self._similarity_cutoff = (
-            app_config.GOVEE_MEMORY_SIMILARITY_CUTOFF
-            if similarity_cutoff is _USE_CONFIG_CUTOFF
-            else similarity_cutoff
-        )
+                                    app_config.GOVEE_MEMORY_SIMILARITY_CUTOFF
+                                    if similarity_cutoff is _USE_CONFIG_CUTOFF
+                                    else similarity_cutoff
+                                    )
 
         if client is None:
             client = chromadb.PersistentClient(path=self.path)
         self._client = client
         # cosine space keeps retriever scores comparable across queries.
-        self._collection = client.get_or_create_collection(
-            name=COLLECTION_NAME, metadata={"hnsw:space": "cosine"}
-        )
+        self._collection = client.get_or_create_collection(name=COLLECTION_NAME, metadata={"hnsw:space": "cosine"})
         vector_store = ChromaVectorStore(chroma_collection=self._collection)
-        self._index = VectorStoreIndex.from_vector_store(
-            vector_store, embed_model=self._embed_model
-        )
+        self._index = VectorStoreIndex.from_vector_store(vector_store, embed_model=self._embed_model)
 
     def add(self, category: str, content: str) -> None:
         node = TextNode(
-            id_=uuid.uuid4().hex,
-            text=content,
-            metadata={"category": category, "created_at": datetime.now(timezone.utc).isoformat()},
-        )
+                        id_=uuid.uuid4().hex,
+                        text=content,
+                        metadata={"category": category, "created_at": datetime.now(timezone.utc).isoformat()},
+                        )
         self._index.insert_nodes([node])
 
     def recent(self, limit: int = 10, category: Optional[str] = None) -> list[dict]:

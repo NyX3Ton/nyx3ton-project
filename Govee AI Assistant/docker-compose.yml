@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# Govee AI Assistant — docker-compose for google/gemma-4-E4B-it
+# Govee AI Assistant — docker-compose for unsloth/gemma-4-E4B-it
 #
 # Prerequisites:
 #   1. NVIDIA Container Toolkit installed on the host.
@@ -56,13 +56,18 @@ services:
 
       # ── Model selection ──────────────────────────────────────────────
       # Change GOVEE_LLM_MODEL here without rebuilding the image.
-      GOVEE_LLM_MODEL: "google/gemma-4-E4B-it"
+      GOVEE_LLM_MODEL: "unsloth/gemma-4-E4B-it"
 
       # ── Quantization ─────────────────────────────────────────────────
       # 4  → 4-bit NF4  (~5 GB VRAM)  — good for 8 GB cards (RTX 3070 etc.)
       # 8  → 8-bit      (~9 GB VRAM)  — better quality, needs 12 GB+
       # 0  → full bf16  (~16 GB VRAM) — best quality, needs 24 GB+
       QUANTIZE_BITS: "4"
+
+      # Optional final-answer writer--critic refinement. This adds up to two
+      # local model generations per response, so it is disabled by default.
+      GOVEE_CRITIQUE_ENABLED: "false"
+      GOVEE_CRITIQUE_MAX_PASSES: "1"
 
       # ── Optional overrides ────────────────────────────────────────────
       # GOVEE_EMBEDDING_MODEL: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2

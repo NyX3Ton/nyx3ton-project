@@ -274,10 +274,26 @@ def build_ui(client: ClientLike, agent: AgentLike) -> gr.Blocks:
 
     return demo
 
+def _build_agent(client):
+    # GOVEE_AGENT_MODE=workflow opts into the LlamaIndex multi-agent orchestrator;
+    # anything else (default "single") uses the built-in tool-calling loop.
+    if config.GOVEE_AGENT_MODE == "workflow":
+        from govee_assistant.orchestrator import OrchestratedAgent
+        logger.info("Agent mode: workflow (LlamaIndex multi-agent orchestration)")
+        agent = OrchestratedAgent(client)
+    else:
+        logger.info("Agent mode: single (built-in tool-calling loop)")
+        agent = GoveeAgent(client)
+    if config.GOVEE_CRITIQUE_ENABLED:
+        from govee_assistant.agent import WriterCriticAgent
+        logger.info("Writer-critic refinement: enabled (%d pass(es))", config.GOVEE_CRITIQUE_MAX_PASSES)
+        agent = WriterCriticAgent(agent)
+    return agent
+
 def main():
     client = GoveeClient()
     logger.info("Loading local LLM agent (first run can take a while)")
-    agent = GoveeAgent(client)
+    agent = _build_agent(client)
     demo = build_ui(client, agent)
     demo.launch(theme=THEME,css=CSS,server_name=config.GRADIO_SERVER_NAME,server_port=config.GRADIO_SERVER_PORT)
 
