@@ -20,6 +20,8 @@ directly — all through a small, dependency-light Python stack.
 - [Why this exists](#why-this-exists)
 - [Features](#features)
 - [Architecture](#architecture)
+  - [Agent topology](#agent-topology)
+  - [Visual interface](#visual-interface)
 - [How each component works](#how-each-component-works)
   - [govee_client.py](#govee_clientpy)
   - [semantic_match.py](#semantic_matchpy)
@@ -46,7 +48,7 @@ official way to say *"turn off whatever's on in the bedroom"* and have it
 figure out what that means. This project adds that layer, entirely locally:
 
 - **No cloud LLM.** The model that interprets your requests runs on your own
-  GPU (or CPU/OpenVINO as a fallback) — only the Govee API calls themselves
+  GPU (or CPU as a fallback) — only the Govee API calls themselves
   leave the machine.
 - **Capability-aware, not hardcoded.** Every device advertises its own
   capabilities (a fan and a light strip support completely different
@@ -61,12 +63,11 @@ figure out what that means. This project adds that layer, entirely locally:
 - **Live dashboard** — every device on your account, current state
   (power / brightness / color temp / online status / sensor readings),
   refreshed on load, on demand, and after each chat turn.
-- **Polished, themed UI** — a `Soft` theme (light/dark aware) with device
-  cards, colored status pills, and metric chips, plus a **"Show offline
-  devices" toggle** to declutter the dashboard down to what's actually
-  reachable. The chat panel has an **Expand chat** toggle that grows the
-  chat in-page — reversible with the same button, no browser-fullscreen
-  trap.
+- **Operations-focused UI** — a lean, dark/light-aware operations dashboard
+  with a device estate panel, compact status chips, direct controls, and an
+  assistant workspace. The **Offline** filter keeps the device list focused,
+  and **Open overlay** launches a large chat workspace without losing the
+  dashboard or conversation history.
 - **Natural-language control** — a local LLM plans and executes Govee API
   calls via a small, explicit tool set (power, bulk on/off for many devices
   at once, brightness, RGB color, color temperature, scenes, toggles, fan
@@ -77,8 +78,8 @@ figure out what that means. This project adds that layer, entirely locally:
 - **Optional writer–critic refinement** — after an answer is complete, a
   tool-free critic reviews it and the writer can make one bounded revision.
   It is off by default, so routine device commands stay responsive.
-- **CUDA → OpenVINO → CPU fallback** — automatically loads the model on
-  whatever hardware is available, no manual configuration required.
+- **CUDA → CPU fallback** — loads the model on CUDA when available and falls
+  back to plain CPU inference if CUDA loading fails.
 - **Semantic device/scene matching** — a lightweight local embedding
   model resolves descriptive or approximate names when an exact match
   isn't found, and stays conservative when a request is genuinely
@@ -87,11 +88,10 @@ figure out what that means. This project adds that layer, entirely locally:
   so a request in French, Spanish, German, etc. can still resolve to a
   device named in English, and the LLM is instructed to reply in whatever
   language the user wrote in.
-- **Speech-to-text** — a mic button next to the chat box transcribes what
-  you say (via a local, multilingual Whisper model covering the same
-  languages as the semantic matcher) and sends the transcript through the
-  same chat/tool path as typed control. The UI shows a small `Heard: ...`
-  status so you can see exactly what Whisper understood.
+- **Speech-to-text** — an optional **Voice input** panel records and
+  transcribes speech with a local, multilingual Whisper model. The transcript
+  is placed in the composer for review before it follows the same chat/tool
+  path as typed control.
   Recordings are decoded in-process (stdlib `wave` + numpy), so voice works
   **without ffmpeg installed** in the common case.
 - **Automatic unit correction** — Govee's sensor API reports temperature
@@ -108,10 +108,11 @@ figure out what that means. This project adds that layer, entirely locally:
 
 ```mermaid
 flowchart LR
-    subgraph UI["app.py — Gradio UI"]
-        Dash[Device dashboard]
-        Chat[Chat panel]
-        Mic[Mic button]
+    subgraph UI["app.py — Gradio operations UI"]
+        Dash[Device estate]
+        Chat[Compact chat]
+        Overlay[Expanded chat overlay]
+        Mic[Optional voice input]
     end
 
     subgraph Agent["agent.py"]
@@ -128,6 +129,7 @@ flowchart LR
     Dash -- direct control calls --> GC
     Mic -- transcribe --> STT
     STT -- sends transcript --> Chat
+    Chat <--> Overlay
     Chat --> GA
     GA --> MB
     GA --> GT
@@ -143,6 +145,74 @@ network connection or a loaded model — every layer's dependency is a
 [`typing.Protocol`](https://docs.python.org/3/library/typing.html#typing.Protocol)
 (a structural interface), so a fake object with the right methods can stand
 in for the real thing in tests.
+
+### Agent topology
+
+Only one **writer path** is selected at startup. The optional critic wraps the
+selected writer after it has completed any tool work; it is not a second
+controller and cannot issue device commands.
+
+| Component | Enabled by | Responsibility | Tool access |
+|---|---|---|---|
+| `GoveeAgent` | `GOVEE_AGENT_MODE=single` (default) | Runs the project’s bounded generate → tool → observe loop for device, weather, news, and memory requests. | `GoveeTools` + `InfoTools` |
+| `OrchestratedAgent` | `GOVEE_AGENT_MODE=workflow` | Drop-in wrapper around the LlamaIndex multi-agent workflow. | Delegates to specialists |
+| `DeviceControl` ReAct agent | Workflow mode | Handles Govee device inspection and control, including bulk power changes. | `GoveeTools` |
+| `Information` ReAct agent | Workflow mode | Handles weather, news, article extracts, and long-term memory. | `InfoTools` |
+| `CritiqueAgent` | `GOVEE_CRITIQUE_ENABLED=true` | Reviews only the completed natural-language draft for accuracy, clarity, and safety; its shared backend creates a bounded rewrite only when feedback is needed. | None |
+| `WriterCriticAgent` | `GOVEE_CRITIQUE_ENABLED=true` | Wraps the selected writer, applies up to `GOVEE_CRITIQUE_MAX_PASSES` passes, and replaces the final chat-history entry with the refined reply. | Inherits writer; critic remains tool-free |
+
+`ModelBackend` and `GemmaLocalLLM` are shared local-model adapters, not
+separate agents: they keep one model loaded while serving the selected writer
+and, when enabled, the critic.
+
+```mermaid
+flowchart TB
+    Request[User request] --> Mode{GOVEE_AGENT_MODE}
+
+    Mode -->|single| Writer[GoveeAgent]
+    Writer --> Tools[GoveeTools + InfoTools]
+    Tools --> Writer
+
+    Mode -->|workflow| Workflow[OrchestratedAgent]
+    Workflow --> Device[DeviceControl ReAct agent]
+    Workflow --> Info[Information ReAct agent]
+    Device <--> Handoff[AgentWorkflow handoff]
+    Info <--> Handoff
+    Handoff --> Workflow
+
+    Writer --> Draft[Completed draft]
+    Workflow --> Draft
+    Draft --> CriticToggle{Critique enabled?}
+    CriticToggle -->|no| Reply[Final reply]
+    CriticToggle -->|yes| Critic[CritiqueAgent\nNo tools]
+    Critic --> Revision[Shared backend revision]
+    Revision --> Reply
+```
+
+The default path is deliberately the simplest and fastest. Workflow mode
+adds specialist handoffs for broader tasks; critic mode adds a final response
+quality pass. Neither feature changes the direct dashboard controls, which
+continue to call `GoveeClient` without involving an LLM.
+
+### Visual interface
+
+The Gradio frontend is designed as an operations console rather than a
+consumer chat page: device state and direct actions remain visible, while a
+larger workspace is available when a conversation needs more room.
+
+```mermaid
+flowchart TB
+    Header["Govee Operations header\nManaged-device count · local backend status"]
+    Header --> Estate["Device estate\nLive state · offline filter · refresh · direct power/brightness controls"]
+    Header --> Assistant["Operations assistant\nCompact conversation · typed composer · clear history"]
+    Assistant --> Voice["Optional Voice input\nLocal transcription into the composer"]
+    Assistant --> Overlay["Open overlay\nLarge synchronized chat workspace · close control"]
+```
+
+The compact and overlay chat views share the same `gr.State` history. Messages
+sent from either view appear in both, and clearing the conversation clears
+both views. The overlay is a CSS-backed workspace inside the app, not browser
+fullscreen, so users can close it immediately and return to the device estate.
 
 ### Request flow (chat)
 
@@ -222,11 +292,10 @@ Fuzzy name matching. A small, dependency-isolated module used as a
 **fallback**, not a replacement, for exact/substring name matching
 elsewhere in the project.
 
-- Uses [`sentence-transformers`](https://www.sbert.net/)'
-  `paraphrase-multilingual-MiniLM-L12-v2` (~470MB, 50+ languages) on CPU —
-  still orders of magnitude smaller than the reasoning model, so it doesn't
-  need the CUDA/OpenVINO fallback chain; it's loaded once, lazily, on first
-  use. Being multilingual means a query in, say, French or Spanish embeds
+- Uses [`sentence-transformers`](https://www.sbert.net/)
+  `paraphrase-multilingual-mpnet-base-v2` on CPU by default. It is loaded
+  once, lazily, on first use and remains separate from the reasoning model.
+  Being multilingual means a query in, say, French or Spanish embeds
   close to its English equivalent, so it can resolve device/scene names
   that are only ever stored in English. Override the model via the
   `GOVEE_EMBEDDING_MODEL` env var (e.g. back to the smaller English-only
@@ -242,13 +311,13 @@ elsewhere in the project.
 
 ### speech_to_text.py
 
-Local speech-to-text, wired into the mic button next to the chat box in
+Local speech-to-text, wired into the optional **Voice input** accordion in
 `app.py`. Deliberately the same shape as `semantic_match.py`: one lazily
 loaded model, one small public function, one injectable hook for offline
 tests.
 
 - Uses `transformers`' `automatic-speech-recognition` pipeline with
-  **Whisper** (`openai/whisper-small` by default, ~500MB) — no new pip
+  **Whisper** (`openai/whisper-base` by default) — no new pip
   dependency, since `transformers`/`torch` are already required by
   `agent.py`.
 - **No hard `ffmpeg` dependency.** Rather than handing the pipeline a file
@@ -376,8 +445,8 @@ diagram, and implements a safe, bounded version of it. The normal writer
 first completes its existing ReAct/tool loop: it reasons, uses a tool when
 needed, observes the result, and produces a draft. Then `CritiqueAgent`
 reviews that draft for factual accuracy, completeness, clarity, and safety.
-If it finds a material issue, `WriterCriticAgent` asks the writer to revise the
-answer using that feedback.
+If it finds a material issue, the shared local backend produces one revised
+answer using that feedback; `WriterCriticAgent` returns the refined result.
 
 The critic has **no tools** and runs only after the writer has finished its
 tool calls. That design is intentional: a critique pass must never retry a
@@ -469,34 +538,33 @@ and four more tools in `build_tool_schema()`: `get_weather`, `get_news`,
 
 ### app.py
 
-The Gradio dashboard and chat UI. A themed two-column
+The Gradio operations dashboard. A themed, responsive
 [`gr.Blocks`](https://www.gradio.dev/docs/gradio/blocks) app, built by
 `build_ui(client, agent)`:
 
-- **Look & feel.** A `gr.themes.Soft` theme (indigo accent, slate neutrals,
-  the Inter font) plus a small stylesheet of theme-aware CSS. All custom
-  colours reference Gradio's own CSS variables, so the UI stays correct in
-  both light and dark mode. There's a header bar with the app title and a
-  live **backend badge** (`backend · cuda`).
-- **Left column — devices.** One rounded **card** per device (built
-  dynamically from the real device list at startup), each with an icon chip,
-  the device name, and its state rendered as a **status pill** (green *On*,
-  grey *Off*, red *Offline/Error*) plus metric **chips** (brightness, Kelvin,
-  °C, humidity, oscillation). Power toggle and/or brightness controls call
-  `GoveeClient` **directly** — bypassing the LLM entirely for quick manual
-  control. A section header shows the device count and a compact refresh
-  button, and a **"Show offline devices" checkbox** hides offline device
-  cards without an extra API call — it re-filters the same cached
-  online/offline map (a `gr.State(dict)` populated by the last refresh)
-  rather than re-fetching state.
-- **Right column — chat.** A `gr.Chatbot` (messages format) wired to
-  `GoveeAgent.chat`, with the tool-aware conversation history kept in
-  `gr.State` separately from the display-only chat log. Below it: a text box
-  (Enter to send) and a `gr.Audio` mic button (stopping a recording calls
-  `speech_to_text.transcribe` and fills the text box with the transcript for
-  review before sending). An **Expand chat** button grows the chat in-page —
-  taller — via a Gradio state toggle (no browser Fullscreen API, so nothing
-  can trap the window); the same button reverses it.
+- **Operations header.** The `Govee Operations` header presents the managed
+  device count and the active local backend, so an operator can confirm the
+  running context at a glance.
+- **Device estate.** The primary panel lists the real device inventory with
+  compact icons, status pills (green *On*, neutral *Off*, red
+  *Offline/Error*), and metric chips (brightness, Kelvin, °C, humidity, and
+  oscillation). Direct power and brightness controls call `GoveeClient`
+  **without an LLM**. The **Offline** filter reuses the cached online-state
+  map held in `gr.State(dict)`; it does not make another API request.
+- **Operations assistant.** The compact `gr.Chatbot` uses display history
+  separately from tool-aware `agent_history`. Operators can type and submit
+  with Enter, clear the conversation, or reveal the optional **Voice input**
+  accordion. Stopping a recording calls `speech_to_text.transcribe` and puts
+  the transcript into the composer for review.
+- **Expanded overlay.** **Open overlay** shows a large, CSS-backed chat
+  workspace with its own composer and close control. Both chat views share
+  the same conversation and agent history, so a message sent in either view
+  immediately appears in the other. It is not browser fullscreen and never
+  traps the user in the overlay.
+- **Responsive styling.** The stylesheet favors clear spacing, restrained
+  operational color, compact controls, and a single-column presentation on
+  narrow screens. It keeps Gradio’s `Soft` theme and Inter font while adding
+  the layout-specific CSS.
 - Targets **Gradio 6**, where `theme`/`css` are passed to `.launch()` rather
   than the `Blocks()` constructor (that moved between Gradio 5 and 6).
 - State refreshes on page load, on a manual refresh click, after any
@@ -520,6 +588,8 @@ no-model stand-ins and still pass static type checking.
 | `agent_cli.py` | Interactive terminal chat loop against the real agent | Yes (Govee API + local model) |
 | `test_tools_offline.py` | Exercises device resolution, capability checks, clamping, fan-speed schema handling, and semantic matching against **fake** devices | No |
 | `test_memory_news_weather_offline.py` | Exercises `WeatherClient`/`NewsClient` parsing and `MemoryStore`/`InfoTools` RAG recall against **fake** HTTP responses and a fake embedding function | No |
+| `test_orchestrator_offline.py` | Exercises the local-model adapter, specialist tool wrapping, and workflow construction with fakes | No |
+| `test_critique_offline.py` | Exercises critic approval, revision, and synchronized final history without a model | No |
 | `test_app_build.py` | Builds the entire Gradio `Blocks` graph against a fake client and a stub agent, without launching a server | No |
 
 The offline test files are the fast feedback loop — run them after any
@@ -803,9 +873,9 @@ pyright .
   requests/account/day limit. The dashboard only polls state on load,
   manual refresh, and after actions/chat turns by design, so this
   shouldn't happen under normal use.
-- **First launch is slow / seems to hang** — expected on the very first
-  run while the model downloads and (on non-CUDA machines) exports to
-  OpenVINO; subsequent runs use the cache and are much faster.
+- **First launch is slow / seems to hang** — expected while the model is
+  downloaded and loaded for the first time. On a non-CUDA machine the model
+  runs on CPU, which is substantially slower; subsequent starts reuse cache.
 - **Docker says the Gradio port is forbidden or unavailable** — Windows can
   reserve common Gradio ports such as `7860` and `7861`. Compose defaults to
   host port `17861`; open `http://127.0.0.1:17861`. If needed, set
@@ -815,7 +885,7 @@ pyright .
   `get_device_state` first, or run `python -m tests.test_govee`, to confirm
   the device is online and check its exact capability list; not every device supports
   every control.
-- **Mic button transcribes to nothing** — recordings are decoded in-process,
+- **Voice input transcribes to nothing** — recordings are decoded in-process,
   so `ffmpeg` usually isn't needed; the UI shows a warning if it *is* needed
   and missing. First confirm your browser granted microphone permission to
   the Gradio page, then check the app logs for a `speech_to_text`
@@ -825,15 +895,15 @@ pyright .
   same device. If the log points at ffmpeg (a non-PCM-WAV recording), install
   `ffmpeg` and restart. If the log points at CUDA or memory, set
   `GOVEE_STT_DEVICE=cpu`; Docker uses that safer default already. If the UI
-  shows a tiny wrong transcript such as `Heard: you` from non-silent audio,
-  try a longer phrase or set `GOVEE_STT_LANGUAGE=english` / `slovak` in `.env`.
+  gives an incorrect transcript from non-silent audio, try a longer phrase or
+  set `GOVEE_STT_LANGUAGE=english` / `slovak` in `.env`.
 
 ## Roadmap
 
 - [ ] Background/async model loading so the dashboard UI isn't blocked on
       startup while the model loads.
 - [ ] Periodic auto-refresh on a timer (currently refresh-on-action only).
-- [x] Themed UI with device cards, status pills, and an expand-chat toggle.
+- [x] Operations dashboard with device estate controls and a synchronized chat overlay.
 - [ ] Even richer device cards (color swatches, scene pickers) in the dashboard.
 - [ ] Packaging for easier distribution.
 
