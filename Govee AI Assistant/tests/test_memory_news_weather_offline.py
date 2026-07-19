@@ -1,7 +1,7 @@
 import json
 
 import chromadb
-from chromadb import EmbeddingFunction
+from llama_index.core.embeddings import BaseEmbedding
 
 from govee_assistant.agent import InfoTools
 from govee_assistant.memory_store import COLLECTION_NAME, MemoryStore
@@ -10,31 +10,33 @@ from govee_assistant.weather_client import WeatherClient, WeatherError
 from govee_assistant import weather_client as weather_client_module
 
 
-class FakeEmbeddingFunction(EmbeddingFunction):
-    """Tiny bag-of-words embedding, deterministic and offline (no model download)."""
+_FAKE_VOCAB = ["weather", "paris", "news", "election", "bedroom", "light"]
 
-    VOCAB = ["weather", "paris", "news", "election", "bedroom", "light"]
 
-    def __init__(self):
-        pass
+class FakeEmbedding(BaseEmbedding):
+    """Tiny bag-of-words LlamaIndex embedding, deterministic and offline
+    (no model download, no network) - orthogonal vectors for unrelated text.
+    (BaseEmbedding is a pydantic model, so state lives at module scope rather
+    than as a plain class attribute.)"""
 
-    @staticmethod
-    def name():
-        return "fake"
+    def _vec(self, text: str) -> list[float]:
+        t = text.lower()
+        return [1.0 if v in t else 0.0 for v in _FAKE_VOCAB]
 
-    def get_config(self):
-        return {}
+    def _get_query_embedding(self, query: str) -> list[float]:
+        return self._vec(query)
 
-    @staticmethod
-    def build_from_config(config):
-        return FakeEmbeddingFunction()
+    def _get_text_embedding(self, text: str) -> list[float]:
+        return self._vec(text)
 
-    def __call__(self, input):
-        out = []
-        for text in input:
-            words = text.lower()
-            out.append([1.0 if v in words else 0.0 for v in self.VOCAB])
-        return out
+    def _get_text_embeddings(self, texts) -> list[list[float]]:
+        return [self._vec(t) for t in texts]
+
+    async def _aget_query_embedding(self, query: str) -> list[float]:
+        return self._vec(query)
+
+    async def _aget_text_embedding(self, text: str) -> list[float]:
+        return self._vec(text)
 
 
 # ---------------------------------------------------------------------------
@@ -212,7 +214,7 @@ def test_article_extract():
 # ---------------------------------------------------------------------------
 # memory_store.py
 # ---------------------------------------------------------------------------
-def _fresh_memory_store() -> MemoryStore:
+def _fresh_memory_store(similarity_cutoff=None) -> MemoryStore:
     # chromadb's EphemeralClient() instances aren't fully isolated from each
     # other within the same process (they share collections by name), so
     # each test explicitly clears the collection first for a clean slate.
@@ -221,7 +223,7 @@ def _fresh_memory_store() -> MemoryStore:
         client.delete_collection(COLLECTION_NAME)
     except Exception:
         pass
-    return MemoryStore(embedding_fn=FakeEmbeddingFunction(), client=client)
+    return MemoryStore(embed_model=FakeEmbedding(), client=client, similarity_cutoff=similarity_cutoff)
 
 
 def test_memory_store():
@@ -246,6 +248,22 @@ def test_memory_store():
     hits = store.search("bedroom light", top_k=1)
     assert hits and hits[0]["category"] == "chat"
     print(f"OK: search() ranks chat memory first: {hits[0]['content']}")
+
+    # category filter on search()
+    hits = store.search("election", top_k=5, category="news")
+    assert hits and all(h["category"] == "news" for h in hits)
+    print(f"OK: search() category filter -> {[h['category'] for h in hits]}")
+
+    # opt-in similarity_cutoff drops weakly-matching (near-orthogonal) memories.
+    # With the fake bag-of-words embedding, a query sharing no vocabulary with a
+    # memory scores well below an exact match, so a cutoff keeps only the strong
+    # hit even when a larger top_k is requested.
+    cut_store = _fresh_memory_store(similarity_cutoff=0.5)
+    cut_store.add("weather", "Weather in Paris: 22.5C, Mainly clear.")
+    cut_store.add("news", "News: election results announced today.")
+    cut_hits = cut_store.search("weather in paris", top_k=5)
+    assert cut_hits and all(h["category"] == "weather" for h in cut_hits), cut_hits
+    print(f"OK: similarity_cutoff drops weak matches -> {[h['category'] for h in cut_hits]}")
 
 
 # ---------------------------------------------------------------------------

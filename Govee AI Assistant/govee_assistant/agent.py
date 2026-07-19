@@ -1,17 +1,4 @@
 #agent.py  — updated for google/gemma-4-E4B-it + Docker
-#
-# Key changes vs Qwen3 version:
-#   • AutoProcessor replaces AutoTokenizer (Gemma 4 is multimodal)
-#   • OpenVINO branch removed (not needed in GPU Docker container)
-#   • Quantization via QUANTIZE_BITS env var (4 / 8 / 0=full)
-#   • MODEL_ID overridable via GOVEE_LLM_MODEL env var
-#   • enable_thinking=False prevents chain-of-thought tokens bleeding into output
-#   • Sampling updated to Gemma 4 recommended params (temp=1.0, top_p=0.95, top_k=64)
-#   • torch.inference_mode() wraps generate() for a small throughput gain
-#   • THINKING_RE strips any residual <|channel>...<channel|> blocks as a safety net
-#
-# NOTE: If your working copy includes set_power_all, re-add it in GoveeTools,
-#       build_tool_schema(), and the _dispatch dict following the same pattern.
 
 from __future__ import annotations
 
@@ -26,21 +13,7 @@ from .weather_client import WeatherClient, WeatherError
 
 logger = logging.getLogger("agent")
 
-# Gemma 4 thinking-mode output — should never appear with enable_thinking=False
-# but kept as a defensive strip in case the chat template changes.
 THINKING_RE = re.compile(r"<\|channel>thought\n.*?<channel\|>", re.DOTALL)
-
-# ---------------------------------------------------------------------------
-# Multi-format tool-call parsing
-#
-# Different model families emit tool calls in different formats. Qwen/Hermes use
-# <tool_call>{json}</tool_call>; Gemma emits a ```tool_code fenced block, usually
-# containing a PYTHON-STYLE call like set_power(device_name="Bedroom Light",
-# on=False) rather than JSON. Some models use ```json fences or bare JSON.
-#
-# parse_tool_calls() tries each format in turn and normalizes everything to a
-# list of (name, arguments_dict) tuples, so the agent loop is format-agnostic.
-# ---------------------------------------------------------------------------
 
 # <tool_call>{...}</tool_call>  (Qwen / Hermes)
 _XML_RE = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL)
@@ -50,9 +23,7 @@ _FENCE_RE = re.compile(r"```(?:tool_call|tool_code|json|python)?\s*\n?(.*?)```",
 # Keys and values are UNQUOTED; values may contain spaces (e.g. "table lamp 1").
 _COMPACT_RE = re.compile(r"call\s*:\s*(\w+)\s*\{([^{}]*)\}", re.IGNORECASE)
 
-
 def _coerce(v: str) -> Any:
-    """Convert an unquoted scalar to bool/int/float/None/str."""
     v = v.strip().strip('"').strip("'").strip()
     low = v.lower()
     if low in ("true", "false"):
@@ -65,9 +36,7 @@ def _coerce(v: str) -> Any:
         return float(v)
     return v
 
-
 def _compact_to_calls(text: str) -> list[tuple[str, dict]]:
-    """Parse Gemma 4's compact call:name{k:v,k:v} format."""
     calls: list[tuple[str, dict]] = []
     for name, body in _COMPACT_RE.findall(text):
         args: dict[str, Any] = {}
@@ -86,8 +55,6 @@ def _compact_to_calls(text: str) -> list[tuple[str, dict]]:
         calls.append((name, args))
     return calls
 def _find_json_objects(text: str) -> list[str]:
-    """Return every balanced {...} substring (nesting-aware), so objects whose
-    arguments contain nested braces are captured intact."""
     objs, depth, start = [], 0, -1
     for i, ch in enumerate(text):
         if ch == "{":
@@ -99,7 +66,6 @@ def _find_json_objects(text: str) -> list[str]:
             if depth == 0 and start >= 0:
                 objs.append(text[start:i + 1])
     return objs
-
 
 def _json_to_call(blob: str) -> Optional[tuple[str, dict]]:
     try:
@@ -116,10 +82,7 @@ def _json_to_call(blob: str) -> Optional[tuple[str, dict]]:
             args = {}
     return (obj["name"], args if isinstance(args, dict) else {})
 
-
 def _python_to_calls(code: str) -> list[tuple[str, dict]]:
-    """Parse Gemma-style tool_code: func(a="x", b=False), one per line,
-    tolerating list wrappers like [func(...)]. Uses ast (no eval)."""
     calls: list[tuple[str, dict]] = []
     for line in code.strip().splitlines():
         line = line.strip().strip(",").strip("[]").strip()
@@ -141,7 +104,6 @@ def _python_to_calls(code: str) -> list[tuple[str, dict]]:
                 continue
         calls.append((node.func.id, args))
     return calls
-
 
 def parse_tool_calls(text: str) -> list[tuple[str, dict]]:
     # 0. Gemma 4 compact format: call:name{k:v,k:v}
@@ -173,55 +135,53 @@ def parse_tool_calls(text: str) -> list[tuple[str, dict]]:
     return [c for m in _find_json_objects(text) if (c := _json_to_call(m))]
 
 SYSTEM_PROMPT = (
-    "You are a home assistant that controls Govee smart home devices through "
-    "tool calls. Always call list_devices or get_device_state first if you're "
-    "not sure a device exists or what it supports, rather than guessing a "
-    "device name or capability. "
-    "To turn several devices on or off at once (e.g. 'turn off everything', "
-    "'turn off all the lights', 'turn off the bedroom') make a SINGLE "
-    "set_power_all call instead of calling set_power once per device. "
-    "You can also check the weather (get_weather), fetch news headlines "
-    "(get_news), read the full text of a specific article (get_article_extract, "
-    "using the 'link' from a get_news result - use this when the user wants "
-    "more than the headline/summary, e.g. 'tell me more about that' or 'what "
-    "does the article say'), and recall things from earlier conversations or "
-    "previous weather/news lookups (recall_memories). Every chat turn and "
-    "every weather/news lookup is remembered automatically - there is no "
-    "separate 'save' step. Call recall_memories whenever the user asks you "
-    "to remember, recall, or refers to something discussed earlier; pass a "
-    "query describing what to look for, or leave it empty for the most "
-    "recent memories. "
-    "Keep replies short and state what changed. "
-    "The user may write in any language - always reply in the same language "
-    "they used, but pass device/scene names to tools as the user wrote them "
-    "(untranslated); device resolution handles matching across languages.\n\n"
-    "TOOL CALL FORMAT — emit each call on its own line as:\n"
-    "  call:tool_name{arg:value, arg:value}\n"
-    "Use true/false for booleans; leave the braces empty when there are no "
-    "arguments. Do not wrap calls in quotes, code fences, or JSON. "
-    "After a tool result is returned to you, reply to the user in plain "
-    "language describing what changed - do NOT emit another call unless more "
-    "actions are still needed.\n\n"
-    "Examples:\n"
-    "User: turn off the bedroom light\n"
-    "call:set_power{device_name:Bedroom Light, on:false}\n"
-    "(after the result) Turned off the Bedroom Light.\n\n"
-    "User: what devices do I have?\n"
-    "call:list_devices{}\n"
-    "(after the result) You have a Bedroom Light and a Table Lamp 1.\n\n"
-    "User: set the kitchen to 40%\n"
-    "call:set_brightness{device_name:Kitchen, percent:40}\n"
-    "(after the result) Set the Kitchen to 40% brightness.\n\n"
-    "User: what did I ask you about the weather earlier?\n"
-    "call:recall_memories{query:weather}\n"
-    "(after the result) Earlier you asked about the weather in Bratislava - "
-    "it was 24C and partly cloudy."
-)
-
+                    "You are a home assistant that controls Govee smart home devices through "
+                    "tool calls. Always call list_devices or get_device_state first if you're "
+                    "not sure a device exists or what it supports, rather than guessing a "
+                    "device name or capability. "
+                    "To turn several devices on or off at once (e.g. 'turn off everything', "
+                    "'turn off all the lights', 'turn off the bedroom') make a SINGLE "
+                    "set_power_all call instead of calling set_power once per device. "
+                    "You can also check the weather (get_weather), fetch news headlines "
+                    "(get_news), read the full text of a specific article (get_article_extract, "
+                    "using the 'link' from a get_news result - use this when the user wants "
+                    "more than the headline/summary, e.g. 'tell me more about that' or 'what "
+                    "does the article say'), and recall things from earlier conversations or "
+                    "previous weather/news lookups (recall_memories). Every chat turn and "
+                    "every weather/news lookup is remembered automatically - there is no "
+                    "separate 'save' step. Call recall_memories whenever the user asks you "
+                    "to remember, recall, or refers to something discussed earlier; pass a "
+                    "query describing what to look for, or leave it empty for the most "
+                    "recent memories. "
+                    "Keep replies short and state what changed. "
+                    "The user may write in any language - always reply in the same language "
+                    "they used, but pass device/scene names to tools as the user wrote them "
+                    "(untranslated); device resolution handles matching across languages.\n\n"
+                    "TOOL CALL FORMAT — emit each call on its own line as:\n"
+                    "  call:tool_name{arg:value, arg:value}\n"
+                    "Use true/false for booleans; leave the braces empty when there are no "
+                    "arguments. Do not wrap calls in quotes, code fences, or JSON. "
+                    "After a tool result is returned to you, reply to the user in plain "
+                    "language describing what changed - do NOT emit another call unless more "
+                    "actions are still needed.\n\n"
+                    "Examples:\n"
+                    "User: turn off the bedroom light\n"
+                    "call:set_power{device_name:Bedroom Light, on:false}\n"
+                    "(after the result) Turned off the Bedroom Light.\n\n"
+                    "User: what devices do I have?\n"
+                    "call:list_devices{}\n"
+                    "(after the result) You have a Bedroom Light and a Table Lamp 1.\n\n"
+                    "User: set the kitchen to 40%\n"
+                    "call:set_brightness{device_name:Kitchen, percent:40}\n"
+                    "(after the result) Set the Kitchen to 40% brightness.\n\n"
+                    "User: what did I ask you about the weather earlier?\n"
+                    "call:recall_memories{query:weather}\n"
+                    "(after the result) Earlier you asked about the weather in Bratislava - "
+                    "it was 24C and partly cloudy."
+                    )
 
 class DeviceNotFoundError(Exception):
     pass
-
 
 # ---------------------------------------------------------------------------
 # Backend loading: CUDA (+ optional bitsandbytes quantization) -> CPU
@@ -270,9 +230,9 @@ class ModelBackend:
         # 2. Plain CPU — quantization not supported without CUDA
         if quant_bits:
             logger.warning(
-                "Quantization requires CUDA — loading in float32. "
-                "Expect slow inference and high RAM usage (~16 GB for full bf16)."
-            )
+                            "Quantization requires CUDA — loading in float32. "
+                            "Expect slow inference and high RAM usage (~16 GB for full bf16)."
+                            )
         cpu_kwargs: dict[str, Any] = {"torch_dtype": torch.float32}
         model = AutoModelForCausalLM.from_pretrained(self.model_id, **cpu_kwargs)
         return "cpu", model, processor
@@ -284,36 +244,15 @@ class ModelBackend:
             inputs = inputs.to(self.model.device)
 
         with torch.inference_mode():
-            output_ids = self.model.generate(
-                **inputs,
-                max_new_tokens=max_new_tokens,
-                # Low-temperature sampling for reliable structured tool calls.
-                # Gemma's documented defaults (temp=1.0, top_p=0.95, top_k=64)
-                # are tuned for creative chat and make tool-calling erratic
-                # (garbled one-word replies, skipped calls). 0.3 keeps output
-                # deterministic enough to parse while avoiding greedy repetition.
-                temperature=0.3,
-                top_p=0.9,
-                top_k=40,
-                do_sample=True,
-                repetition_penalty=1.05,
-            )
+            output_ids = self.model.generate(**inputs,max_new_tokens=max_new_tokens,temperature=0.3,top_p=0.9,top_k=40,do_sample=True,repetition_penalty=1.05)
 
         new_tokens = output_ids[0][inputs["input_ids"].shape[1]:]
         decoded = self.processor.decode(new_tokens, skip_special_tokens=True)
 
         # Strip residual thinking blocks (defensive; shouldn't appear with enable_thinking=False)
         decoded = THINKING_RE.sub("", decoded).strip()
-
-        # Logged at INFO so the model's raw output is always visible in
-        # `docker compose logs`. This is what you paste if tool calls still
-        # aren't firing — it shows the exact format the model emitted, which
-        # tells us whether parse_tool_calls needs another format added.
-        # Lower to logger.debug once tool calling is confirmed working.
         logger.info("Raw model output (first 400 chars): %s", decoded[:400])
         return decoded
-
-
 # ---------------------------------------------------------------------------
 # Govee tool implementations (unchanged from Qwen3 version)
 # ---------------------------------------------------------------------------
@@ -326,7 +265,6 @@ class GoveeClientLike(Protocol):
     def set_color_rgb(self, device: Device, r: int, g: int, b: int) -> dict: ...
     def set_color_temp(self, device: Device, kelvin: int) -> dict: ...
     def set_scene(self, device: Device, scene_value: int, instance: str = "lightScene") -> dict: ...
-
 
 class GoveeTools:
     def __init__(self, client: GoveeClientLike):
@@ -492,18 +430,11 @@ class GoveeTools:
             {"workMode": gear_option["value"], "modeValue": match["value"]},
         )
         return {"ok": True, "device": d.device_name, "speed": match.get("name", match["value"])}
-
-
 # ---------------------------------------------------------------------------
 # Weather / news / long-term memory tools
 # ---------------------------------------------------------------------------
 class InfoTools:
-    def __init__(
-        self,
-        weather_client: Optional[WeatherClient] = None,
-        news_client: Optional[NewsClient] = None,
-        memory_store: Optional[MemoryStore] = None,
-    ):
+    def __init__(self,weather_client: Optional[WeatherClient] = None,news_client: Optional[NewsClient] = None,memory_store: Optional[MemoryStore] = None):
         self.weather_client = weather_client or WeatherClient()
         self.news_client = news_client or NewsClient()
         self.memory_store = memory_store or MemoryStore()
@@ -515,9 +446,9 @@ class InfoTools:
             return {"error": str(e)}
 
         summary = (
-            f"Weather in {forecast['location']}: {forecast['temperature_c']}C, "
-            f"{forecast['condition']}, humidity {forecast['humidity_pct']}%."
-        )
+                    f"Weather in {forecast['location']}: {forecast['temperature_c']}C, "
+                    f"{forecast['condition']}, humidity {forecast['humidity_pct']}%."
+                )
         self.memory_store.add("weather", summary)
         return forecast
 
@@ -550,7 +481,6 @@ class InfoTools:
         else:
             memories = self.memory_store.recent(limit=limit)
         return {"memories": memories}
-
 
 # ---------------------------------------------------------------------------
 # Tool schema (unchanged — OpenAI function-calling format, understood by Gemma 4)
@@ -685,38 +615,31 @@ def build_tool_schema() -> list[dict]:
         }},
     ]
 
-
 # ---------------------------------------------------------------------------
 # Agent: chat loop with tool-call parsing
 # ---------------------------------------------------------------------------
 class GoveeAgent:
-    def __init__(
-        self,
-        client: GoveeClientLike,
-        backend: Optional[ModelBackend] = None,
-        max_tool_iters: int = 5,
-        info_tools: Optional[InfoTools] = None,
-    ):
+    def __init__(self,client: GoveeClientLike,backend: Optional[ModelBackend] = None,max_tool_iters: int = 5,info_tools: Optional[InfoTools] = None):
         self.tools_impl = GoveeTools(client)
         self.info_tools = info_tools or InfoTools()
         self.backend = backend or ModelBackend()
         self.tool_schema = build_tool_schema()
         self.max_tool_iters = max_tool_iters
         self._dispatch: dict[str, Callable[..., dict]] = {
-            "list_devices":    self.tools_impl.list_devices,
-            "get_device_state": self.tools_impl.get_device_state,
-            "set_power":       self.tools_impl.set_power,
-            "set_brightness":  self.tools_impl.set_brightness,
-            "set_color_rgb":   self.tools_impl.set_color_rgb,
-            "set_color_temp":  self.tools_impl.set_color_temp,
-            "set_scene":       self.tools_impl.set_scene,
-            "set_toggle":      self.tools_impl.set_toggle,
-            "set_fan_speed":   self.tools_impl.set_fan_speed,
-            "get_weather":     self.info_tools.get_weather,
-            "get_news":        self.info_tools.get_news,
-            "get_article_extract": self.info_tools.get_article_extract,
-            "recall_memories": self.info_tools.recall_memories,
-        }
+                                                            "list_devices":    self.tools_impl.list_devices,
+                                                            "get_device_state": self.tools_impl.get_device_state,
+                                                            "set_power":       self.tools_impl.set_power,
+                                                            "set_brightness":  self.tools_impl.set_brightness,
+                                                            "set_color_rgb":   self.tools_impl.set_color_rgb,
+                                                            "set_color_temp":  self.tools_impl.set_color_temp,
+                                                            "set_scene":       self.tools_impl.set_scene,
+                                                            "set_toggle":      self.tools_impl.set_toggle,
+                                                            "set_fan_speed":   self.tools_impl.set_fan_speed,
+                                                            "get_weather":     self.info_tools.get_weather,
+                                                            "get_news":        self.info_tools.get_news,
+                                                            "get_article_extract": self.info_tools.get_article_extract,
+                                                            "recall_memories": self.info_tools.recall_memories,
+                                                            }
 
     def _call_tool(self, name: str, arguments: dict) -> dict:
         fn = self._dispatch.get(name)
@@ -755,21 +678,16 @@ class GoveeAgent:
                     else {"error": "Malformed tool call arguments from model"}
                 logger.info("Tool %s(%s) -> %s", name, args, result)
                 result_lines.append(f"{name} result: {json.dumps(result)}")
-
-            # Feed results back as a USER turn. Gemma's compact call: format is
-            # improvised, not a native tool protocol, so role:'tool' messages
-            # get dropped by its chat template (the model then says "there was
-            # no response"). A user turn is always rendered verbatim.
             messages.append({
-                "role": "user",
-                "content": (
-                    "Tool results:\n" + "\n".join(result_lines) +
-                    "\n\nIf the task is now complete, reply to the user in plain "
-                    "language describing what changed. If more actions are still "
-                    "needed (e.g. turning on each device from a list), emit the "
-                    "next call now."
-                ),
-            })
+                                "role": "user",
+                                "content": (
+                                            "Tool results:\n" + "\n".join(result_lines) +
+                                            "\n\nIf the task is now complete, reply to the user in plain "
+                                            "language describing what changed. If more actions are still "
+                                            "needed (e.g. turning on each device from a list), emit the "
+                                            "next call now."
+                                            ),
+                            })
 
         if final_reply is None:
             final_reply = "I wasn't able to finish that - could you rephrase or be more specific?"
@@ -778,28 +696,12 @@ class GoveeAgent:
             self.info_tools.memory_store.add("chat", f"User: {user_message}\nAssistant: {final_reply}")
         except Exception:  # noqa: BLE001
             logger.exception("Failed to write chat turn to long-term memory")
-
-        # Persist only clean user/assistant turns. Intermediate tool calls and
-        # synthetic result turns stay out of history so later turns aren't
-        # polluted with the model's own scaffolding.
-        new_history = history + [
-            {"role": "user", "content": user_message},
-            {"role": "assistant", "content": final_reply},
-        ]
+        new_history = history + [{"role": "user", "content": user_message},{"role": "assistant", "content": final_reply}]
         return final_reply, new_history
 
     def _render(self, messages: list[dict]) -> str:
-        """Render the chat template. enable_thinking=False suppresses Gemma's
-        chain-of-thought; some template signatures don't accept it, so fall
-        back to a plain call."""
         proc = self.backend.processor
         try:
-            return proc.apply_chat_template(
-                messages, tools=self.tool_schema,
-                add_generation_prompt=True, tokenize=False, enable_thinking=False,
-            )
+            return proc.apply_chat_template(messages, tools=self.tool_schema,add_generation_prompt=True, tokenize=False, enable_thinking=False)
         except TypeError:
-            return proc.apply_chat_template(
-                messages, tools=self.tool_schema,
-                add_generation_prompt=True, tokenize=False,
-            )
+            return proc.apply_chat_template(messages, tools=self.tool_schema,add_generation_prompt=True, tokenize=False)

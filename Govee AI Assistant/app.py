@@ -2,12 +2,8 @@
 
 from __future__ import annotations
 
-import html
-import logging
+import html, logging
 from typing import Protocol
-
-# Must be imported before `gradio` - config.py sets GRADIO_ANALYTICS_ENABLED
-# and loads .env before anything downstream reads either.
 from govee_assistant import config
 
 import gradio as gr
@@ -79,11 +75,11 @@ class ClientLike(Protocol):
     def set_brightness(self, device: Device, percent: int) -> dict: ...
 
 THEME = SoftTheme(
-    primary_hue=theme_colors.indigo,
-    neutral_hue=theme_colors.slate,
-    font=[GoogleFont("Inter"), "system-ui", "-apple-system", "sans-serif"],
-    radius_size=theme_sizes.radius_lg,
-)
+                    primary_hue=theme_colors.indigo,
+                    neutral_hue=theme_colors.slate,
+                    font=[GoogleFont("Inter"), "system-ui", "-apple-system", "sans-serif"],
+                    radius_size=theme_sizes.radius_lg,
+                )
 
 CSS = """
 .gradio-container { max-width: 1180px !important; margin: 0 auto !important; }
@@ -241,17 +237,12 @@ def build_ui(client: ClientLike, agent: AgentLike) -> gr.Blocks:
             return chat_display, history, ""
 
         def toggle_chat_size(expanded: bool):
-            # In-page resize via gr.update — no browser Fullscreen API (which
-            # traps the window). Swaps the chatbot height and the button label.
             new_expanded = not expanded
             height = 820 if new_expanded else 500
             label = "⤡ Collapse" if new_expanded else "⤢ Expand"
             return gr.update(height=height), new_expanded, gr.update(value=label)
 
         def transcribe_audio(audio_path: str | None):
-            # Fills the textbox for review/edit rather than auto-submitting -
-            # speech-to-text errors on a smart-home command are worse than a
-            # one-tap extra Enter, so the user always confirms what was heard.
             text = speech_to_text.transcribe(audio_path)
             if not text:
                 logger.warning("Speech-to-text produced no usable transcription")
@@ -267,17 +258,13 @@ def build_ui(client: ClientLike, agent: AgentLike) -> gr.Blocks:
 
         for device_id, btn in power_buttons.items():
             btn.click(
-                lambda so, did=device_id: toggle_power(did, so),
-                inputs=[show_offline],
-                outputs=refresh_outputs,
-            )
+                        lambda so, did=device_id: toggle_power(did, so),
+                        inputs=[show_offline],
+                        outputs=refresh_outputs,
+                    )
 
         for device_id, slider in brightness_sliders.items():
-            slider.release(
-                lambda value, so, did=device_id: set_brightness_direct(did, value, so),
-                inputs=[slider, show_offline],
-                outputs=refresh_outputs,
-            )
+            slider.release(lambda value, so, did=device_id: set_brightness_direct(did, value, so),inputs=[slider, show_offline],outputs=refresh_outputs)
 
         msg_box.submit(respond,inputs=[msg_box, chatbot, agent_history],outputs=[chatbot, agent_history, msg_box]).then(refresh_all, inputs=[show_offline], outputs=refresh_outputs)
 
@@ -292,14 +279,7 @@ def main():
     logger.info("Loading local LLM agent (first run can take a while)")
     agent = GoveeAgent(client)
     demo = build_ui(client, agent)
-    # GRADIO_SERVER_NAME defaults to 127.0.0.1 for local use.
-    # The Dockerfile sets it to 0.0.0.0 so the container is reachable.
-    demo.launch(
-        theme=THEME,
-        css=CSS,
-        server_name=config.GRADIO_SERVER_NAME,
-        server_port=config.GRADIO_SERVER_PORT,
-    )
+    demo.launch(theme=THEME,css=CSS,server_name=config.GRADIO_SERVER_NAME,server_port=config.GRADIO_SERVER_PORT)
 
 if __name__ == "__main__":
     main()

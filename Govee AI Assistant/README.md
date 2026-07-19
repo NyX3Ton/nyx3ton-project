@@ -386,20 +386,30 @@ and four more tools in `build_tool_schema()`: `get_weather`, `get_news`,
   pulls out just the body text with [trafilatura](https://trafilatura.readthedocs.io/)
   (strips nav/ads/footers/boilerplate rather than a raw text dump),
   truncated to a few thousand characters.
-- **`memory_store.py`** — `MemoryStore` is a small RAG layer on
+- **`memory_store.py`** — `MemoryStore` is a RAG layer built on
+  [LlamaIndex](https://docs.llamaindex.ai/) over
   [ChromaDB](https://www.trychroma.com/), run embedded/local (no server
-  process, no extra services). It reuses the *same* multilingual embedding
-  model `semantic_match.py` already loads for device-name matching (via a
-  new public `semantic_match.encode()`), so there's one shared model
-  instead of Chroma downloading its own default one. `GoveeAgent.chat()`
-  automatically writes every turn (`user_message` + `final_reply`) to
-  memory, and `InfoTools.get_weather`/`get_news`/`get_article_extract`
-  automatically write a short summary of whatever they fetch — there's no
-  explicit "remember" step. `recall_memories` then does a semantic search
-  over everything stored (or a recency listing when the model calls it
-  with no query),
-  which is how the assistant can answer "what did I ask about earlier?" or
-  "what was that weather in Paris again?" days later.
+  process, no extra services): a `VectorStoreIndex` on top of a
+  `ChromaVectorStore`, with a custom `SemanticMatchEmbedding` that reuses
+  the *same* multilingual model `semantic_match.py` already loads for
+  device-name matching (via the public `semantic_match.encode()`) — so
+  there's one shared embedding model instead of LlamaIndex or Chroma
+  pulling in a second one. Its public API is deliberately small and stable
+  (`add` / `recent` / `search`) so the custom Gemma tool-loop and
+  `InfoTools` don't know or care that the backend is LlamaIndex:
+  `search()` is a LlamaIndex retriever (semantic RAG, with an opt-in
+  `similarity_cutoff` to drop weak matches), while `recent()` is a plain
+  metadata listing straight off the Chroma collection (no embedding call).
+  `GoveeAgent.chat()` automatically writes every turn (`user_message` +
+  `final_reply`) to memory, and
+  `InfoTools.get_weather`/`get_news`/`get_article_extract` automatically
+  write a short summary of whatever they fetch — there's no explicit
+  "remember" step. `recall_memories` then does a semantic search over
+  everything stored (or a recency listing when the model calls it with no
+  query), which is how the assistant can answer "what did I ask about
+  earlier?" or "what was that weather in Paris again?" days later. Note this
+  is RAG for the **memory store only** — the agent itself is still the
+  project's own local tool-calling loop, not a LlamaIndex agent.
 
 ### app.py
 
@@ -474,7 +484,7 @@ Govee AI Assistant/
 │   ├── speech_to_text.py            # Whisper-based speech-to-text
 │   ├── weather_client.py            # Open-Meteo weather/forecast wrapper
 │   ├── news_client.py               # RSS headlines + article-extract fetching
-│   ├── memory_store.py              # ChromaDB-backed long-term memory (RAG)
+│   ├── memory_store.py              # LlamaIndex + ChromaDB long-term memory (RAG)
 │   └── agent.py                     # ModelBackend, GoveeTools, InfoTools, GoveeAgent
 │
 ├── tests/                         # test package - run as `python -m tests.<name>`
@@ -577,6 +587,11 @@ GOVEE_NEWS_FEEDS=
 
 # Optional: directory for the local ChromaDB long-term memory store.
 GOVEE_MEMORY_DB=./chroma_memory
+
+# Optional: relevance floor (0-1) for RAG memory recall - drops weakly-matching
+# memories from recall_memories results. Empty = disabled (return top matches
+# regardless of score). The right value depends on the embedding model.
+GOVEE_MEMORY_SIMILARITY_CUTOFF=
 
 # Optional: address/port app.py's Gradio server binds to.
 # The Dockerfile sets GRADIO_SERVER_NAME=0.0.0.0 so the container is reachable.

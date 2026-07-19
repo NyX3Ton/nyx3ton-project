@@ -40,6 +40,12 @@ GOVEE_DEFAULT_LOCATION = os.getenv("GOVEE_DEFAULT_LOCATION", "").strip()
 GOVEE_NEWS_FEEDS = os.getenv("GOVEE_NEWS_FEEDS", "").strip()
 GOVEE_MEMORY_DB = os.getenv("GOVEE_MEMORY_DB", "./chroma_memory")
 
+# Optional relevance floor for RAG memory recall (0-1). Empty = disabled
+# (return the top matches regardless of score). The right value depends on the
+# embedding model, so it ships off by default; see memory_store.MemoryStore.
+_memory_cutoff = os.getenv("GOVEE_MEMORY_SIMILARITY_CUTOFF", "").strip()
+GOVEE_MEMORY_SIMILARITY_CUTOFF: float | None = float(_memory_cutoff) if _memory_cutoff else None
+
 # ── Gradio server (app.py) ───────────────────────────────────────────────
 GRADIO_SERVER_NAME = os.getenv("GRADIO_SERVER_NAME", "127.0.0.1")
 GRADIO_SERVER_PORT = int(os.getenv("GRADIO_SERVER_PORT", "7860"))
