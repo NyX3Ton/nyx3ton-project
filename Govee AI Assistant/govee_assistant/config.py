@@ -71,6 +71,11 @@ GOVEE_STT_SILENCE_RMS = float(os.getenv("GOVEE_STT_SILENCE_RMS", "0.002"))
 # ── Weather / news / memory (weather_client.py, news_client.py, memory_store.py) ──
 GOVEE_DEFAULT_LOCATION = os.getenv("GOVEE_DEFAULT_LOCATION", "").strip()
 GOVEE_NEWS_FEEDS = os.getenv("GOVEE_NEWS_FEEDS", "").strip()
+# Comma-separated publisher domains for the ActiveResearcher tool. They are
+# an editable source policy, not a claim that any single article is correct.
+GOVEE_ACTIVE_RESEARCH_DOMAINS = os.getenv(
+    "GOVEE_ACTIVE_RESEARCH_DOMAINS", "sme.sk,dennikn.sk,aktuality.sk"
+).strip()
 GOVEE_MEMORY_DB = os.getenv("GOVEE_MEMORY_DB", "./chroma_memory")
 
 # Optional relevance floor for RAG memory recall (0-1). Empty = disabled
@@ -78,6 +83,15 @@ GOVEE_MEMORY_DB = os.getenv("GOVEE_MEMORY_DB", "./chroma_memory")
 # embedding model, so it ships off by default; see memory_store.MemoryStore.
 _memory_cutoff = os.getenv("GOVEE_MEMORY_SIMILARITY_CUTOFF", "").strip()
 GOVEE_MEMORY_SIMILARITY_CUTOFF: float | None = float(_memory_cutoff) if _memory_cutoff else None
+
+# Optional agentic RAG controller.  When enabled, a small bounded sub-agent
+# decides whether long-term memory is useful for the current request, vets
+# retrieved candidates, and may reformulate the query once.  It is separate
+# from the recall_memories tool, which remains available for explicit recall.
+GOVEE_AGENTIC_RAG_ENABLED = os.getenv("GOVEE_AGENTIC_RAG_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+GOVEE_AGENTIC_RAG_MAX_SEARCHES = max(1, min(2, int(os.getenv("GOVEE_AGENTIC_RAG_MAX_SEARCHES", "2"))))
+GOVEE_AGENTIC_RAG_TOP_K = max(1, min(10, int(os.getenv("GOVEE_AGENTIC_RAG_TOP_K", "5"))))
+GOVEE_AGENTIC_RAG_MAX_CONTEXT_CHARS = max(512, min(12000, int(os.getenv("GOVEE_AGENTIC_RAG_MAX_CONTEXT_CHARS", "4000"))))
 
 # ── Gradio server (app.py) ───────────────────────────────────────────────
 GRADIO_SERVER_NAME = os.getenv("GRADIO_SERVER_NAME", "127.0.0.1")

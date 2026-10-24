@@ -5,6 +5,7 @@ from __future__ import annotations
 import html, logging, re
 import xml.etree.ElementTree as ET
 from typing import Callable, Optional
+from urllib.parse import quote_plus
 
 from . import config
 
@@ -12,6 +13,7 @@ logger = logging.getLogger("news_client")
 
 DEFAULT_FEED = "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en"
 SEARCH_FEED = "https://news.google.com/rss/search?q={query}&hl=en-US&gl=US&ceid=US:en"
+SLOVAK_SEARCH_FEED = "https://news.google.com/rss/search?q={query}&hl=sk&gl=SK&ceid=SK:sk"
 
 _TAG_RE = re.compile(r"<[^>]+>")
 _SUMMARY_MAX_CHARS = 300
@@ -65,6 +67,16 @@ def _default_feeds() -> list[str]:
     return [DEFAULT_FEED]
 
 
+def _trusted_domains() -> list[str]:
+    """Return a small, editable publisher allowlist without URL paths."""
+    domains = []
+    for raw in config.GOVEE_ACTIVE_RESEARCH_DOMAINS.split(","):
+        domain = raw.strip().lower().removeprefix("https://").removeprefix("http://").split("/")[0]
+        if domain and re.fullmatch(r"[a-z0-9.-]+", domain):
+            domains.append(domain)
+    return list(dict.fromkeys(domains))
+
+
 class NewsClient:
     def __init__(self, get_text_fn: Optional[Callable[[str], str]] = None):
         self._get_text = get_text_fn or _default_get_text
@@ -91,6 +103,69 @@ class NewsClient:
             raise NewsError(f"Couldn't fetch news: {'; '.join(errors)}")
 
         return items[:limit]
+
+    def get_trusted_headlines(
+        self, topic: str, limit: int = 5, domains: Optional[list[str]] = None
+    ) -> dict:
+        """Research a topic across an allowlisted set of publisher domains.
+
+        Google News RSS is used only as a domain-constrained discovery index;
+        returned article links and publication dates are preserved so the writer
+        can name its sources. This method never attempts to work around a
+        paywall or access restriction.
+        """
+        topic = topic.strip()
+        if not topic:
+            raise NewsError("A topic is required for trusted-source research")
+        limit = max(1, min(20, int(limit)))
+        domains = domains or _trusted_domains()
+        if not domains:
+            raise NewsError("No trusted research domains are configured")
+
+        # Fetch a small slice from each source before merging, so the first
+        # publisher cannot crowd out the rest of the research briefing.
+        per_source = max(1, (limit + len(domains) - 1) // len(domains))
+        by_source: dict[str, list[dict]] = {}
+        errors: list[str] = []
+        for domain in domains:
+            query = quote_plus(f"site:{domain} {topic}")
+            url = SLOVAK_SEARCH_FEED.format(query=query)
+            try:
+                source_items = _parse_feed(self._get_text(url), per_source)
+            except Exception as e:  # noqa: BLE001
+                errors.append(f"{domain}: {e}")
+                continue
+            for item in source_items:
+                item["source"] = domain
+            by_source[domain] = source_items
+
+        if not by_source and errors:
+            raise NewsError(f"Couldn't research trusted sources: {'; '.join(errors)}")
+
+        # Round-robin ordering gives a compact cross-source briefing. De-dupe
+        # repeated syndicated stories while retaining the original publisher.
+        articles: list[dict] = []
+        seen: set[tuple[str, str]] = set()
+        while len(articles) < limit and any(by_source.values()):
+            for domain in domains:
+                source_items = by_source.get(domain, [])
+                if not source_items:
+                    continue
+                item = source_items.pop(0)
+                fingerprint = (item.get("title", "").strip().lower(), item.get("link", ""))
+                if fingerprint in seen:
+                    continue
+                seen.add(fingerprint)
+                articles.append(item)
+                if len(articles) >= limit:
+                    break
+
+        return {
+            "topic": topic,
+            "articles": articles,
+            "sources_consulted": [domain for domain in domains if domain in by_source],
+            "source_errors": errors,
+        }
 
     def get_article_extract(self, url: str, max_chars: int = _EXTRACT_MAX_CHARS) -> str:
         import trafilatura

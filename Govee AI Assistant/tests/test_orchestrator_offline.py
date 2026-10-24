@@ -157,7 +157,7 @@ def test_tool_wrapping():
     itools = _info_tools_double()
     wrapped = _info_tools(itools)
     inames = {t.metadata.name for t in wrapped}
-    assert {"get_weather", "get_news", "get_article_extract", "recall_memories"} == inames
+    assert {"get_weather", "get_news", "get_article_extract", "research_local_news", "recall_memories"} == inames
     weather = next(t for t in wrapped if t.metadata.name == "get_weather")
     wout = weather.call(location="Paris")
     assert wout.raw_output.get("location") == "Paris"

@@ -1,5 +1,5 @@
 # filename: main_app.ipynb
-!pip install gradio rembg pillow onnxruntime-gpu
+#pip install gradio rembg pillow onnxruntime-gpu
 # -----------------------------------------------------------------------------
 # 0. IMPORTS
 # 1. HELPERS

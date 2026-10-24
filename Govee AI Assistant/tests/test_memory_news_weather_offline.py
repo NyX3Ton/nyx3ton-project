@@ -148,6 +148,20 @@ def test_news_client():
     assert seen_urls[0].startswith("https://news.google.com/rss?")
     print(f"OK: no topic routed to default feed: {seen_urls[0]}")
 
+    # ActiveResearcher discovery searches each configured source domain and
+    # preserves source provenance in the result instead of flattening it.
+    seen_urls.clear()
+    research = NewsClient(get_text_fn=spy_get_text).get_trusted_headlines(
+        "elections", limit=3, domains=["sme.sk", "dennikn.sk", "aktuality.sk"]
+    )
+    assert len(seen_urls) == 3
+    assert all("site%3A" in url for url in seen_urls)
+    assert {article["source"] for article in research["articles"]} <= {
+        "sme.sk", "dennikn.sk", "aktuality.sk"
+    }
+    assert research["sources_consulted"] == ["sme.sk", "dennikn.sk", "aktuality.sk"]
+    print(f"OK: trusted-source research retained provenance: {research}")
+
     # fetch failure -> NewsError
     def boom(url):
         raise RuntimeError("network down")
@@ -278,6 +292,14 @@ class FakeNewsClient:
     def get_headlines(self, topic=None, limit=5):
         return [{"title": "Big News", "link": "https://x", "published": "", "summary": "..."}]
 
+    def get_trusted_headlines(self, topic, limit=5):
+        return {
+            "topic": topic,
+            "articles": [{"title": "Local Big News", "link": "https://local", "published": "", "summary": "...", "source": "sme.sk"}],
+            "sources_consulted": ["sme.sk"],
+            "source_errors": [],
+        }
+
     def get_article_extract(self, url):
         if url == "https://x":
             return "The full article body text goes here, with much more detail than the summary."
@@ -297,6 +319,11 @@ def test_info_tools():
     assert news_result["headlines"][0]["title"] == "Big News"
     assert store.recent(limit=10, category="news"), "get_news should auto-write a memory entry"
     print(f"OK: get_news -> {news_result}, memory written")
+
+    research_result = tools.research_local_news("elections")
+    assert research_result["articles"]
+    assert store.recent(limit=10, category="news"), "local research should auto-write a memory entry"
+    print(f"OK: research_local_news -> {research_result}, memory written")
 
     extract_result = tools.get_article_extract(news_result["headlines"][0]["link"])
     assert "full article body text" in extract_result["extract"]

@@ -148,26 +148,33 @@ in for the real thing in tests.
 
 ### Agent topology
 
-Only one **writer path** is selected at startup. The optional critic wraps the
-selected writer after it has completed any tool work; it is not a second
-controller and cannot issue device commands.
+Only one **writer path** is selected at startup. Optional agentic RAG runs
+before that writer and can contribute only vetted long-term-memory context;
+the optional critic runs after tool work and cannot issue device commands.
 
 | Component | Enabled by | Responsibility | Tool access |
 |---|---|---|---|
-| `GoveeAgent` | `GOVEE_AGENT_MODE=single` (default) | Runs the project’s bounded generate → tool → observe loop for device, weather, news, and memory requests. | `GoveeTools` + `InfoTools` |
+| `AgenticRAG` | `GOVEE_AGENTIC_RAG_ENABLED=true` | Bounded retrieval planner/verifier: decides whether memory helps, searches, accepts only relevant candidates, and may retry one improved query. | Long-term memory search only |
+| `GoveeAgent` | `GOVEE_AGENT_MODE=single` | Runs the project’s bounded generate → tool → observe loop for device, weather, news, and memory requests. | `GoveeTools` + `InfoTools` |
 | `OrchestratedAgent` | `GOVEE_AGENT_MODE=workflow` | Drop-in wrapper around the LlamaIndex multi-agent workflow. | Delegates to specialists |
 | `DeviceControl` ReAct agent | Workflow mode | Handles Govee device inspection and control, including bulk power changes. | `GoveeTools` |
-| `Information` ReAct agent | Workflow mode | Handles weather, news, article extracts, and long-term memory. | `InfoTools` |
+| `Information` ReAct agent | Workflow mode | Handles weather, news, source-labelled local research, article extracts, and long-term memory. | `InfoTools` |
+| `ActiveResearcher` | `research_local_news` tool | Searches the configured Slovak publisher allowlist and returns source-labelled, dated links for a cross-source briefing. | Domain-constrained news RSS only |
 | `CritiqueAgent` | `GOVEE_CRITIQUE_ENABLED=true` | Reviews only the completed natural-language draft for accuracy, clarity, and safety; its shared backend creates a bounded rewrite only when feedback is needed. | None |
 | `WriterCriticAgent` | `GOVEE_CRITIQUE_ENABLED=true` | Wraps the selected writer, applies up to `GOVEE_CRITIQUE_MAX_PASSES` passes, and replaces the final chat-history entry with the refined reply. | Inherits writer; critic remains tool-free |
 
 `ModelBackend` and `GemmaLocalLLM` are shared local-model adapters, not
-separate agents: they keep one model loaded while serving the selected writer
-and, when enabled, the critic.
+separate agents: they keep one model loaded while serving the optional RAG
+controller, selected writer, and critic.
 
 ```mermaid
 flowchart TB
-    Request[User request] --> Mode{GOVEE_AGENT_MODE}
+    Request[User request] --> RAGToggle{Agentic RAG enabled?}
+    RAGToggle -->|yes| RAG[AgenticRAG plan → retrieve → verify]
+    RAG --> Memory[(Chroma long-term memory)]
+    Memory --> RAG
+    RAG --> Mode{GOVEE_AGENT_MODE}
+    RAGToggle -->|no| Mode
 
     Mode -->|single| Writer[GoveeAgent]
     Writer --> Tools[GoveeTools + InfoTools]
@@ -189,10 +196,11 @@ flowchart TB
     Revision --> Reply
 ```
 
-The default path is deliberately the simplest and fastest. Workflow mode
-adds specialist handoffs for broader tasks; critic mode adds a final response
-quality pass. Neither feature changes the direct dashboard controls, which
-continue to call `GoveeClient` without involving an LLM.
+The simplest path is the fastest. Agentic RAG adds one planner generation and,
+only when it retrieves, one verifier generation (plus at most one retry);
+workflow mode adds specialist handoffs; critic mode adds a final response
+quality pass. None of these features changes the direct dashboard controls,
+which continue to call `GoveeClient` without involving an LLM.
 
 ### Visual interface
 
@@ -394,6 +402,7 @@ wrapping `GoveeClient` with device resolution and capability checking:
 | `set_fan_speed` | Set a fan to low/medium/high |
 | `get_weather` | Current weather + short forecast for a location (or a configured default) |
 | `get_news` | Recent headlines, optionally filtered by topic |
+| `research_local_news` | Cross-source Slovak/local news research from the configured publisher allowlist; returns source, link, date, and partial-source errors |
 | `get_article_extract` | Full body-text extract of one article, given a headline's link |
 | `recall_memories` | Semantic (RAG) recall of earlier chat turns, weather lookups, and news lookups |
 
@@ -489,8 +498,8 @@ actually follows ReAct format is a tuning question. If it underperforms, set
 
 Three modules add general-assistant capabilities alongside device control,
 wired into `agent.py` via an `InfoTools` class (parallel to `GoveeTools`)
-and four more tools in `build_tool_schema()`: `get_weather`, `get_news`,
-`get_article_extract`, `recall_memories`.
+and five more tools in `build_tool_schema()`: `get_weather`, `get_news`,
+`research_local_news`, `get_article_extract`, `recall_memories`.
 
 - **`weather_client.py`** — `WeatherClient` calls
   [Open-Meteo](https://open-meteo.com/) (free, no API key). A location name
@@ -511,6 +520,16 @@ and four more tools in `build_tool_schema()`: `get_weather`, `get_news`,
   pulls out just the body text with [trafilatura](https://trafilatura.readthedocs.io/)
   (strips nav/ads/footers/boilerplate rather than a raw text dump),
   truncated to a few thousand characters.
+- **`ActiveResearcher`** — available to both writer modes through
+  `research_local_news(topic, limit)`. It uses domain-constrained Slovak
+  Google News RSS queries for the editable `GOVEE_ACTIVE_RESEARCH_DOMAINS`
+  allowlist (`sme.sk`, `dennikn.sk`, and `aktuality.sk` by default), queries
+  every source before merging results, and returns source-labelled titles,
+  links, and publication dates. This is a discovery-and-provenance layer, not
+  a guarantee that one publisher is correct: the assistant must name sources,
+  distinguish a single-source claim from corroboration, and report unavailable
+  sources. It never bypasses a paywall, login, robots restriction, or publisher
+  access control; details beyond an available preview require legitimate access.
 - **`memory_store.py`** — `MemoryStore` is a RAG layer built on
   [LlamaIndex](https://docs.llamaindex.ai/) over
   [ChromaDB](https://www.trychroma.com/), run embedded/local (no server
@@ -532,9 +551,18 @@ and four more tools in `build_tool_schema()`: `get_weather`, `get_news`,
   "remember" step. `recall_memories` then does a semantic search over
   everything stored (or a recency listing when the model calls it with no
   query), which is how the assistant can answer "what did I ask about
-  earlier?" or "what was that weather in Paris again?" days later. Note this
-  is RAG for the **memory store only** — the agent itself is still the
-  project's own local tool-calling loop, not a LlamaIndex agent.
+  earlier?" or "what was that weather in Paris again?" days later.
+
+  Set `GOVEE_AGENTIC_RAG_ENABLED=true` to replace writer-dependent, tool-call
+  retrieval with a **bounded agentic RAG preflight** in both `single` and
+  `workflow` modes. `AgenticRAG` first decides whether retrieval is useful,
+  turns the request into a semantic query, checks the returned candidates for
+  relevance, and can issue one revised query. Only selected snippets—capped by
+  `GOVEE_AGENTIC_RAG_MAX_CONTEXT_CHARS`—reach the writer as untrusted reference
+  context. The writer still has `recall_memories` for explicit user-requested
+  recall. The controller has no device, weather, news, or write access, and
+  retrieved text is explicitly barred from overriding instructions or claiming
+  a current device action occurred.
 
 ### app.py
 
@@ -589,6 +617,7 @@ no-model stand-ins and still pass static type checking.
 | `agent_cli.py` | Interactive terminal chat loop against the real agent | Yes (Govee API + local model) |
 | `test_tools_offline.py` | Exercises device resolution, capability checks, clamping, fan-speed schema handling, and semantic matching against **fake** devices | No |
 | `test_memory_news_weather_offline.py` | Exercises `WeatherClient`/`NewsClient` parsing and `MemoryStore`/`InfoTools` RAG recall against **fake** HTTP responses and a fake embedding function | No |
+| `test_agentic_rag_offline.py` | Exercises bounded retrieval planning, candidate verification, and one query retry against fake memory and model objects | No |
 | `test_orchestrator_offline.py` | Exercises the local-model adapter, specialist tool wrapping, and workflow construction with fakes | No |
 | `test_critique_offline.py` | Exercises critic approval, revision, and synchronized final history without a model | No |
 | `test_app_build.py` | Builds the entire Gradio `Blocks` graph against a fake client and a stub agent, without launching a server | No |
@@ -610,7 +639,7 @@ Govee AI Assistant/
 │   ├── semantic_match.py            # Embedding-based fuzzy name matching
 │   ├── speech_to_text.py            # Whisper-based speech-to-text
 │   ├── weather_client.py            # Open-Meteo weather/forecast wrapper
-│   ├── news_client.py               # RSS headlines + article-extract fetching
+│   ├── news_client.py               # RSS headlines, local-source research + article extracts
 │   ├── memory_store.py              # LlamaIndex + ChromaDB long-term memory (RAG)
 │   ├── agent.py                     # ModelBackend, GoveeTools, InfoTools, GoveeAgent (default)
 │   └── orchestrator.py              # optional LlamaIndex multi-agent workflow (GOVEE_AGENT_MODE=workflow)
@@ -619,6 +648,7 @@ Govee AI Assistant/
 │   ├── test_govee.py                 # smoke test: list real devices/state
 │   ├── test_tools_offline.py         # offline logic tests (no network/model)
 │   ├── test_memory_news_weather_offline.py  # offline weather/news/memory tests
+│   ├── test_agentic_rag_offline.py      # offline bounded agentic RAG tests
 │   ├── test_orchestrator_offline.py  # offline multi-agent adapter/workflow tests
 │   ├── test_critique_offline.py      # offline writer--critic loop tests
 │   └── test_app_build.py             # offline Gradio build test (no network/model)
@@ -738,6 +768,11 @@ GOVEE_DEFAULT_LOCATION=
 # topic is given. Defaults to Google News' top-stories RSS if unset.
 GOVEE_NEWS_FEEDS=
 
+# Optional: ActiveResearcher's source-policy allowlist for Slovak/local news.
+# It discovers matching articles through domain-constrained RSS and retains
+# source/date/link metadata. It does not bypass publisher restrictions.
+GOVEE_ACTIVE_RESEARCH_DOMAINS=sme.sk,dennikn.sk,aktuality.sk
+
 # Optional: directory for the local ChromaDB long-term memory store.
 GOVEE_MEMORY_DB=./chroma_memory
 
@@ -745,6 +780,13 @@ GOVEE_MEMORY_DB=./chroma_memory
 # memories from recall_memories results. Empty = disabled (return top matches
 # regardless of score). The right value depends on the embedding model.
 GOVEE_MEMORY_SIMILARITY_CUTOFF=
+
+# Optional: agentic RAG pre-retrieval. It plans and verifies long-term-memory
+# searches, with at most one query retry. Disabled for lowest local latency.
+GOVEE_AGENTIC_RAG_ENABLED=false
+GOVEE_AGENTIC_RAG_MAX_SEARCHES=2
+GOVEE_AGENTIC_RAG_TOP_K=5
+GOVEE_AGENTIC_RAG_MAX_CONTEXT_CHARS=4000
 
 # Optional: address/port app.py's Gradio server binds to.
 # The Dockerfile sets GRADIO_SERVER_NAME=0.0.0.0 so the container is reachable.
@@ -853,6 +895,7 @@ Typical capabilities across common Govee device types:
 # Fast, offline, no model or network required (run from the project root):
 python -m tests.test_tools_offline
 python -m tests.test_memory_news_weather_offline
+python -m tests.test_agentic_rag_offline
 python -m tests.test_orchestrator_offline
 python -m tests.test_critique_offline
 python -m tests.test_app_build
