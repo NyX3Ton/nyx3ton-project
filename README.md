@@ -7,6 +7,18 @@ The goal of this space is not only to store code, but to build practical solutio
 
 ---
 
+## FrameFit — photo framing for Android
+
+Prepare photos for circular, oval, rectangular and arched frames, add seasonal decorations or custom patterns, and save, share or print the result.
+
+**[FrameFit README and step-by-step user guide (English)](docs/framefit/README.md)** — installation, photo editing, frame previews, patterns, printing, troubleshooting and release notes.
+
+**[Google Play release guide (English)](docs/framefit/PLAY-CONSOLE.md)** — store assets, privacy policy, Console declarations, testing and signing.
+
+Version 1.0.0 is prepared for internal testing; public Google Play availability is pending.
+
+---
+
 ## Main Focus Areas
 
 | Area | Description |
