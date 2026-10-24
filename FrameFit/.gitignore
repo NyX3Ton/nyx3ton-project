@@ -42,7 +42,6 @@ Thumbs.db
 # =====================
 # Logs & temp files
 # =====================
-*.log
 *.tmp
 *.bak
 *.bin
@@ -57,7 +56,6 @@ Thumbs.db
 *.xls
 *.xlsx
 *.parquet
-*.xml
 *.sqlite3
 *.sqlite
 *.db
