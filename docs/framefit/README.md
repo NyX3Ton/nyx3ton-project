@@ -1,250 +1,239 @@
 # FrameFit
 
-**Vaša fotka. Váš rámček.**
+**Your photo. Your frame.**
 
-FrameFit je aplikácia pre Android, ktorá pomáha pripraviť fotografiu do kruhového, oválneho, obdĺžnikového alebo oblúkového rámčeka. Vyberiete fotku, upravíte výrez a výsledok uložíte, pošlete alebo pripravíte na tlač. K dispozícii sú aj sviatočné ozdoby, vlastné fotografované vzory a náhľad fotografie v skutočnom ráme.
+FrameFit is an Android app for preparing photos for circular, oval, rectangular and arched frames. Choose a photo, adjust the crop, then save, share or print it. Add seasonal decorations, create a border from your own pattern, or preview your photo inside a photographed frame.
 
-**Fotka → Rámček → Hotovo**
+**Photo → Frame → Finish**
 
-| Základné informácie | |
+| App information | |
 |---|---|
-| Aktuálna pripravená verzia | 1.0.0, versionCode 100 |
-| Systém | Android 8.0 a novší |
-| Jazyky | Slovenčina, čeština, angličtina |
-| Vzhľad | Podľa systému, svetlý alebo tmavý |
-| Spracovanie fotografií | Lokálne na zariadení; produkčná verzia používa CPU |
-| Vydavateľ | Gabriel Polak |
-| Zamýšľané publikum | Od 13 rokov |
+| Prepared version | 1.0.0 · versionCode 100 |
+| Requirements | Android 8.0 or later |
+| Languages | English, Slovak and Czech |
+| Appearance | System, light or dark |
+| Photo processing | On your device; production version uses the CPU |
+| Publisher | Gabriel Polak |
+| Intended audience | Ages 13 and up |
 
-> **Stav vydania:** verzia 1.0.0 je pripravená na interné testovanie. V čase prípravy tohto návodu ešte nebola schválená ani verejne vydaná v Google Play. Verejný odkaz na inštaláciu bude doplnený po zverejnení.
+> **Release status:** version 1.0.0 is prepared for internal testing. When this guide was prepared, it had not been approved or publicly released on Google Play. A public installation link will be added after publication.
 
-## Obsah
+## Contents
 
-- [Čo aplikácia dokáže](#čo-aplikácia-dokáže)
-- [Inštalácia a prvé spustenie](#inštalácia-a-prvé-spustenie)
-- [Prvá fotka v troch krokoch](#prvá-fotka-v-troch-krokoch)
-- [Ozdoby a vlastný vzor](#ozdoby-a-vlastný-vzor)
-- [Náhľad v odfotenom rámčeku](#náhľad-v-odfotenom-rámčeku)
-- [Tlač a správne rozmery](#tlač-a-správne-rozmery)
-- [Uloženie a zdieľanie](#uloženie-a-zdieľanie)
-- [Jazyk a vzhľad](#jazyk-a-vzhľad)
-- [Súkromie a uložený projekt](#súkromie-a-uložený-projekt)
-- [Najčastejšie otázky](#najčastejšie-otázky)
-- [Pre vývojárov a vydavateľa](#pre-vývojárov-a-vydavateľa)
-- [Kontakt](#kontakt)
+- [Features](#features)
+- [Installation](#installation)
+- [Your first photo](#your-first-photo)
+- [Decorations and custom patterns](#decorations-and-custom-patterns)
+- [Preview inside a real frame](#preview-inside-a-real-frame)
+- [Printing and calibration](#printing-and-calibration)
+- [Saving and sharing](#saving-and-sharing)
+- [Language and appearance](#language-and-appearance)
+- [Privacy and your project](#privacy-and-your-project)
+- [Troubleshooting](#troubleshooting)
+- [Development and release](#development-and-release)
+- [Contact](#contact)
 
-## Čo aplikácia dokáže
+## Features
 
-- Pripraviť výrez pre **kruh, ovál, obdĺžnik a oblúk s polkruhom navrchu**.
-- Vybrať fotografiu z telefónu alebo ju odfotiť s pomocným obrysom.
-- Posúvať, približovať a otáčať fotografiu vo výreze.
-- Použiť **52 dekorácií** s tromi štýlmi: jemný, klasický a výrazný. Motívy zahŕňajú sviatky, ročné obdobia, oslavy, prírodu a vzory.
-- Vytvoriť opakované orámovanie z fotografie vlastnej látky, kresby, papiera alebo iného vzoru.
-- Zobraziť fotografiu v odfotenom rámčeku s ručnou úpravou perspektívy.
-- Ukladať JPG/PNG, podmienene HEIC, vytvárať PDF a používať systémové zdieľanie a tlač.
-- Priebežne uchovávať jeden rozpracovaný projekt v telefóne.
+- Crop for a **circle, oval, rectangle or arch with a semicircular top**.
+- Choose a photo or take one with a camera overlay.
+- Move, zoom and rotate the photo within its opening.
+- Choose from **52 decorations** with three strengths: subtle, classic and bold.
+- Create a repeating border from a photo of fabric, a drawing, paper or another pattern.
+- Preview a photo inside a photographed frame with manual perspective adjustment.
+- Export JPG/PNG, use HEIC where supported, create PDFs, share and print.
+- Automatically save one work-in-progress project on your device.
 
-## Inštalácia a prvé spustenie
+## Installation
 
-Pri internom testovaní použite pozvánku od vydavateľa v Google Play. Ak skúšate samostatný testovací APK, používajte súbor poskytnutý vydavateľom. Súbor **AAB sa neinštaluje priamo do telefónu**; slúži na odovzdanie do Google Play.
+For internal testing, use the Google Play invitation supplied by the publisher. If testing a standalone APK, use the file provided by the publisher. An **AAB cannot be installed directly on a phone**; it is uploaded to Google Play.
 
-Po spustení sa otvorí jednoduchý sprievodca. Na výber existujúcej fotografie stačí systémový výber obrázkov. Povolenie fotoaparátu aplikácia potrebuje pri fotografovaní; pri výbere obrázka z telefónu nie je potrebné.
+The app opens with a three-step guide. Selecting an existing photo uses Android's photo picker. Camera permission is needed when taking a photo, frame image or pattern image; it is not needed to select an existing picture.
 
-**Pri prechode zo staršej vývojovej zostavy:** ak Android hlási odlišný podpis, najprv si uložte potrebné výsledné fotografie. Odinštalovanie starej aplikácie vymaže jej súkromný rozpracovaný projekt. Testovací APK a aplikácia doručená cez Google Play môžu mať odlišný podpis.
+**Upgrading from a development build:** Android may reject an update signed with a different key. Export any results you want to keep before uninstalling the previous app. Uninstalling deletes its private work-in-progress project. A standalone test APK and a Google Play installation may have different signing certificates.
 
-## Prvá fotka v troch krokoch
+## Your first photo
 
-### 1. Fotka
+### 1. Photo
 
-1. Ťuknite na **Vybrať fotku** alebo **Odfotiť teraz**.
-2. Vyberte obrázok alebo zhotovte fotografiu.
-3. Posúvajte fotku jedným prstom. Dvoma prstami ju priblížte alebo oddiaľte.
-4. Pokračujte tlačidlom **Vybrať rámček**.
+1. Tap **Choose a photo** or **Take a photo**.
+2. Select an image or capture a new one.
+3. Drag with one finger to move it. Pinch with two fingers to zoom.
+4. Tap **Choose a frame**.
 
-Pôvodná fotografia v galérii sa úpravami nemení.
+Your original photo in the gallery is not modified.
 
-### 2. Rámček
+### 2. Frame
 
-1. Vyberte požadovaný tvar.
-2. Skontrolujte, či dôležité časti fotografie zostali vo výreze.
-3. Voliteľne otvorte **Pridať ozdobu**.
-4. Potvrďte tlačidlom **Takto sa mi páči**.
+1. Select the shape you want.
+2. Check that important parts of the photo remain inside the crop.
+3. Optionally tap **Add a little decoration**.
+4. Tap **Looks good to me**.
 
-Kruh má rovnakú šírku aj výšku. Ovál má odlišný pomer strán; pri prepnutí z kruhu sa obnoví oválny pomer.
+A circle has equal width and height. An oval uses different dimensions; switching from a circle restores an oval aspect ratio.
 
-### 3. Hotovo
+### 3. Finish
 
-- **Uložiť fotku** uloží výsledok ako JPG do galérie.
-- **Poslať niekomu** otvorí systémové zdieľanie.
-- **Vytlačiť** najprv zobrazí potvrdenie rozmerov a potom systémovú tlač.
+- **Save my photo** saves a JPG to your gallery.
+- **Send to someone** opens Android's sharing options.
+- **Print** asks you to confirm dimensions before opening Android's print dialog.
 
-Ak niektorú voľbu nevidíte, posuňte obsah obrazovky. Tlačidlom **Späť** sa vrátite k úprave.
+Scroll the page if a secondary option is outside the visible area. Tap **Back** to return to editing.
 
-## Ozdoby a vlastný vzor
+## Decorations and custom patterns
 
-### Hotové dekorácie
+### Built-in decorations
 
-V kroku Rámček otvorte **Pridať ozdobu**. Pre úplnú ponuku zvoľte **Všetky ozdoby a vlastné vzory**. Môžete vyhľadávať motívy a meniť intenzitu dekorácie.
+In the Frame step, tap **Add a little decoration**, then **All decorations and your own patterns** for the full collection. Search for a theme and adjust the decoration strength.
 
-Nájdete tu napríklad Vianoce, Halloween, Veľkú noc, sviatok sv. Patrika, lunárny nový rok, Diwali, Holi, Chanuku, Eid, Thanksgiving, narodeniny a svadbu. Môžete ponechať aj čistú fotografiu bez ozdoby.
+Themes include Christmas, Halloween, Easter, St Patrick's Day, Lunar New Year, Diwali, Holi, Hanukkah, Eid, Thanksgiving, birthdays and weddings. You can also leave the photo undecorated.
 
-### Orámovanie z vašej fotografie
+### A border made from your own photo
 
-1. Otvorte **Všetky ozdoby a vlastné vzory** a časť **Vlastný vzor**.
-2. Vzor odfoťte alebo vyberte jeho obrázok z telefónu.
-3. Posunom a priblížením vyberte štvorcový detail; podľa potreby ho otočte.
-4. Potvrďte **Použiť vzor**.
-5. V **Upraviť vlastný vzor** nastavte šírku orámovania, veľkosť opakovania a zrkadlenie.
+1. Open **All decorations and your own patterns**, then the custom pattern section.
+2. Photograph a pattern or choose a pattern image from your phone.
+3. Move and zoom the image to select a square sample. Rotate it if needed.
+4. Confirm the sample to apply it as a border.
+5. Open **Adjust custom pattern** to change the border width, repetition size and tile mirroring.
 
-Skúste baliaci papier, výšivku, drevo, kresbu alebo obľúbenú látku. Rovnomerné svetlo a detail bez rušivých predmetov vytvoria čistejší výsledok. Zrkadlenie môže zmierniť viditeľné spoje medzi opakovaniami.
+Try wrapping paper, embroidery, wood, a drawing or a favourite fabric. Even lighting and a clean detail make the pattern easier to repeat. Mirroring can reduce visible seams.
 
-Vzor sa opakuje vrátane svojho pozadia; aplikácia ho automaticky neoddeľuje od pozadia. Výber hotovej dekorácie vypne vlastný vzor. Uložený vzor možno znova zapnúť.
+The sample repeats together with its background; the app does not automatically remove that background. Choosing a built-in decoration disables the custom pattern. You can enable the saved pattern again later.
 
-## Náhľad v odfotenom rámčeku
+## Preview inside a real frame
 
-Rozšírené úpravy otvoríte cez **Možnosti → Otvoriť celé štúdio**. V časti venovanej rámčeku použite **Odfotiť a rozpoznať rámček**, prípadne import fotografie rámu.
+Open **Options → Open full studio**. In the frame section, use the frame photography/recognition action or import a frame image.
 
-1. Odfoťte celý rám čo najviac spredu, ideálne bez odleskov skla.
-2. Do prázdneho otvoru vložte kontrastný podklad, aby boli vnútorné hrany zreteľné.
-3. Skontrolujte navrhnutý otvor. Návrh sa použije až po voľbe **Zarovnať podľa návrhu**.
-4. Ak návrh nesedí, opravte tvar a zarovnanie ručne. Štyri posuvné úchyty upravujú perspektívu náhľadu.
-5. Skontrolujte vloženú fotografiu a podľa potreby zvoľte **Uložiť náhľad rámčeka**.
+1. Photograph the whole frame as straight-on as possible, avoiding reflections from glass.
+2. Place a contrasting background behind an empty opening so its inner edge is clearer.
+3. Inspect the suggested opening. Use the alignment action when you want to apply it.
+4. Correct the shape and alignment manually if necessary. Four draggable handles adjust the perspective of the preview.
+5. Check the inserted photo and save the frame preview if you want to keep it.
 
-**Rozpoznanie je experimentálny návrh podľa hrán.** Fotografia neurčuje skutočnú veľkosť v centimetroch. Rozmery pred tlačou odmerajte pravítkom. Podporované sú štyri geometrické tvary; ľubovoľný nepravidelný otvor sa automaticky neobkresľuje.
+**Recognition is an experimental edge-based suggestion.** A photograph does not establish physical dimensions. Measure the opening with a ruler before printing. The app supports four geometric shapes; it does not trace arbitrary irregular openings.
 
-Náhľad v odfotenom ráme je vizualizácia. Na vytlačenie fotografie určenej na vloženie do rámu vyberte samotnú upravenú fotografiu.
+A photographed-frame preview is a visualisation. To print a photo that will go inside the physical frame, select the cropped photo itself as the output.
 
-## Tlač a správne rozmery
+## Printing and calibration
 
-### Jednoduchá tlač
+### Simple printing
 
-1. Zmerajte **viditeľný vnútorný otvor rámčeka**, nie vonkajšie rozmery rámu.
-2. V kroku Hotovo zvoľte **Vytlačiť**.
-3. Zadajte šírku a výšku v centimetroch; pri kruhu priemer.
-4. Vyberte papier A4 alebo 10 × 15 cm a pokračujte do systémového tlačového dialógu.
-5. Skontrolujte nastavenie papiera aj v tlačovej službe. Ak ponúka zmenu mierky, použite **100 % / skutočnú veľkosť**.
+1. Measure the frame's **visible inner opening**, not its outside dimensions.
+2. In the Finish step, tap **Print**.
+3. Enter width and height in centimetres, or the diameter for a circle.
+4. Choose A4 or 10 × 15 cm paper and continue to Android's print dialog.
+5. Check the paper size in the print service too. If scaling controls are available, choose **100% / actual size**.
 
-Príklad: otvor široký 8 cm a vysoký 12 cm znamená **8 × 12 cm**, nie rozmery vonkajšieho rámu. V celom štúdiu sa niektoré rozmery zadávajú v milimetroch: 8 cm = 80 mm.
+Example: an opening 8 cm wide and 12 cm high needs **8 × 12 cm**, regardless of the outside size of the frame. Some full-studio measurements use millimetres: 8 cm = 80 mm.
 
-### Skúšobný obrys a kalibrácia
+### Test outline and calibration
 
-Pre fyzický rám je vhodné najprv vytlačiť skúšobný obrys. V rozšírených tlačových možnostiach nájdete aj **Kalibrácia 100 mm**.
+Before printing the final photo, print a test outline and check it against the frame. Advanced printing options also include a **100 mm calibration** square.
 
-1. Vytlačte kalibračný štvorec.
-2. Zmerajte jeho stranu pravítkom.
-3. Ak nemá presne 100 mm, zadajte nameranú hodnotu a použite korekciu mierky.
-4. Znova skontrolujte skúšobný obrys a až potom tlačte finálnu fotografiu.
+1. Print the calibration square.
+2. Measure one side with a ruler.
+3. If it is not exactly 100 mm, enter the measured length and apply the scale correction.
+4. Check the test outline again, then print the final photo.
 
-Korekcia platí pre aktuálny projekt a konkrétne nastavenie tlače. Po zmene tlačiarne, papiera alebo tlačovej služby ju overte znova. V celom štúdiu možno nastaviť aj presah pod rám.
+Correction applies to the current project and print setup. Check it again after changing the printer, paper or print service. The full studio also lets you set an overlap beneath the frame.
 
-Tlačiareň musí byť dostupná prostredníctvom kompatibilnej tlačovej služby Androidu. FrameFit nemá samostatné ovládače pre jednotlivé USB/Bluetooth tlačiarne. Alternatívou je uloženie PDF a tlač z iného zariadenia. Fyzickú mierku môže meniť aj samotná tlačová služba.
+The printer must be available through a compatible Android print service. FrameFit does not include individual USB/Bluetooth printer drivers. Alternatively, save a PDF and print from another device. The print service can affect physical scale independently of the app.
 
-## Uloženie a zdieľanie
+## Saving and sharing
 
-Základné **Uložiť fotku** vytvorí JPG. Cez **Viac možností uloženia** otvoríte ďalšie formáty a nastavenia.
+**Save my photo** creates a JPG. Open **More ways to save** for additional formats and settings.
 
-| Výstup | Kedy ho použiť |
+| Output | Typical use |
 |---|---|
-| JPG | Bežná fotografia, galéria a zdieľanie |
-| PNG | Obrázok v bezstratovom formáte; môže byť väčší |
-| HEIC | Úspornejší formát, iba ak ho zariadenie dokáže vytvoriť |
-| PDF | Príprava na tlač so zadanými rozmermi |
-| Náhľad v ráme | Ukážka, ako bude fotografia vyzerať v odfotenom rámčeku |
+| JPG | Gallery photos and everyday sharing |
+| PNG | Lossless image output; files may be larger |
+| HEIC | Space-efficient output, where the device can encode it |
+| PDF | Printing with specified dimensions |
+| Frame preview | Showing the photo inside your photographed frame |
 
-Pri systémovom zdieľaní vyberáte cieľ vy. Instagram, Facebook, TikTok a iné aplikácie sa zobrazia iba vtedy, keď sú nainštalované a prijímajú daný typ obrázka. FrameFit nezverejňuje príspevky automaticky. Ak cieľová aplikácia nie je v ponuke, uložte JPG a vyberte ho priamo v nej.
+Choose the destination in Android's share sheet. Instagram, Facebook, TikTok and other apps appear only if installed and able to accept the image type. FrameFit does not publish posts automatically. If an app is missing, save a JPG and select it from that app instead.
 
-## Jazyk a vzhľad
+## Language and appearance
 
-Otvorte **Možnosti → Jazyk a vzhľad**.
+Open **Options → Language and appearance**.
 
-- Jazyk môže nasledovať systém alebo ho môžete zvoliť ručne: slovenčina, čeština, angličtina.
-- Vzhľad môže nasledovať systém alebo zostať svetlý či tmavý.
-- Na Androide 12 a novšom sú dostupné systémové farby.
-- Aplikácia rešpektuje systémové zväčšenie písma; dlhší obsah možno posúvať.
+- Follow the system language or choose English, Slovak or Czech manually.
+- Follow the system appearance or select a light or dark theme.
+- Use system colours on Android 12 or later.
+- The app follows the system font size. Scroll longer pages to reach more controls.
 
-## Súkromie a uložený projekt
+## Privacy and your project
 
-FrameFit spracúva fotografie lokálne. Verzia 1.0 nemá účty, reklamy, analytiku ani oprávnenie na internet. Systémový výber obrázkov sprístupní iba fotografie, ktoré zvolíte. Zdieľanie a tlač prebiehajú cez vami vybrané aplikácie alebo služby, ktoré môžu mať vlastné pripojenie a podmienky.
+FrameFit processes photos locally. Version 1.0 has no accounts, ads, analytics or internet permission. The photo picker exposes only images you select. Sharing and printing use destinations you choose; those services may have their own network access and terms.
 
-Jeden rozpracovaný projekt sa priebežne ukladá v súkromnom úložisku aplikácie. Môže obsahovať originál fotografie, pracovný náhľad, fotografiu rámčeka, vybraný výrez vzoru a nastavenia. **Projekt nie je záloha celej galérie ani knižnica viacerých projektov.**
+One work-in-progress project is saved in private app storage. It can contain the original photo, working preview, frame image, selected pattern sample and editing settings. **This is one project, not a gallery backup or a library of several projects.**
 
-Projekt možno odstrániť v rozšírených možnostiach po potvrdení. Vymazanie projektu neodstraňuje obrázky už uložené do galérie ani kópie odoslané iným aplikáciám. Odinštalovanie odstráni súkromné údaje aplikácie. Pred odinštalovaním si uložte výsledky, ktoré chcete zachovať.
+Delete the project through the advanced options and confirm deletion. This does not delete images already exported to the gallery or copies sent to other apps. Uninstalling removes the app's private data. Export results you want to keep first.
 
-Celý text politiky a licencie knižníc sú dostupné v nastaveniach aplikácie. Verejná politika je pripravená v [návrhu č. 1](https://github.com/NyX3Ton/nyx3ton-project/pull/1). Plánovaná [webová adresa politiky](https://nyx3ton.github.io/nyx3ton-project/framefit/privacy/) sa stane použiteľnou po zlúčení návrhu a aktivovaní GitHub Pages; pri príprave návodu ešte nebola potvrdená ako živá.
+The full privacy policy and third-party notices are available in the app's settings. The public policy is prepared in [pull request #1](https://github.com/NyX3Ton/nyx3ton-project/pull/1). Its [planned website address](https://nyx3ton.github.io/nyx3ton-project/framefit/privacy/) requires the change to be merged and GitHub Pages enabled; the address had not been verified as live when this guide was prepared.
 
-## Najčastejšie otázky
+## Troubleshooting
 
-### Rozpoznaný otvor nesedí. Čo mám urobiť?
+| Problem | What to try |
+|---|---|
+| The detected opening does not fit | Use a contrasting background, even light and a straight-on view. Avoid reflections. Correct the suggestion manually. |
+| The print is too large or small | Check cm/mm, inner dimensions, paper size and print-service scaling. Disable fit-to-page if available and measure the 100 mm calibration square. |
+| Circle and oval look similar | A circle needs equal width and height; an oval needs different dimensions. Check the preview and measurements as well as the small icon. |
+| HEIC export fails | Use JPG or PNG. HEIC depends on the device's encoder; large exports need testing on the actual phone. |
+| The printer is missing | Check the Android print service and printer availability, or save a PDF and print it through another app or computer. |
+| A social app is missing | Save a JPG and select it directly from the destination app. |
 
-Použite kontrastný podklad, rovnomerné svetlo a záber spredu bez odleskov. Ak návrh stále nesedí, opravte ho ručne. Automatika je pomôcka; skutočné rozmery treba zmerať.
+### Does FrameFit use my phone's NPU?
 
-### Fotografia je pri tlači príliš veľká alebo malá.
+**Production version 1.0 uses the CPU.** The experimental development path considers MediaTek, Snapdragon, Exynos and Google Tensor, but hardware NPU acceleration is not a completed release feature. Having an NPU in the phone does not enable it automatically.
 
-Skontrolujte jednotky cm/mm, rozmery vnútorného otvoru, papier a nastavenie mierky v tlačovej službe. Vypnite prispôsobenie stránke, ak ho služba ponúka. Vytlačte kalibráciu 100 mm.
+### Can I keep several unfinished projects?
 
-### Kruh vyzerá ako ovál alebo naopak.
+This version keeps one work-in-progress project. Save finished results separately to the gallery or files.
 
-Kruh musí mať rovnakú šírku a výšku. Pri ovále skontrolujte odlišné rozmery strán. Posúďte náhľad aj nastavené rozmery, nie iba malú ikonu tvaru.
+## Development and release
 
-### HEIC sa nedá uložiť.
+### Source project
 
-Jeho vytvorenie závisí od enkodéra zariadenia. Použite JPG alebo PNG. Veľké HEIC exporty treba overiť na konkrétnom telefóne.
+FrameFit uses Kotlin, Jetpack Compose, CameraX and Android's system interfaces. It requires JDK 17+, Android SDK 36 and Build Tools 36.0.0.
 
-### Tlačiareň nie je v ponuke.
-
-Skontrolujte systémovú tlačovú službu a dostupnosť tlačiarne. Prípadne vytvorte PDF a vytlačte ho cez aplikáciu výrobcu alebo na počítači.
-
-### Využíva aplikácia NPU môjho telefónu?
-
-**Produkčná verzia 1.0 používa CPU.** Experimentálna vývojová cesta počíta s rodinami MediaTek, Snapdragon, Exynos a Google Tensor, ale hardvérové NPU zrýchlenie nie je dokončenou funkciou vydania. Samotná prítomnosť NPU v telefóne ho nezapne.
-
-### Môžem ukladať viac rozpracovaných projektov?
-
-Táto verzia priebežne uchováva jeden projekt. Výsledky si môžete samostatne ukladať do galérie alebo súborov.
-
-## Pre vývojárov a vydavateľa
-
-### Zdrojový projekt
-
-Android projekt FrameFit používa Kotlin, Jetpack Compose, CameraX a systémové rozhrania Androidu. Potrebuje JDK 17+, Android SDK 36 a Build Tools 36.0.0.
-
-Nasledujúce príkazy sa spúšťajú **v koreňovom priečinku zdrojového projektu FrameFit**, kde je `gradlew.bat`. Tento návod v spoločnom repozitári sám o sebe neznamená, že v ňom už boli publikované aj Android zdroje alebo binárne súbory.
+Run these commands **from the FrameFit source project root**, where `gradlew.bat` is located. This guide's presence in the shared repository does not mean the Android sources or binaries have already been published there.
 
 ```powershell
 .\gradlew.bat :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
 ```
 
-Vývojový APK vznikne v `app/build/outputs/apk/debug/app-debug.apk`. Neslúži na publikovanie do Google Play.
+The development APK is written to `app/build/outputs/apk/debug/app-debug.apk`. It is for development, not Google Play publication.
 
-Ak už boli nástroje pripravené lokálne pomocou nástrojov projektu, podpísanú produkčnú zostavu vytvorí:
+If the project's local tools have already been prepared, create a signed production build with:
 
 ```powershell
 .\tools\build_release.ps1
 ```
 
-Skript kontroluje produkčný AAB/APK, jednotkové testy, Android Lint a podpis. Vyžaduje vlastný upload kľúč. Súkromný kľúč, heslá, `.release-secrets/` ani miestne nastavenia sa nesmú zaradiť do verejného repozitára. Kľúč bezpečne zálohujte; nevytvárajte ho znova pri každom vydaní.
+This builds the production AAB/APK, runs release unit tests and Android Lint, and verifies the AAB signature. It requires an upload key. Keep private keys, passwords, `.release-secrets/` and local settings out of the public repository. Back up the key securely; do not regenerate it for each release.
 
-### Overenie pripravenej verzie 1.0.0
+### Recorded verification
 
-Stav z 24. októbra 2026:
+Version 1.0.0, recorded on **24 October 2026**:
 
-- 29 úspešných jednotkových testov release variantu.
-- 22 úspešných Android testov debug variantu na emulátore Android 16 / API 36.
-- Android Lint release variantu: 0 chýb, 28 upozornení.
-- Podpísaný AAB overený nástrojom bundletool; z neho vytvorený a nainštalovaný optimalizovaný testovací APK.
-- V release aplikácii prakticky overený výber fotografie, kruhový výrez, uloženie JPG, systémový tlačový náhľad, uloženie PDF a otvorenie licencií.
-- Staticky overené zarovnanie 64-bitových knižníc pre 16 KB stránky. Nejde o runtime skúšku na 16 KB zariadení.
+- 29 passing release unit tests.
+- 22 passing debug-variant Android tests on an Android 16 / API 36 emulator.
+- Release Android Lint: 0 errors and 28 warnings.
+- Signed AAB validated with bundletool; an optimised APK generated from it and installed.
+- Release UI checks for photo selection, a circular crop, JPG saving, Android print preview, PDF saving and opening third-party notices.
+- Static 16 KB alignment checks for 64-bit libraries. This is not a runtime test on a 16 KB device.
 
-Reálny S26+, fyzický fotoaparát a tlačiareň neboli súčasťou tohto overenia. Pred produkčným vydaním treba dokončiť praktické skúšky, vrátane väčších HEIC exportov, sociálnych aplikácií, prístupnosti a fyzickej mierky tlače.
+A physical S26+, camera and printer were not part of this verification. Before production, finish practical checks for camera behaviour, large HEIC exports, social apps, accessibility and physical print scale.
 
 ### Google Play
 
-Identifikátor aplikácie je `sk.framefit.app`. Do interného testovania sa odovzdáva podpísaný **AAB**, nie vývojový APK. Verejné vydanie vyžaduje dokončenie údajov a formulárov v Play Console, dostupnú verejnú politiku súkromia, požadované testovanie účtu a kontrolu Google.
+The app ID is `sk.framefit.app`. Upload the signed **AAB** to internal testing. Complete the declarations, publish the privacy policy, meet account testing requirements and obtain Google's review before public release.
 
-Pred odovzdaním použite aktuálne pokyny priamo v Play Console. Pripravenie podpísaného balíka samo osebe neznamená schválenie obchodu. Návrh README ani politika neobsahujú súkromné podpisovacie údaje.
+See [PLAY-CONSOLE.md](PLAY-CONSOLE.md) for the handover checklist and remaining release gates. Use the current instructions in Play Console when submitting. A signed package alone is not Google Play approval.
 
-## Kontakt
+## Contact
 
 **Gabriel Polak** · [gabriel.polak.1986@gmail.com](mailto:gabriel.polak.1986@gmail.com)
 
-Pri hlásení problému uveďte model telefónu, verziu Androidu, verziu FrameFit a krátky postup na zopakovanie chyby. Pri probléme s tlačou pridajte model tlačiarne, formát papiera a názov tlačovej služby. Osobné fotografie ani prihlasovacie údaje neposielajte, ak nie sú potrebné na vysvetlenie problému.
+When reporting a problem, include your phone model, Android version, FrameFit version and reproduction steps. For printing issues, add the printer model, paper size and print service. Do not send passwords or private photos unless a photo is needed to explain the problem and you choose to provide it.
